@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.lance.internal;
 
+import com.google.inject.Inject;
 import com.lancedb.lance.Dataset;
 import com.lancedb.lance.DatasetFragment;
 import com.lancedb.lancedb.Connection;
@@ -49,6 +50,7 @@ public class LanceReader
     // TODO: revisit whether we want to keep long running connection or create one connection per
     private final Connection conn;
 
+    @Inject
     public LanceReader(LanceConfig lanceConfig)
     {
         URI lanceDbURI = lanceConfig.getLanceDbUri();
