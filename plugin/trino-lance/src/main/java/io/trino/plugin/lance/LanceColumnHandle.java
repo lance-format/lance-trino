@@ -27,14 +27,18 @@ import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
 
-public record LanceColumnHandle(String name, Type trinoType, FieldType arrowType)
+public record LanceColumnHandle(String name, Type trinoType, boolean isNullable)
         implements ColumnHandle
 {
+    public LanceColumnHandle(String name, Type trinoType, FieldType fieldType)
+    {
+        this(name, trinoType, fieldType.isNullable());
+    }
+
     public LanceColumnHandle
     {
         requireNonNull(name, "name is null");
         requireNonNull(trinoType, "trinoType is null");
-        requireNonNull(arrowType, "arrowType is null");
     }
 
     public static Type toTrinoType(ArrowType type)
@@ -62,6 +66,6 @@ public record LanceColumnHandle(String name, Type trinoType, FieldType arrowType
     @JsonIgnore
     public ColumnMetadata getColumnMetadata()
     {
-        return ColumnMetadata.builder().setName(name).setType(trinoType).setNullable(arrowType.isNullable()).build();
+        return ColumnMetadata.builder().setName(name).setType(trinoType).setNullable(isNullable).build();
     }
 }
