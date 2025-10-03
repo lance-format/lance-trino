@@ -31,5 +31,6 @@ public class LanceModule
         binder.bind(LanceMetadata.class).in(Scopes.SINGLETON);
         binder.bind(LanceSplitManager.class).in(Scopes.SINGLETON);
         binder.bind(LancePageSourceProvider.class).in(Scopes.SINGLETON);
+        binder.bind(LanceConnector.class).in(Scopes.SINGLETON);
     }
 }
