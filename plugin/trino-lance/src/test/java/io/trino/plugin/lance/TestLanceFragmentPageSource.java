@@ -64,7 +64,7 @@ public class TestLanceFragmentPageSource
         assertThat(batch.getSplits().size()).isEqualTo(2);
         LanceSplit lanceSplit = (LanceSplit) batch.getSplits().get(0);
         // testing split 0 is enough
-        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(metadata.getLanceReader(), (LanceTableHandle) tableHandle, lanceSplit.getFragments(), metadata.getLanceConfig().getFetchRetryCount())) {
+        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(metadata.getLanceReader(), (LanceTableHandle) tableHandle, lanceSplit.fragments(), metadata.getLanceConfig().getFetchRetryCount())) {
             Page page = pageSource.getNextPage();
             // assert row/column count
             assertThat(page.getChannelCount()).isEqualTo(4);

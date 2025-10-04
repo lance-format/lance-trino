@@ -13,8 +13,6 @@
  */
 package io.trino.plugin.lance;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -23,36 +21,20 @@ import io.trino.spi.connector.ConnectorSplit;
 import java.util.List;
 import java.util.Map;
 
-import static com.google.common.base.MoreObjects.toStringHelper;
 import static io.airlift.slice.SizeOf.estimatedSizeOf;
 import static io.airlift.slice.SizeOf.instanceSize;
 import static io.airlift.slice.SizeOf.sizeOf;
 import static java.util.Objects.requireNonNull;
 
-public class LanceSplit
+public record LanceSplit(List<Integer> fragments)
         implements ConnectorSplit
 {
     private static final Joiner JOINER = Joiner.on(",");
     private static final int INSTANCE_SIZE = instanceSize(LanceSplit.class);
 
-    private final List<Integer> fragments;
-
-    @JsonCreator
-    public LanceSplit(@JsonProperty("fragments") List<Integer> fragments)
+    public LanceSplit
     {
-        this.fragments = ImmutableList.copyOf(requireNonNull(fragments, "fragments is null"));
-    }
-
-    @JsonProperty
-    public List<Integer> getFragments()
-    {
-        return fragments;
-    }
-
-    @Override
-    public String toString()
-    {
-        return toStringHelper(this).add("fragments", fragments).toString();
+        fragments = ImmutableList.copyOf(requireNonNull(fragments, "fragments is null"));
     }
 
     @Override

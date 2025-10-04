@@ -78,9 +78,9 @@ public class LanceMetadata
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
         try {
-            List<ColumnMetadata> columnsMetadata = lanceReader.getColumnsMetadata(((LanceTableHandle) table).getTableName());
+            List<ColumnMetadata> columnsMetadata = lanceReader.getColumnsMetadata(((LanceTableHandle) table).tableName());
             SchemaTableName schemaTableName =
-                    new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName());
+                    new SchemaTableName(lanceTableHandle.schemaName(), lanceTableHandle.tableName());
             return new ConnectorTableMetadata(schemaTableName, columnsMetadata);
         }
         catch (Exception e) {
@@ -99,10 +99,10 @@ public class LanceMetadata
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
         try {
-            return lanceReader.getColumnHandle(lanceTableHandle.getTableName());
+            return lanceReader.getColumnHandle(lanceTableHandle.tableName());
         }
         catch (Exception e) {
-            throw new TableNotFoundException(new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName()));
+            throw new TableNotFoundException(new SchemaTableName(lanceTableHandle.schemaName(), lanceTableHandle.tableName()));
         }
     }
 

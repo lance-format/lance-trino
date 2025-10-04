@@ -97,7 +97,7 @@ public class LanceReader
 
     public List<DatasetFragment> getFragments(LanceTableHandle tableHandle)
     {
-        return getFragments(getTablePath(dbPath, tableHandle.getTableName()));
+        return getFragments(getTablePath(dbPath, tableHandle.tableName()));
     }
 
     private static List<DatasetFragment> getFragments(Path tablePath)

@@ -49,12 +49,12 @@ public class LancePageSourceProvider
         requireNonNull(split, "split is null");
         LanceSplit lanceSplit = (LanceSplit) split;
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-        if (lanceSplit.getFragments().isEmpty()) {
+        if (lanceSplit.fragments().isEmpty()) {
             return new LanceDatasetPageSource(lanceReader, lanceTableHandle, lanceConfig.getFetchRetryCount());
         }
         else {
             // TODO: support multiple fragment per split, now it is 1-to-1 mapping between fragment and split
-            return new LanceFragmentPageSource(lanceReader, lanceTableHandle, lanceSplit.getFragments(), lanceConfig.getFetchRetryCount());
+            return new LanceFragmentPageSource(lanceReader, lanceTableHandle, lanceSplit.fragments(), lanceConfig.getFetchRetryCount());
         }
     }
 }
