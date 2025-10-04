@@ -14,7 +14,7 @@
 package io.trino.plugin.lance;
 
 import com.google.inject.Inject;
-import com.lancedb.lance.DatasetFragment;
+import com.lancedb.lance.Fragment;
 import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
@@ -49,7 +49,7 @@ public class LanceSplitManager
     {
         if (lanceConfig.getConnectorType() == LanceConfig.Type.FRAGMENT) {
             List<Integer> fragmentIds = lanceReader.getFragments((LanceTableHandle) tableHandle)
-                    .stream().map(DatasetFragment::getId).toList();
+                    .stream().map(Fragment::getId).toList();
             return new FixedSplitSource(fragmentIds.stream().map(id -> new LanceSplit(Collections.singletonList(id))).toList());
         }
         else {

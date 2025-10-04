@@ -15,7 +15,7 @@ package io.trino.plugin.lance.internal;
 
 import com.google.inject.Inject;
 import com.lancedb.lance.Dataset;
-import com.lancedb.lance.DatasetFragment;
+import com.lancedb.lance.Fragment;
 import com.lancedb.lancedb.Connection;
 import io.trino.plugin.lance.LanceColumnHandle;
 import io.trino.plugin.lance.LanceConfig;
@@ -95,12 +95,12 @@ public class LanceReader
         }
     }
 
-    public List<DatasetFragment> getFragments(LanceTableHandle tableHandle)
+    public List<Fragment> getFragments(LanceTableHandle tableHandle)
     {
         return getFragments(getTablePath(dbPath, tableHandle.getTableName()));
     }
 
-    private static List<DatasetFragment> getFragments(Path tablePath)
+    private static List<Fragment> getFragments(Path tablePath)
     {
         try (Dataset dataset = Dataset.open(tablePath.toUri().toString(), allocator)) {
             return dataset.getFragments();

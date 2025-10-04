@@ -14,7 +14,7 @@
 package io.trino.plugin.lance;
 
 import com.lancedb.lance.Dataset;
-import com.lancedb.lance.DatasetFragment;
+import com.lancedb.lance.Fragment;
 import com.lancedb.lance.ipc.LanceScanner;
 import io.airlift.log.Logger;
 import io.trino.plugin.lance.internal.LanceReader;
@@ -49,7 +49,7 @@ public class LanceFragmentPageSource
     {
         private final int fragmentId;
         private Dataset lanceDataset;
-        private DatasetFragment lanceFragment;
+        private Fragment lanceFragment;
         private LanceScanner lanceScanner;
 
         public FragmentScannerFactory(int fragmentId)
