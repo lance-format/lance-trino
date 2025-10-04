@@ -130,29 +130,6 @@ public class LanceMetadata
         return ((LanceColumnHandle) columnHandle).getColumnMetadata();
     }
 
-    @Override
-    public Optional<ProjectionApplicationResult<ConnectorTableHandle>> applyProjection(ConnectorSession session,
-            ConnectorTableHandle handle, List<ConnectorExpression> projections, Map<String, ColumnHandle> assignments)
-    {
-        throw new UnsupportedOperationException("unsupported");
-    }
-
-    @Override
-    public Optional<LimitApplicationResult<ConnectorTableHandle>> applyLimit(ConnectorSession session,
-            ConnectorTableHandle table, long limit)
-    {
-        // TODO: support limit
-        throw new UnsupportedOperationException("unsupported");
-    }
-
-    @Override
-    public Optional<ConstraintApplicationResult<ConnectorTableHandle>> applyFilter(ConnectorSession session,
-            ConnectorTableHandle table, Constraint constraint)
-    {
-        // TODO: support limit
-        throw new UnsupportedOperationException("unsupported");
-    }
-
     @VisibleForTesting
     public LanceConfig getLanceConfig()
     {

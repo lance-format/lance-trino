@@ -70,4 +70,25 @@ public class TestLanceConnector
                         (3, 6, 9, -3)
                         """);
     }
+
+    @Test
+    public void testProjection()
+    {
+        assertThat(query("SELECT b FROM test_table1"))
+                .matches("VALUES BIGINT '0', 1, 2, 3");
+    }
+
+    @Test
+    public void testFilter()
+    {
+        assertThat(query("SELECT * FROM test_table1 WHERE b = 0"))
+                .matches("VALUES (BIGINT '0', BIGINT '0', BIGINT '0', BIGINT '0')");
+    }
+
+    @Test
+    public void testLimit()
+    {
+        assertThat(query("SELECT * FROM test_table1 LIMIT 100"))
+                .matches("SELECT * FROM test_table1");
+    }
 }
