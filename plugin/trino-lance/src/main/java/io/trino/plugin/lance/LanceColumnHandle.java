@@ -60,6 +60,9 @@ public record LanceColumnHandle(String name, Type trinoType, boolean isNullable)
         else if (type instanceof ArrowType.Utf8) {
             return VARCHAR;
         }
+        else if (type instanceof ArrowType.LargeUtf8) {
+            return VARCHAR;
+        }
         throw new UnsupportedOperationException("Unsupported arrow type: " + type);
     }
 

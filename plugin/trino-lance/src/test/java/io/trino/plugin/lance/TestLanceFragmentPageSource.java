@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.lance;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Resources;
 import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.spi.Page;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.TestInstance;
 
 import java.net.URL;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 
@@ -49,8 +51,9 @@ public class TestLanceFragmentPageSource
         assertThat(lanceURL)
                 .describedAs("example db is null")
                 .isNotNull();
-        LanceConfig lanceConfig = new LanceConfig().setRoot(lanceURL.toString());
-        LanceReader lanceReader = new LanceReader(lanceConfig);
+        LanceConfig lanceConfig = new LanceConfig();
+        Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
+        LanceReader lanceReader = new LanceReader(lanceConfig, catalogProperties);
         this.metadata = new LanceMetadata(lanceReader, lanceConfig);
         this.splitManager = new LanceSplitManager(lanceReader, lanceConfig);
     }

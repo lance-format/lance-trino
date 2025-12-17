@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import java.net.URL;
+import java.util.Map;
 import java.util.Optional;
 
 import static io.trino.testing.TestingConnectorSession.SESSION;
@@ -57,8 +58,9 @@ public class TestLanceMetadata
         assertThat(lanceURL)
                 .describedAs("example db is null")
                 .isNotNull();
-        LanceConfig lanceConfig = new LanceConfig().setRoot(lanceURL.toString());
-        LanceReader lanceReader = new LanceReader(lanceConfig);
+        LanceConfig lanceConfig = new LanceConfig();
+        Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
+        LanceReader lanceReader = new LanceReader(lanceConfig, catalogProperties);
         metadata = new LanceMetadata(lanceReader, lanceConfig);
     }
 
