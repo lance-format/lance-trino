@@ -17,7 +17,6 @@ import io.airlift.log.Logger;
 import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.plugin.lance.internal.ScannerFactory;
 import org.apache.arrow.memory.BufferAllocator;
-import org.lance.Dataset;
 import org.lance.Fragment;
 import org.lance.ipc.LanceScanner;
 import org.lance.ipc.ScanOptions;
@@ -46,7 +45,6 @@ public class LanceFragmentPageSource
             implements ScannerFactory
     {
         private final int fragmentId;
-        private Dataset lanceDataset;
         private Fragment lanceFragment;
         private LanceScanner lanceScanner;
 
@@ -58,12 +56,11 @@ public class LanceFragmentPageSource
         @Override
         public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns)
         {
-            this.lanceDataset = Dataset.open(tablePath, allocator);
-            // Find fragment by ID, not by list index (fragment IDs may not match list positions)
-            this.lanceFragment = lanceDataset.getFragments().stream()
-                    .filter(f -> f.getId() == this.fragmentId)
-                    .findFirst()
-                    .orElseThrow(() -> new RuntimeException("Fragment not found: " + this.fragmentId));
+            // Use cached fragment lookup instead of opening dataset and filtering
+            this.lanceFragment = LanceReader.getFragment(tablePath, this.fragmentId);
+            if (this.lanceFragment == null) {
+                throw new RuntimeException("Fragment not found: " + this.fragmentId);
+            }
             ScanOptions.Builder optionsBuilder = new ScanOptions.Builder();
             // Only set columns if non-empty; empty list means read all columns
             if (!columns.isEmpty()) {
@@ -76,6 +73,7 @@ public class LanceFragmentPageSource
         @Override
         public void close()
         {
+            // Only close the scanner; the dataset is managed by LanceReader's cache
             try {
                 if (lanceScanner != null) {
                     lanceScanner.close();
@@ -83,9 +81,6 @@ public class LanceFragmentPageSource
             }
             catch (Exception e) {
                 log.warn("error while closing lance scanner, Exception: %s", e.getMessage());
-            }
-            if (lanceDataset != null) {
-                lanceDataset.close();
             }
         }
     }

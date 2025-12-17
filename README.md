@@ -72,7 +72,23 @@ GROUP BY category;
 Build the connector:
 
 ```bash
-./mvnw clean install
+make install
+```
+
+Other available commands:
+
+```bash
+make help      # Show all available commands
+make build     # Compile and package
+make test      # Run tests
+make compile   # Compile only
+make package   # Package without tests
+make clean     # Clean build artifacts
+make verify    # Full verification
+make run       # Run development server
+make lint      # Run code style checks (checkstyle, modernizer, sortpom)
+make format    # Format pom.xml files
+make check     # Run all checks without tests
 ```
 
 ## Installation
@@ -93,7 +109,7 @@ We periodically upgrade the Trino version to stay up to date with the latest Tri
 ### Running Tests
 
 ```bash
-./mvnw test -pl plugin/trino-lance
+make test
 ```
 
 ### Running the Query Runner (Development Server)
@@ -101,8 +117,7 @@ We periodically upgrade the Trino version to stay up to date with the latest Tri
 You can run a local Trino server for development:
 
 ```bash
-cd plugin/trino-lance
-mvn exec:java -Dexec.mainClass="io.trino.plugin.lance.LanceQueryRunner"
+make run
 ```
 
 This starts a Trino server on port 8080 with the Lance connector configured.
