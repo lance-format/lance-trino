@@ -13,12 +13,14 @@
  */
 package io.trino.plugin.lance.internal;
 
-import com.lancedb.lance.ipc.LanceScanner;
 import org.apache.arrow.memory.BufferAllocator;
+import org.lance.ipc.LanceScanner;
+
+import java.util.List;
 
 public interface ScannerFactory
 {
-    LanceScanner open(String tablePath, BufferAllocator allocator);
+    LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns);
 
     void close();
 }

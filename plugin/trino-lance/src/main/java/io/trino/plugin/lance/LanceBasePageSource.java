@@ -47,20 +47,17 @@ public abstract class LanceBasePageSource
     protected final BufferAllocator bufferAllocator;
     protected final PageBuilder pageBuilder;
 
-    public LanceBasePageSource(LanceReader lanceReader, LanceTableHandle tableHandle, int maxReadRowsRetries)
+    public LanceBasePageSource(LanceReader lanceReader, LanceTableHandle tableHandle, List<LanceColumnHandle> columns, int maxReadRowsRetries, ScannerFactory scannerFactory)
     {
         this.maxReadRowsRetries = maxReadRowsRetries;
         this.tableHandle = tableHandle;
-        List<LanceColumnHandle> columns = toColumnHandles(lanceReader, tableHandle);
         this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
         this.lanceArrowToPageScanner =
-                new LanceArrowToPageScanner(bufferAllocator, tableHandle.getTablePath(), columns, getScannerFactory());
+                new LanceArrowToPageScanner(bufferAllocator, tableHandle.getTablePath(), columns, scannerFactory);
         this.pageBuilder =
                 new PageBuilder(columns.stream().map(LanceColumnHandle::trinoType).collect(toImmutableList()));
         this.isFinished.set(false);
     }
-
-    public abstract ScannerFactory getScannerFactory();
 
     @VisibleForTesting
     public static List<LanceColumnHandle> toColumnHandles(LanceReader lanceReader, LanceTableHandle tableHandle)

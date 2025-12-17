@@ -34,7 +34,6 @@ import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
 
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -64,9 +63,9 @@ public class LanceMetadata
     public LanceTableHandle getTableHandle(ConnectorSession session, SchemaTableName name,
             Optional<ConnectorTableVersion> startVersion, Optional<ConnectorTableVersion> endVersion)
     {
-        Path tablePath = lanceReader.getTablePath(session, name);
+        String tablePath = lanceReader.getTablePath(session, name);
         if (tablePath != null) {
-            return new LanceTableHandle(name.getSchemaName(), name.getTableName(), tablePath.toUri().toString());
+            return new LanceTableHandle(name.getSchemaName(), name.getTableName(), tablePath);
         }
         else {
             return null;
@@ -134,23 +133,24 @@ public class LanceMetadata
     public Optional<ProjectionApplicationResult<ConnectorTableHandle>> applyProjection(ConnectorSession session,
             ConnectorTableHandle handle, List<ConnectorExpression> projections, Map<String, ColumnHandle> assignments)
     {
-        throw new UnsupportedOperationException("unsupported");
+        // TODO: support projection pushdown
+        return Optional.empty();
     }
 
     @Override
     public Optional<LimitApplicationResult<ConnectorTableHandle>> applyLimit(ConnectorSession session,
             ConnectorTableHandle table, long limit)
     {
-        // TODO: support limit
-        throw new UnsupportedOperationException("unsupported");
+        // TODO: support limit pushdown
+        return Optional.empty();
     }
 
     @Override
     public Optional<ConstraintApplicationResult<ConnectorTableHandle>> applyFilter(ConnectorSession session,
             ConnectorTableHandle table, Constraint constraint)
     {
-        // TODO: support limit
-        throw new UnsupportedOperationException("unsupported");
+        // TODO: support filter pushdown
+        return Optional.empty();
     }
 
     @VisibleForTesting

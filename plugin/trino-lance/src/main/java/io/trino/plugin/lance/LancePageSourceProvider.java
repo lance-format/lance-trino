@@ -47,14 +47,13 @@ public class LancePageSourceProvider
             DynamicFilter dynamicFilter)
     {
         requireNonNull(split, "split is null");
+        requireNonNull(columns, "columns is null");
         LanceSplit lanceSplit = (LanceSplit) split;
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-        if (lanceSplit.getFragments().isEmpty()) {
-            return new LanceDatasetPageSource(lanceReader, lanceTableHandle, lanceConfig.getFetchRetryCount());
-        }
-        else {
-            // TODO: support multiple fragment per split, now it is 1-to-1 mapping between fragment and split
-            return new LanceFragmentPageSource(lanceReader, lanceTableHandle, lanceSplit.getFragments(), lanceConfig.getFetchRetryCount());
-        }
+        List<LanceColumnHandle> lanceColumns = columns.stream()
+                .map(LanceColumnHandle.class::cast)
+                .toList();
+        // Each split contains exactly one fragment for parallel processing
+        return new LanceFragmentPageSource(lanceReader, lanceTableHandle, lanceColumns, lanceSplit.getFragments(), lanceConfig.getFetchRetryCount());
     }
 }
