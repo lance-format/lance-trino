@@ -13,7 +13,12 @@
  */
 package io.trino.plugin.lance.internal;
 
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
 import com.google.inject.Inject;
+import io.airlift.log.Logger;
+import io.trino.cache.NonEvictableLoadingCache;
+import io.trino.cache.SafeCaches;
 import io.trino.plugin.lance.LanceColumnHandle;
 import io.trino.plugin.lance.LanceConfig;
 import io.trino.plugin.lance.LanceNamespaceProperties;
@@ -38,7 +43,10 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -46,11 +54,50 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 public class LanceReader
         implements Closeable
 {
+    private static final Logger log = Logger.get(LanceReader.class);
+
     // TODO: support multiple schemas
     public static final String SCHEMA = "default";
     private static final String TABLE_PATH_SUFFIX = ".lance";
     private static final BufferAllocator allocator = new RootAllocator(
             RootAllocator.configBuilder().from(RootAllocator.defaultConfig()).maxAllocation(4 * 1024 * 1024).build());
+
+    // Cache for dataset metadata (fragments) - shared across all LanceReader instances per worker JVM
+    // Maximum 100 entries, expires 1 hour after last access (same as lance-spark)
+    private static final NonEvictableLoadingCache<CacheKey, Map<Integer, Fragment>> FRAGMENT_CACHE =
+            SafeCaches.buildNonEvictableCache(
+                    CacheBuilder.newBuilder()
+                            .maximumSize(100)
+                            .expireAfterAccess(1, TimeUnit.HOURS),
+                    new CacheLoader<>()
+                    {
+                        @Override
+                        public Map<Integer, Fragment> load(CacheKey key)
+                        {
+                            log.debug("Loading fragments for table: %s", key.getTablePath());
+                            Dataset dataset = Dataset.open(key.getTablePath(), allocator);
+                            return dataset.getFragments().stream()
+                                    .collect(Collectors.toMap(Fragment::getId, f -> f));
+                        }
+                    });
+
+    // Cache for schema metadata - shared across all LanceReader instances per worker JVM
+    private static final NonEvictableLoadingCache<CacheKey, Schema> SCHEMA_CACHE =
+            SafeCaches.buildNonEvictableCache(
+                    CacheBuilder.newBuilder()
+                            .maximumSize(100)
+                            .expireAfterAccess(1, TimeUnit.HOURS),
+                    new CacheLoader<>()
+                    {
+                        @Override
+                        public Schema load(CacheKey key)
+                        {
+                            log.debug("Loading schema for table: %s", key.getTablePath());
+                            try (Dataset dataset = Dataset.open(key.getTablePath(), allocator)) {
+                                return dataset.getSchema();
+                            }
+                        }
+                    });
 
     private final String root;
     private final LanceNamespace namespace;
@@ -138,17 +185,46 @@ public class LanceReader
         return getFragments(getTablePath(tableHandle.getTableName()));
     }
 
+    /**
+     * Get a specific fragment by ID from the cache.
+     * This is useful for workers that need to access a specific fragment for data reading.
+     *
+     * @param tablePath the path to the lance table
+     * @param fragmentId the fragment ID to retrieve
+     * @return the Fragment object, or null if not found
+     */
+    public static Fragment getFragment(String tablePath, int fragmentId)
+    {
+        try {
+            CacheKey key = new CacheKey(tablePath);
+            Map<Integer, Fragment> fragments = FRAGMENT_CACHE.get(key);
+            return fragments.get(fragmentId);
+        }
+        catch (ExecutionException e) {
+            throw new RuntimeException("Failed to get fragment from cache for table: " + tablePath, e);
+        }
+    }
+
     private static List<Fragment> getFragments(String tablePath)
     {
-        try (Dataset dataset = Dataset.open(tablePath, allocator)) {
-            return dataset.getFragments();
+        try {
+            CacheKey key = new CacheKey(tablePath);
+            Map<Integer, Fragment> fragmentMap = FRAGMENT_CACHE.get(key);
+            return List.copyOf(fragmentMap.values());
+        }
+        catch (ExecutionException e) {
+            throw new RuntimeException("Failed to get fragments from cache for table: " + tablePath, e);
         }
     }
 
     private static Schema getSchema(String tablePath)
     {
-        try (Dataset dataset = Dataset.open(tablePath, allocator)) {
-            return dataset.getSchema();
+        try {
+            CacheKey key = new CacheKey(tablePath);
+            return SCHEMA_CACHE.get(key);
+        }
+        catch (ExecutionException e) {
+            throw new RuntimeException("Failed to get schema from cache for table: " + tablePath, e);
         }
     }
 
@@ -174,6 +250,41 @@ public class LanceReader
             catch (Exception e) {
                 // ignore for now
             }
+        }
+    }
+
+    /**
+     * Cache key for dataset metadata caching.
+     * Uses table path as the unique identifier.
+     */
+    private static class CacheKey
+    {
+        private final String tablePath;
+
+        CacheKey(String tablePath)
+        {
+            this.tablePath = tablePath;
+        }
+
+        public String getTablePath()
+        {
+            return tablePath;
+        }
+
+        @Override
+        public boolean equals(Object o)
+        {
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            CacheKey cacheKey = (CacheKey) o;
+            return Objects.equals(tablePath, cacheKey.tablePath);
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(tablePath);
         }
     }
 }

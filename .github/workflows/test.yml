@@ -18,8 +18,8 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
-    - name: Build and test with Maven
-      run: ./mvnw clean install -Dair.check.skip-enforcer=true
+    - name: Build and test
+      run: make install
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
