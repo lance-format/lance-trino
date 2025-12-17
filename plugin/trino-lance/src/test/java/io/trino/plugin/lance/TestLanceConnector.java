@@ -16,8 +16,6 @@ package io.trino.plugin.lance;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.QueryRunner;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.DisabledOnOs;
-import org.junit.jupiter.api.condition.OS;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,11 +23,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 // to generate TPCH test data. BaseConnectorTest requires TPCH tables (nation, region,
 // customer, orders, lineitem, part, supplier, partsupp) to be populated.
 // See TestLanceConnectorTest in ~/oss/trino for reference implementation.
-//
-// Note: This test is disabled on macOS due to a Jetty ServerConnector issue
-// (ClosedChannelException) that occurs on macOS. Trino's CI only tests on Linux,
-// so this is consistent with upstream behavior.
-@DisabledOnOs(value = OS.MAC, disabledReason = "Jetty ServerConnector fails on macOS with ClosedChannelException")
 public class TestLanceConnector
         extends AbstractTestQueryFramework
 {
@@ -91,12 +84,14 @@ public class TestLanceConnector
     public void testSelectWithPredicate()
     {
         // Filter is applied by Trino engine, not pushed down to connector
-        // WHERE b > 1 means b=2,3 => rows with b=2,3 (columns in alphabetical order: b, c, x, y)
-        // Data: b=0,1,2,3 / c=0,2,4,6 / x=0,3,6,9 / y=0,-1,-2,-3
+        // Schema order: x, y, b, c
+        // Actual data: x=0,1,2,3 / y=0,2,4,6 / b=0,3,6,9 / c=0,-1,-2,-3
+        // WHERE b > 1 filters to rows where b > 1, i.e., b=3,6,9 (rows 1,2,3)
         assertThat(query("SELECT * FROM test_table1 WHERE b > 1"))
                 .matches("""
                         VALUES
-                        (BIGINT '2', BIGINT '4', BIGINT '6', BIGINT '-2'),
+                        (BIGINT '1', BIGINT '2', BIGINT '3', BIGINT '-1'),
+                        (2, 4, 6, -2),
                         (3, 6, 9, -3)
                         """);
     }
@@ -133,26 +128,26 @@ public class TestLanceConnector
         assertThat(query("SELECT COUNT(*) FROM test_table1"))
                 .matches("VALUES (BIGINT '4')");
 
-        // SUM of column b: 0 + 1 + 2 + 3 = 6
+        // SUM of column b: 0 + 3 + 6 + 9 = 18
         assertThat(query("SELECT SUM(b) FROM test_table1"))
-                .matches("VALUES (BIGINT '6')");
+                .matches("VALUES (BIGINT '18')");
 
-        // AVG of column c: (0 + 2 + 4 + 6) / 4 = 3.0
+        // AVG of column c: (0 + (-1) + (-2) + (-3)) / 4 = -1.5
         assertThat(query("SELECT AVG(c) FROM test_table1"))
-                .matches("VALUES (3.0e0)");
+                .matches("VALUES (-1.5e0)");
     }
 
     @Test
     public void testSelectWithGroupBy()
     {
-        // Group by column c which has values: 0, 2, 4, 6
+        // Group by column c which has values: 0, -1, -2, -3
         assertThat(query("SELECT c, COUNT(*) FROM test_table1 GROUP BY c ORDER BY c"))
                 .matches("""
                         VALUES
-                        (BIGINT '0', BIGINT '1'),
-                        (2, 1),
-                        (4, 1),
-                        (6, 1)
+                        (BIGINT '-3', BIGINT '1'),
+                        (-2, 1),
+                        (-1, 1),
+                        (0, 1)
                         """);
     }
 
@@ -160,14 +155,14 @@ public class TestLanceConnector
     public void testSelectWithProjection()
     {
         // Test selecting columns in different order than schema (schema is x, y, b, c)
-        // b values: 0, 1, 2, 3; x values: 0, 3, 6, 9
+        // Actual data: x=0,1,2,3 / b=0,3,6,9
         assertThat(query("SELECT b, x FROM test_table1 ORDER BY b"))
                 .matches("""
                         VALUES
                         (BIGINT '0', BIGINT '0'),
-                        (1, 3),
-                        (2, 6),
-                        (3, 9)
+                        (3, 1),
+                        (6, 2),
+                        (9, 3)
                         """);
     }
 
