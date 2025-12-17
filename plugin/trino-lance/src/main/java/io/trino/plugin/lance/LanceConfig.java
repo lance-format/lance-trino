@@ -19,15 +19,14 @@ import io.airlift.units.Duration;
 import io.airlift.units.MinDuration;
 import jakarta.validation.constraints.NotNull;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
  * Configuration for Lance connector.
  * <p>
- * Configuration uses the same property names as other Lance integrations (Spark, etc.)
- * for consistency. Properties are passed directly to the LanceNamespace implementation.
+ * This class contains only the connector-specific configuration properties.
+ * All other properties (e.g., lance.root, lance.uri, etc.) are passed through
+ * to the LanceNamespace implementation via the catalog properties map.
  * <p>
  * Directory namespace example:
  * <pre>
@@ -42,6 +41,8 @@ import java.util.concurrent.TimeUnit;
  * lance.impl=rest
  * lance.uri=https://api.lancedb.com
  * </pre>
+ * <p>
+ * All properties prefixed with "lance." are passed to the namespace implementation.
  */
 public class LanceConfig
 {
@@ -52,16 +53,6 @@ public class LanceConfig
      * or full class name.
      */
     private String impl = "dir";
-
-    /**
-     * Root directory for DirectoryNamespace.
-     */
-    private String root;
-
-    /**
-     * URI for RestNamespace (REST API endpoint).
-     */
-    private String uri;
 
     private Duration connectionTimeout = new Duration(1, TimeUnit.MINUTES);
 
@@ -79,48 +70,6 @@ public class LanceConfig
     {
         this.impl = impl;
         return this;
-    }
-
-    public String getRoot()
-    {
-        return root;
-    }
-
-    @Config("lance.root")
-    @ConfigDescription("Root directory for DirectoryNamespace (e.g., /path/to/warehouse, s3://bucket/path)")
-    public LanceConfig setRoot(String root)
-    {
-        this.root = root;
-        return this;
-    }
-
-    public String getUri()
-    {
-        return uri;
-    }
-
-    @Config("lance.uri")
-    @ConfigDescription("REST API endpoint for RestNamespace")
-    public LanceConfig setUri(String uri)
-    {
-        this.uri = uri;
-        return this;
-    }
-
-    /**
-     * Build namespace properties map to pass to LanceNamespace.connect().
-     * This includes root, uri, and any other properties needed by the namespace implementation.
-     */
-    public Map<String, String> getNamespaceProperties()
-    {
-        Map<String, String> properties = new HashMap<>();
-        if (root != null) {
-            properties.put("root", root);
-        }
-        if (uri != null) {
-            properties.put("uri", uri);
-        }
-        return properties;
     }
 
     @MinDuration("15s")

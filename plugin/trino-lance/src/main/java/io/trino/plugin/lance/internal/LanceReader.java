@@ -16,6 +16,7 @@ package io.trino.plugin.lance.internal;
 import com.google.inject.Inject;
 import io.trino.plugin.lance.LanceColumnHandle;
 import io.trino.plugin.lance.LanceConfig;
+import io.trino.plugin.lance.LanceNamespaceProperties;
 import io.trino.plugin.lance.LanceTableHandle;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
@@ -55,12 +56,20 @@ public class LanceReader
     private final LanceNamespace namespace;
 
     @Inject
-    public LanceReader(LanceConfig lanceConfig)
+    public LanceReader(LanceConfig lanceConfig, @LanceNamespaceProperties Map<String, String> namespaceProperties)
     {
         String impl = lanceConfig.getImpl();
 
-        // Build namespace properties from config
-        Map<String, String> properties = new HashMap<>(lanceConfig.getNamespaceProperties());
+        // Build namespace properties from the raw properties map
+        // Filter to only include lance.* properties (minus the prefix) for namespace initialization
+        Map<String, String> properties = new HashMap<>();
+        for (Map.Entry<String, String> entry : namespaceProperties.entrySet()) {
+            String key = entry.getKey();
+            if (key.startsWith("lance.")) {
+                // Strip the "lance." prefix for namespace properties
+                properties.put(key.substring(6), entry.getValue());
+            }
+        }
 
         // For DirectoryNamespace, ensure default settings are applied
         if ("dir".equals(impl)) {

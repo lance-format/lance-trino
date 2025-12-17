@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.lance;
 
+import com.google.common.collect.ImmutableMap;
 import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
@@ -106,8 +107,9 @@ public class TestLargeUtf8Support
             }
 
             // Step 2: Read the dataset using LanceReader and verify schema mapping
-            LanceConfig config = new LanceConfig().setRoot(tempDir.toString());
-            LanceReader reader = new LanceReader(config);
+            LanceConfig config = new LanceConfig();
+            Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
+            LanceReader reader = new LanceReader(config, catalogProperties);
 
             // Get column handles
             Map<String, ColumnHandle> columnHandles = reader.getColumnHandle("large_utf8_test");
@@ -163,8 +165,9 @@ public class TestLargeUtf8Support
             }
 
             // Create LanceMetadata and verify it can read the table
-            LanceConfig config = new LanceConfig().setRoot(tempDir.toString());
-            LanceReader reader = new LanceReader(config);
+            LanceConfig config = new LanceConfig();
+            Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
+            LanceReader reader = new LanceReader(config, catalogProperties);
             LanceMetadata metadata = new LanceMetadata(reader, config);
 
             // Get table handle - this should NOT return null anymore
