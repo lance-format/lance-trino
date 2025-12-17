@@ -36,7 +36,7 @@ public final class LanceQueryRunner
     public static Builder builder()
     {
         return new Builder()
-                .addConnectorProperty("lance.uri", Resources.getResource(LanceReader.class, "/example_db").toString());
+                .addConnectorProperty("lance.root", Resources.getResource(LanceReader.class, "/example_db").toString());
     }
 
     public static final class Builder

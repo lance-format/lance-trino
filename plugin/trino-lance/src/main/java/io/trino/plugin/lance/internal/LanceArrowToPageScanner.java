@@ -13,7 +13,6 @@
  */
 package io.trino.plugin.lance.internal;
 
-import com.lancedb.lance.ipc.LanceScanner;
 import io.airlift.slice.Slice;
 import io.trino.plugin.lance.LanceColumnHandle;
 import io.trino.spi.PageBuilder;
@@ -42,6 +41,7 @@ import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.ipc.ArrowReader;
 import org.apache.arrow.vector.util.TransferPair;
+import org.lance.ipc.LanceScanner;
 
 import java.io.IOException;
 import java.util.List;
@@ -64,6 +64,7 @@ public class LanceArrowToPageScanner
 {
     private final BufferAllocator allocator;
     private final List<Type> columnTypes;
+    private final List<String> columnNames;
     private final ScannerFactory scannerFactory;
 
     private final LanceScanner lanceScanner;
@@ -73,16 +74,18 @@ public class LanceArrowToPageScanner
     public LanceArrowToPageScanner(BufferAllocator allocator, String path, List<LanceColumnHandle> columns, ScannerFactory scannerFactory)
     {
         this.allocator = requireNonNull(allocator, "allocator is null");
-        this.columnTypes = requireNonNull(columns, "columns is null").stream().map(LanceColumnHandle::trinoType)
+        requireNonNull(columns, "columns is null");
+        this.columnTypes = columns.stream().map(LanceColumnHandle::trinoType)
                 .collect(toImmutableList());
+        this.columnNames = columns.stream().map(LanceColumnHandle::name).collect(toImmutableList());
         this.scannerFactory = scannerFactory;
         try {
-            lanceScanner = scannerFactory.open(path, allocator);
+            lanceScanner = scannerFactory.open(path, allocator, columnNames);
             this.arrowReader = lanceScanner.scanBatches();
             this.vectorSchemaRoot = arrowReader.getVectorSchemaRoot();
         }
         catch (IOException e) {
-            throw new RuntimeException("Unalbe to initialize lance DB connection", e);
+            throw new RuntimeException("Unable to initialize Lance connection", e);
         }
     }
 
@@ -98,12 +101,16 @@ public class LanceArrowToPageScanner
 
     public void convert(PageBuilder pageBuilder)
     {
-        pageBuilder.declarePositions(vectorSchemaRoot.getRowCount());
-        List<FieldVector> fieldVectors = vectorSchemaRoot.getFieldVectors();
+        int rowCount = vectorSchemaRoot.getRowCount();
+        pageBuilder.declarePositions(rowCount);
 
+        // For COUNT(*) and similar queries, columnTypes may be empty
+        // In that case, we just need to report the row count, no actual conversion needed
+        // Look up vectors by name to ensure correct column ordering matches the requested projection
         for (int column = 0; column < columnTypes.size(); column++) {
-            convertType(pageBuilder.getBlockBuilder(column), columnTypes.get(column), fieldVectors.get(column), 0,
-                    fieldVectors.get(column).getValueCount());
+            FieldVector fieldVector = vectorSchemaRoot.getVector(columnNames.get(column));
+            convertType(pageBuilder.getBlockBuilder(column), columnTypes.get(column), fieldVector, 0,
+                    fieldVector.getValueCount());
         }
         vectorSchemaRoot.clear();
     }

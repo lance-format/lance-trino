@@ -14,7 +14,6 @@
 package io.trino.plugin.lance;
 
 import com.google.inject.Inject;
-import com.lancedb.lance.DatasetFragment;
 import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
@@ -24,6 +23,7 @@ import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.DynamicFilter;
 import io.trino.spi.connector.FixedSplitSource;
+import org.lance.Fragment;
 
 import java.util.Collections;
 import java.util.List;
@@ -47,14 +47,9 @@ public class LanceSplitManager
     public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session,
             ConnectorTableHandle tableHandle, DynamicFilter dynamicFilter, Constraint constraint)
     {
-        if (lanceConfig.getConnectorType() == LanceConfig.Type.FRAGMENT) {
-            List<Integer> fragmentIds = lanceReader.getFragments((LanceTableHandle) tableHandle)
-                    .stream().map(DatasetFragment::getId).toList();
-            return new FixedSplitSource(fragmentIds.stream().map(id -> new LanceSplit(Collections.singletonList(id))).toList());
-        }
-        else {
-            // use empty list to indicate dataset based page source split
-            return new FixedSplitSource(new LanceSplit(Collections.emptyList()));
-        }
+        // Always distribute fragments - each fragment becomes a split for parallel processing
+        List<Integer> fragmentIds = lanceReader.getFragments((LanceTableHandle) tableHandle)
+                .stream().map(Fragment::getId).toList();
+        return new FixedSplitSource(fragmentIds.stream().map(id -> new LanceSplit(Collections.singletonList(id))).toList());
     }
 }

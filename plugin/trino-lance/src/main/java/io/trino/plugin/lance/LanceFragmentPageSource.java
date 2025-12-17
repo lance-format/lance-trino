@@ -13,13 +13,14 @@
  */
 package io.trino.plugin.lance;
 
-import com.lancedb.lance.Dataset;
-import com.lancedb.lance.DatasetFragment;
-import com.lancedb.lance.ipc.LanceScanner;
 import io.airlift.log.Logger;
 import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.plugin.lance.internal.ScannerFactory;
 import org.apache.arrow.memory.BufferAllocator;
+import org.lance.Dataset;
+import org.lance.Fragment;
+import org.lance.ipc.LanceScanner;
+import org.lance.ipc.ScanOptions;
 
 import java.util.List;
 
@@ -29,19 +30,16 @@ public class LanceFragmentPageSource
         extends LanceBasePageSource
 {
     private static final Logger log = Logger.get(LanceFragmentPageSource.class);
-    private final int fragmentId;
 
-    public LanceFragmentPageSource(LanceReader lanceReader, LanceTableHandle tableHandle, List<Integer> fragments, int maxReadRowsRetries)
+    public LanceFragmentPageSource(LanceReader lanceReader, LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<Integer> fragments, int maxReadRowsRetries)
     {
-        super(lanceReader, tableHandle, maxReadRowsRetries);
-        checkState(fragments.size() == 1, "only one fragment is allowed, found: " + fragments.size());
-        this.fragmentId = fragments.getFirst();
+        super(lanceReader, tableHandle, columns, maxReadRowsRetries, createScannerFactory(fragments));
     }
 
-    @Override
-    public ScannerFactory getScannerFactory()
+    private static ScannerFactory createScannerFactory(List<Integer> fragments)
     {
-        return new FragmentScannerFactory(fragmentId);
+        checkState(fragments.size() == 1, "only one fragment is allowed, found: " + fragments.size());
+        return new FragmentScannerFactory(fragments.getFirst());
     }
 
     public static class FragmentScannerFactory
@@ -49,7 +47,7 @@ public class LanceFragmentPageSource
     {
         private final int fragmentId;
         private Dataset lanceDataset;
-        private DatasetFragment lanceFragment;
+        private Fragment lanceFragment;
         private LanceScanner lanceScanner;
 
         public FragmentScannerFactory(int fragmentId)
@@ -58,11 +56,20 @@ public class LanceFragmentPageSource
         }
 
         @Override
-        public LanceScanner open(String tablePath, BufferAllocator allocator)
+        public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns)
         {
             this.lanceDataset = Dataset.open(tablePath, allocator);
-            this.lanceFragment = lanceDataset.getFragments().get(this.fragmentId);
-            this.lanceScanner = lanceFragment.newScan();
+            // Find fragment by ID, not by list index (fragment IDs may not match list positions)
+            this.lanceFragment = lanceDataset.getFragments().stream()
+                    .filter(f -> f.getId() == this.fragmentId)
+                    .findFirst()
+                    .orElseThrow(() -> new RuntimeException("Fragment not found: " + this.fragmentId));
+            ScanOptions.Builder optionsBuilder = new ScanOptions.Builder();
+            // Only set columns if non-empty; empty list means read all columns
+            if (!columns.isEmpty()) {
+                optionsBuilder.columns(columns);
+            }
+            this.lanceScanner = lanceFragment.newScan(optionsBuilder.build());
             return lanceScanner;
         }
 

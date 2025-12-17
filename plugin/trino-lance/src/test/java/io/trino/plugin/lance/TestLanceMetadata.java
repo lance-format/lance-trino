@@ -38,12 +38,14 @@ import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_METHOD;
 @TestInstance(PER_METHOD)
 public class TestLanceMetadata
 {
-    private static final String TEST_DB_PATH = "file://" + Resources.getResource(TestLanceMetadata.class, "/example_db/").getPath();
+    // Use URL.toString() to match the format used by LanceReader (file:/... vs file:///...)
+    private static final String TEST_DB_PATH = Resources.getResource(TestLanceMetadata.class, "/example_db").toString() + "/";
     private static final LanceTableHandle TEST_TABLE_1_HANDLE = new LanceTableHandle("default", "test_table1",
-            TEST_DB_PATH + "test_table1.lance/");
+            TEST_DB_PATH + "test_table1.lance");
     private static final LanceTableHandle TEST_TABLE_2_HANDLE = new LanceTableHandle("default", "test_table2",
-            TEST_DB_PATH + "test_table2.lance/");
+            TEST_DB_PATH + "test_table2.lance");
 
+    // Actual column order in test data: x, y, b, c
     private static final ArrowType INT64_TYPE = new ArrowType.Int(64, true);
     private LanceMetadata metadata;
 
@@ -51,11 +53,11 @@ public class TestLanceMetadata
     public void setUp()
             throws Exception
     {
-        URL lanceDbURL = Resources.getResource(LanceReader.class, "/example_db");
-        assertThat(lanceDbURL)
+        URL lanceURL = Resources.getResource(LanceReader.class, "/example_db");
+        assertThat(lanceURL)
                 .describedAs("example db is null")
                 .isNotNull();
-        LanceConfig lanceConfig = new LanceConfig().setLanceDbUri(lanceDbURL.toString());
+        LanceConfig lanceConfig = new LanceConfig().setRoot(lanceURL.toString());
         LanceReader lanceReader = new LanceReader(lanceConfig);
         metadata = new LanceMetadata(lanceReader, lanceConfig);
     }
@@ -101,11 +103,12 @@ public class TestLanceMetadata
         // known table
         ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(SESSION, TEST_TABLE_1_HANDLE);
         assertThat(tableMetadata.getTable()).isEqualTo(new SchemaTableName("default", "test_table1"));
+        // Column order in test data: x, y, b, c
         assertThat(tableMetadata.getColumns()).isEqualTo(ImmutableList.of(
-                new LanceColumnHandle("b", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)).getColumnMetadata(),
-                new LanceColumnHandle("c", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)).getColumnMetadata(),
                 new LanceColumnHandle("x", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)).getColumnMetadata(),
-                new LanceColumnHandle("y", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)).getColumnMetadata()));
+                new LanceColumnHandle("y", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)).getColumnMetadata(),
+                new LanceColumnHandle("b", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)).getColumnMetadata(),
+                new LanceColumnHandle("c", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)).getColumnMetadata()));
 
         // unknown tables should produce null
         assertThat(metadata.getTableMetadata(SESSION, new LanceTableHandle("unknown", "unknown", "unknown"))).isNull();

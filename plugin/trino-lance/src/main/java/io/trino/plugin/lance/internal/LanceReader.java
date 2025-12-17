@@ -14,9 +14,6 @@
 package io.trino.plugin.lance.internal;
 
 import com.google.inject.Inject;
-import com.lancedb.lance.Dataset;
-import com.lancedb.lance.DatasetFragment;
-import com.lancedb.lancedb.Connection;
 import io.trino.plugin.lance.LanceColumnHandle;
 import io.trino.plugin.lance.LanceConfig;
 import io.trino.plugin.lance.LanceTableHandle;
@@ -28,40 +25,68 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
+import org.lance.Dataset;
+import org.lance.Fragment;
+import org.lance.namespace.LanceNamespace;
+import org.lance.namespace.model.ListTablesRequest;
+import org.lance.namespace.model.ListTablesResponse;
 
-import java.net.URI;
-import java.nio.file.Path;
+import java.io.Closeable;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
 public class LanceReader
+        implements Closeable
 {
-    // TODO: support schema
+    // TODO: support multiple schemas
     public static final String SCHEMA = "default";
     private static final String TABLE_PATH_SUFFIX = ".lance";
     private static final BufferAllocator allocator = new RootAllocator(
             RootAllocator.configBuilder().from(RootAllocator.defaultConfig()).maxAllocation(4 * 1024 * 1024).build());
 
-    private final Path dbPath;
-    // TODO: revisit whether we want to keep long running connection or create one connection per
-    private final Connection conn;
+    private final String root;
+    private final LanceNamespace namespace;
 
     @Inject
     public LanceReader(LanceConfig lanceConfig)
     {
-        URI lanceDbURI = lanceConfig.getLanceDbUri();
-        dbPath = Path.of(lanceDbURI);
-        conn = Connection.connect(lanceDbURI.toString());
+        String impl = lanceConfig.getImpl();
+
+        // Build namespace properties from config
+        Map<String, String> properties = new HashMap<>(lanceConfig.getNamespaceProperties());
+
+        // For DirectoryNamespace, ensure default settings are applied
+        if ("dir".equals(impl)) {
+            properties.putIfAbsent("manifest_enabled", "true");
+            properties.putIfAbsent("dir_listing_enabled", "true");
+        }
+
+        // Use LanceNamespace.connect() to dynamically load and initialize the namespace
+        this.namespace = LanceNamespace.connect(impl, properties, allocator);
+
+        // Extract root for table path construction (used by DirectoryNamespace)
+        this.root = properties.get("root");
     }
 
     public List<SchemaTableName> listTables(ConnectorSession session, String schema)
     {
         if (SCHEMA.equals(schema)) {
-            return conn.tableNames().stream().map(e -> new SchemaTableName(schema, e)).collect(Collectors.toList());
+            ListTablesRequest request = new ListTablesRequest();
+            ListTablesResponse response = namespace.listTables(request);
+            Set<String> tables = response.getTables();
+            if (tables == null || tables.isEmpty()) {
+                return Collections.emptyList();
+            }
+            return tables.stream()
+                    .map(tableName -> new SchemaTableName(schema, tableName))
+                    .collect(Collectors.toList());
         }
         else {
             return Collections.emptyList();
@@ -77,45 +102,69 @@ public class LanceReader
 
     public Map<String, ColumnHandle> getColumnHandle(String tableName)
     {
-        Path tablePath = getTablePath(dbPath, tableName);
+        String tablePath = getTablePath(tableName);
         Schema arrowSchema = getSchema(tablePath);
-        return arrowSchema.getFields().stream().collect(Collectors.toMap(Field::getName,
+        // Use LinkedHashMap to preserve column order
+        return arrowSchema.getFields().stream().collect(Collectors.toMap(
+                Field::getName,
                 f -> new LanceColumnHandle(f.getName(), LanceColumnHandle.toTrinoType(f.getFieldType().getType()),
-                        f.getFieldType())));
+                        f.getFieldType()),
+                (v1, v2) -> v1,
+                LinkedHashMap::new));
     }
 
-    public Path getTablePath(ConnectorSession session, SchemaTableName schemaTableName)
+    public String getTablePath(ConnectorSession session, SchemaTableName schemaTableName)
     {
         List<SchemaTableName> schemaTableNameList = listTables(session, schemaTableName.getSchemaName());
         if (schemaTableNameList.contains(schemaTableName)) {
-            return getTablePath(dbPath, schemaTableName.getTableName());
+            return getTablePath(schemaTableName.getTableName());
         }
         else {
             return null;
         }
     }
 
-    public List<DatasetFragment> getFragments(LanceTableHandle tableHandle)
+    public List<Fragment> getFragments(LanceTableHandle tableHandle)
     {
-        return getFragments(getTablePath(dbPath, tableHandle.getTableName()));
+        return getFragments(getTablePath(tableHandle.getTableName()));
     }
 
-    private static List<DatasetFragment> getFragments(Path tablePath)
+    private static List<Fragment> getFragments(String tablePath)
     {
-        try (Dataset dataset = Dataset.open(tablePath.toUri().toString(), allocator)) {
+        try (Dataset dataset = Dataset.open(tablePath, allocator)) {
             return dataset.getFragments();
         }
     }
 
-    private static Schema getSchema(Path tablePath)
+    private static Schema getSchema(String tablePath)
     {
-        try (Dataset dataset = Dataset.open(tablePath.toUri().toString(), allocator)) {
+        try (Dataset dataset = Dataset.open(tablePath, allocator)) {
             return dataset.getSchema();
         }
     }
 
-    private static Path getTablePath(Path dbPath, String tableName)
+    private String getTablePath(String tableName)
     {
-        return dbPath.resolve(tableName + TABLE_PATH_SUFFIX);
+        // Construct table path from root location and table name
+        String path = root;
+        if (!path.endsWith("/")) {
+            path = path + "/";
+        }
+        return path + tableName + TABLE_PATH_SUFFIX;
+    }
+
+    @Override
+    public void close()
+    {
+        // LanceNamespace doesn't have a close method in the interface,
+        // but implementations may be Closeable
+        if (namespace instanceof Closeable) {
+            try {
+                ((Closeable) namespace).close();
+            }
+            catch (Exception e) {
+                // ignore for now
+            }
+        }
     }
 }

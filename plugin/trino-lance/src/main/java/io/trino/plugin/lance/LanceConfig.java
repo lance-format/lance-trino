@@ -14,36 +14,113 @@
 package io.trino.plugin.lance;
 
 import io.airlift.configuration.Config;
+import io.airlift.configuration.ConfigDescription;
 import io.airlift.units.Duration;
 import io.airlift.units.MinDuration;
 import jakarta.validation.constraints.NotNull;
 
-import java.net.URI;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Configuration for Lance connector.
+ * <p>
+ * Configuration uses the same property names as other Lance integrations (Spark, etc.)
+ * for consistency. Properties are passed directly to the LanceNamespace implementation.
+ * <p>
+ * Directory namespace example:
+ * <pre>
+ * connector.name=lance
+ * lance.impl=dir
+ * lance.root=/path/to/warehouse
+ * </pre>
+ * <p>
+ * REST namespace example:
+ * <pre>
+ * connector.name=lance
+ * lance.impl=rest
+ * lance.uri=https://api.lancedb.com
+ * </pre>
+ */
 public class LanceConfig
 {
     /**
-     * URL used to access a lancedb via REST client
+     * Namespace implementation type.
+     * Built-in: "dir" for DirectoryNamespace, "rest" for RestNamespace.
+     * External implementations can be specified by short name (if registered)
+     * or full class name.
      */
-    private URI lanceDbUri = URI.create("dummy://db.connect");
+    private String impl = "dir";
+
+    /**
+     * Root directory for DirectoryNamespace.
+     */
+    private String root;
+
+    /**
+     * URI for RestNamespace (REST API endpoint).
+     */
+    private String uri;
 
     private Duration connectionTimeout = new Duration(1, TimeUnit.MINUTES);
 
     private int fetchRetryCount = 5;
 
-    private String connectorType = Type.DATASET.name();
-
-    public URI getLanceDbUri()
+    @NotNull
+    public String getImpl()
     {
-        return lanceDbUri;
+        return impl;
+    }
+
+    @Config("lance.impl")
+    @ConfigDescription("Namespace implementation: 'dir', 'rest', 'glue', 'hive2', 'hive3', or full class name")
+    public LanceConfig setImpl(String impl)
+    {
+        this.impl = impl;
+        return this;
+    }
+
+    public String getRoot()
+    {
+        return root;
+    }
+
+    @Config("lance.root")
+    @ConfigDescription("Root directory for DirectoryNamespace (e.g., /path/to/warehouse, s3://bucket/path)")
+    public LanceConfig setRoot(String root)
+    {
+        this.root = root;
+        return this;
+    }
+
+    public String getUri()
+    {
+        return uri;
     }
 
     @Config("lance.uri")
-    public LanceConfig setLanceDbUri(String lanceDbUri)
+    @ConfigDescription("REST API endpoint for RestNamespace")
+    public LanceConfig setUri(String uri)
     {
-        this.lanceDbUri = URI.create(lanceDbUri);
+        this.uri = uri;
         return this;
+    }
+
+    /**
+     * Build namespace properties map to pass to LanceNamespace.connect().
+     * This includes root, uri, and any other properties needed by the namespace implementation.
+     */
+    public Map<String, String> getNamespaceProperties()
+    {
+        Map<String, String> properties = new HashMap<>();
+        if (root != null) {
+            properties.put("root", root);
+        }
+        if (uri != null) {
+            properties.put("uri", uri);
+        }
+        return properties;
     }
 
     @MinDuration("15s")
@@ -70,24 +147,5 @@ public class LanceConfig
     {
         this.fetchRetryCount = fetchRetryCount;
         return this;
-    }
-
-    public Type getConnectorType()
-    {
-        return Type.valueOf(this.connectorType);
-    }
-
-    @Config("lance.connector-type")
-    public LanceConfig setConnectorType(String connectorType)
-    {
-        // use enum to check and ensure connector type is supported
-        this.connectorType = Type.valueOf(connectorType).name();
-        return this;
-    }
-
-    public enum Type
-    {
-        DATASET,
-        FRAGMENT
     }
 }

@@ -31,7 +31,7 @@ final class TestLancePlugin
         factory.create(
                         "test",
                         ImmutableMap.of(
-                                "lance.uri", Resources.getResource(LanceReader.class, "/example_db").toString(),
+                                "lance.root", Resources.getResource(LanceReader.class, "/example_db").toString(),
                                 "bootstrap.quiet", "true"),
                         new TestingConnectorContext())
                 .shutdown();
