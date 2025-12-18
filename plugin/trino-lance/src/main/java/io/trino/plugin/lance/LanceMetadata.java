@@ -17,40 +17,72 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
+import io.airlift.json.JsonCodec;
+import io.airlift.log.Logger;
+import io.airlift.slice.Slice;
+import io.trino.plugin.lance.internal.LancePageToArrowConverter;
 import io.trino.plugin.lance.internal.LanceReader;
+import io.trino.plugin.lance.internal.LanceWriter;
+import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
+import io.trino.spi.connector.ConnectorInsertTableHandle;
 import io.trino.spi.connector.ConnectorMetadata;
+import io.trino.spi.connector.ConnectorOutputMetadata;
+import io.trino.spi.connector.ConnectorOutputTableHandle;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTableHandle;
+import io.trino.spi.connector.ConnectorTableLayout;
 import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.ConnectorTableVersion;
 import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.ConstraintApplicationResult;
 import io.trino.spi.connector.LimitApplicationResult;
 import io.trino.spi.connector.ProjectionApplicationResult;
+import io.trino.spi.connector.RetryMode;
+import io.trino.spi.connector.SaveMode;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
+import io.trino.spi.statistics.ComputedStatistics;
+import org.apache.arrow.vector.types.pojo.Schema;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
+import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
+import static io.trino.spi.StandardErrorCode.NOT_FOUND;
 import static java.util.Objects.requireNonNull;
 
 public class LanceMetadata
         implements ConnectorMetadata
 {
+    private static final Logger log = Logger.get(LanceMetadata.class);
+
     private final LanceReader lanceReader;
+    private final LanceWriter lanceWriter;
     private final LanceConfig lanceConfig;
+    private final JsonCodec<LanceCommitTaskData> commitTaskDataCodec;
 
     @Inject
-    public LanceMetadata(LanceReader lanceReader, LanceConfig lanceConfig)
+    public LanceMetadata(
+            LanceReader lanceReader,
+            LanceWriter lanceWriter,
+            LanceConfig lanceConfig,
+            JsonCodec<LanceCommitTaskData> commitTaskDataCodec)
     {
-        this.lanceReader = requireNonNull(lanceReader, "lanceClient is null");
-        this.lanceConfig = lanceConfig;
+        this.lanceReader = requireNonNull(lanceReader, "lanceReader is null");
+        this.lanceWriter = requireNonNull(lanceWriter, "lanceWriter is null");
+        this.lanceConfig = requireNonNull(lanceConfig, "lanceConfig is null");
+        this.commitTaskDataCodec = requireNonNull(commitTaskDataCodec, "commitTaskDataCodec is null");
     }
 
     @Override
@@ -150,6 +182,209 @@ public class LanceMetadata
             ConnectorTableHandle table, Constraint constraint)
     {
         // TODO: support filter pushdown
+        return Optional.empty();
+    }
+
+    // ===== DROP TABLE =====
+
+    @Override
+    public void dropTable(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
+        String tablePath = lanceTableHandle.getTablePath();
+
+        log.debug("dropTable: table=%s, path=%s", lanceTableHandle.getTableName(), tablePath);
+
+        // Delete the dataset files
+        lanceWriter.dropDataset(tablePath);
+
+        // Invalidate cache
+        lanceReader.invalidateCache(tablePath);
+    }
+
+    // ===== CREATE TABLE =====
+
+    @Override
+    public void createTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, SaveMode saveMode)
+    {
+        SchemaTableName tableName = tableMetadata.getTable();
+        String tablePath = lanceReader.getTablePathForNewTable(tableName.getTableName());
+
+        // Check if table already exists
+        String existingPath = lanceReader.getTablePath(session, tableName);
+        if (existingPath != null) {
+            if (saveMode == SaveMode.FAIL) {
+                throw new TrinoException(ALREADY_EXISTS, "Table already exists: " + tableName);
+            }
+            else if (saveMode == SaveMode.IGNORE) {
+                return;
+            }
+            // For REPLACE, we continue and create new table
+        }
+
+        // Convert to Arrow schema and create empty dataset
+        Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns());
+        lanceWriter.createEmptyDataset(tablePath, arrowSchema, lanceWriter.getDefaultWriteParams());
+
+        log.debug("createTable: created empty table %s at %s", tableName, tablePath);
+    }
+
+    @Override
+    public ConnectorOutputTableHandle beginCreateTable(
+            ConnectorSession session,
+            ConnectorTableMetadata tableMetadata,
+            Optional<ConnectorTableLayout> layout,
+            RetryMode retryMode,
+            boolean replace)
+    {
+        SchemaTableName tableName = tableMetadata.getTable();
+        String tablePath = lanceReader.getTablePathForNewTable(tableName.getTableName());
+
+        // Check if table already exists
+        String existingPath = lanceReader.getTablePath(session, tableName);
+        if (existingPath != null) {
+            if (!replace) {
+                throw new TrinoException(ALREADY_EXISTS, "Table already exists: " + tableName);
+            }
+            // Drop existing table for replace
+            log.debug("beginCreateTable: dropping existing table for replace: %s", existingPath);
+            lanceWriter.dropDataset(existingPath);
+            lanceReader.invalidateCache(existingPath);
+        }
+
+        // Convert columns to LanceColumnHandle
+        List<LanceColumnHandle> columns = tableMetadata.getColumns().stream()
+                .map(col -> new LanceColumnHandle(col.getName(), col.getType(), col.isNullable()))
+                .collect(toImmutableList());
+
+        // Convert to Arrow schema
+        Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns());
+        String schemaJson = arrowSchema.toJson();
+
+        log.debug("beginCreateTable: table=%s, path=%s, replace=%s", tableName, tablePath, replace);
+
+        return new LanceWritableTableHandle(
+                tableName,
+                tablePath,
+                schemaJson,
+                columns,
+                true,  // forCreateTable
+                replace);
+    }
+
+    @Override
+    public Optional<ConnectorOutputMetadata> finishCreateTable(
+            ConnectorSession session,
+            ConnectorOutputTableHandle tableHandle,
+            Collection<Slice> fragments,
+            Collection<ComputedStatistics> computedStatistics)
+    {
+        LanceWritableTableHandle handle = (LanceWritableTableHandle) tableHandle;
+        Schema arrowSchema;
+        try {
+            arrowSchema = Schema.fromJSON(handle.schemaJson());
+        }
+        catch (IOException e) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to parse Arrow schema", e);
+        }
+
+        log.debug("finishCreateTable: table=%s, fragments=%d", handle.tableName(), fragments.size());
+
+        if (fragments.isEmpty()) {
+            // Create empty dataset
+            lanceWriter.createEmptyDataset(handle.tablePath(), arrowSchema, lanceWriter.getDefaultWriteParams());
+        }
+        else {
+            // Deserialize all fragments and commit
+            List<String> allFragmentsJson = new ArrayList<>();
+            for (Slice slice : fragments) {
+                LanceCommitTaskData commitData = commitTaskDataCodec.fromJson(slice.getBytes());
+                allFragmentsJson.addAll(commitData.getFragmentsJson());
+            }
+
+            // Create dataset with fragments
+            lanceWriter.createDatasetWithFragments(
+                    handle.tablePath(),
+                    allFragmentsJson,
+                    arrowSchema,
+                    lanceWriter.getDefaultWriteParams(),
+                    new HashMap<>());
+        }
+
+        // Invalidate cache after write
+        lanceReader.invalidateCache(handle.tablePath());
+
+        return Optional.empty();
+    }
+
+    // ===== INSERT =====
+
+    @Override
+    public ConnectorInsertTableHandle beginInsert(
+            ConnectorSession session,
+            ConnectorTableHandle tableHandle,
+            List<ColumnHandle> columns,
+            RetryMode retryMode)
+    {
+        LanceTableHandle table = (LanceTableHandle) tableHandle;
+        SchemaTableName tableName = new SchemaTableName(table.getSchemaName(), table.getTableName());
+
+        // Get existing table path
+        String tablePath = lanceReader.getTablePath(session, tableName);
+        if (tablePath == null) {
+            throw new TrinoException(NOT_FOUND, "Table not found: " + tableName);
+        }
+
+        // Convert columns to LanceColumnHandle
+        List<LanceColumnHandle> lanceColumns = columns.stream()
+                .map(LanceColumnHandle.class::cast)
+                .collect(toImmutableList());
+
+        // Get Arrow schema from existing table
+        Schema arrowSchema = lanceReader.getArrowSchema(tablePath);
+        String schemaJson = arrowSchema.toJson();
+
+        log.debug("beginInsert: table=%s, path=%s, columns=%d", tableName, tablePath, columns.size());
+
+        return new LanceWritableTableHandle(
+                tableName,
+                tablePath,
+                schemaJson,
+                lanceColumns,
+                false, // forCreateTable
+                false); // replace
+    }
+
+    @Override
+    public Optional<ConnectorOutputMetadata> finishInsert(
+            ConnectorSession session,
+            ConnectorInsertTableHandle insertHandle,
+            List<ConnectorTableHandle> sourceTableHandles,
+            Collection<Slice> fragments,
+            Collection<ComputedStatistics> computedStatistics)
+    {
+        LanceWritableTableHandle handle = (LanceWritableTableHandle) insertHandle;
+
+        log.debug("finishInsert: table=%s, fragments=%d", handle.tableName(), fragments.size());
+
+        if (fragments.isEmpty()) {
+            // No data to insert
+            return Optional.empty();
+        }
+
+        // Deserialize all fragments
+        List<String> allFragmentsJson = new ArrayList<>();
+        for (Slice slice : fragments) {
+            LanceCommitTaskData commitData = commitTaskDataCodec.fromJson(slice.getBytes());
+            allFragmentsJson.addAll(commitData.getFragmentsJson());
+        }
+
+        // Commit fragments (INSERT is always append mode)
+        lanceWriter.commitAppend(handle.tablePath(), allFragmentsJson, new HashMap<>());
+
+        // Invalidate cache after write
+        lanceReader.invalidateCache(handle.tablePath());
+
         return Optional.empty();
     }
 

@@ -16,14 +16,23 @@ package io.trino.plugin.lance;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
+import io.trino.spi.type.ArrayType;
+import io.trino.spi.type.DateType;
+import io.trino.spi.type.RowType;
 import io.trino.spi.type.Type;
+import io.trino.spi.type.VarbinaryType;
+import io.trino.spi.type.VarcharType;
+import org.apache.arrow.vector.types.DateUnit;
+import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.FieldType;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
+import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.IntegerType.INTEGER;
+import static io.trino.spi.type.RealType.REAL;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
 
@@ -54,7 +63,10 @@ public record LanceColumnHandle(String name, Type trinoType, boolean isNullable)
                 return BIGINT;
             }
         }
-        else if (type instanceof ArrowType.FloatingPoint) {
+        else if (type instanceof ArrowType.FloatingPoint fpType) {
+            if (fpType.getPrecision() == FloatingPointPrecision.SINGLE) {
+                return REAL;
+            }
             return DOUBLE;
         }
         else if (type instanceof ArrowType.Utf8) {
@@ -63,7 +75,49 @@ public record LanceColumnHandle(String name, Type trinoType, boolean isNullable)
         else if (type instanceof ArrowType.LargeUtf8) {
             return VARCHAR;
         }
+        else if (type instanceof ArrowType.Date) {
+            return DATE;
+        }
         throw new UnsupportedOperationException("Unsupported arrow type: " + type);
+    }
+
+    /**
+     * Convert Trino Type to Arrow ArrowType.
+     * This is the reverse of toTrinoType().
+     */
+    public static ArrowType toArrowType(Type trinoType)
+    {
+        if (trinoType.equals(BOOLEAN)) {
+            return ArrowType.Bool.INSTANCE;
+        }
+        else if (trinoType.equals(INTEGER)) {
+            return new ArrowType.Int(32, true);
+        }
+        else if (trinoType.equals(BIGINT)) {
+            return new ArrowType.Int(64, true);
+        }
+        else if (trinoType.equals(REAL)) {
+            return new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);
+        }
+        else if (trinoType.equals(DOUBLE)) {
+            return new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE);
+        }
+        else if (trinoType instanceof VarcharType) {
+            return ArrowType.Utf8.INSTANCE;
+        }
+        else if (trinoType instanceof VarbinaryType) {
+            return ArrowType.Binary.INSTANCE;
+        }
+        else if (trinoType instanceof DateType) {
+            return new ArrowType.Date(DateUnit.DAY);
+        }
+        else if (trinoType instanceof ArrayType) {
+            return ArrowType.List.INSTANCE;
+        }
+        else if (trinoType instanceof RowType) {
+            return ArrowType.Struct.INSTANCE;
+        }
+        throw new UnsupportedOperationException("Unsupported Trino type for Arrow conversion: " + trinoType);
     }
 
     @JsonIgnore

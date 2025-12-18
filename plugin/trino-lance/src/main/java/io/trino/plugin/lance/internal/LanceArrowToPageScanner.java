@@ -31,6 +31,7 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.TimeMicroVector;
@@ -53,6 +54,7 @@ import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.IntegerType.INTEGER;
+import static io.trino.spi.type.RealType.REAL;
 import static io.trino.spi.type.TimeType.TIME_MICROS;
 import static io.trino.spi.type.Timestamps.PICOSECONDS_PER_MICROSECOND;
 import static java.lang.String.format;
@@ -139,6 +141,11 @@ public class LanceArrowToPageScanner
                 else if (type.equals(TIME_MICROS)) {
                     writeVectorValues(output, vector, index -> type.writeLong(output,
                             ((TimeMicroVector) vector).get(index) * PICOSECONDS_PER_MICROSECOND), offset, length);
+                }
+                else if (type.equals(REAL)) {
+                    // REAL stores float bits as int which is widened to long
+                    writeVectorValues(output, vector, index -> type.writeLong(output,
+                            Float.floatToIntBits(((Float4Vector) vector).get(index))), offset, length);
                 }
                 else {
                     throw new TrinoException(GENERIC_INTERNAL_ERROR,

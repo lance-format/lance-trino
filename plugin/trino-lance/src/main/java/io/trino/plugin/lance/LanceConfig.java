@@ -97,4 +97,49 @@ public class LanceConfig
         this.fetchRetryCount = fetchRetryCount;
         return this;
     }
+
+    // ===== Write Configuration =====
+
+    private int maxRowsPerFile = 1_000_000;
+    private int maxRowsPerGroup = 100_000;
+    private int writeBatchSize = 10_000;
+
+    public int getMaxRowsPerFile()
+    {
+        return maxRowsPerFile;
+    }
+
+    @Config("lance.max-rows-per-file")
+    @ConfigDescription("Maximum number of rows per Lance file")
+    public LanceConfig setMaxRowsPerFile(int maxRowsPerFile)
+    {
+        this.maxRowsPerFile = maxRowsPerFile;
+        return this;
+    }
+
+    public int getMaxRowsPerGroup()
+    {
+        return maxRowsPerGroup;
+    }
+
+    @Config("lance.max-rows-per-group")
+    @ConfigDescription("Maximum number of rows per row group within a Lance file")
+    public LanceConfig setMaxRowsPerGroup(int maxRowsPerGroup)
+    {
+        this.maxRowsPerGroup = maxRowsPerGroup;
+        return this;
+    }
+
+    public int getWriteBatchSize()
+    {
+        return writeBatchSize;
+    }
+
+    @Config("lance.write-batch-size")
+    @ConfigDescription("Number of rows to batch before writing to Arrow")
+    public LanceConfig setWriteBatchSize(int writeBatchSize)
+    {
+        this.writeBatchSize = writeBatchSize;
+        return this;
+    }
 }
