@@ -15,7 +15,9 @@ package io.trino.plugin.lance;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Resources;
+import io.airlift.json.JsonCodec;
 import io.trino.plugin.lance.internal.LanceReader;
+import io.trino.plugin.lance.internal.LanceWriter;
 import io.trino.spi.Page;
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.ConnectorSplitSource;
@@ -54,7 +56,9 @@ public class TestLanceFragmentPageSource
         LanceConfig lanceConfig = new LanceConfig();
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
         LanceReader lanceReader = new LanceReader(lanceConfig, catalogProperties);
-        this.metadata = new LanceMetadata(lanceReader, lanceConfig);
+        LanceWriter lanceWriter = new LanceWriter(lanceConfig);
+        JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
+        this.metadata = new LanceMetadata(lanceReader, lanceWriter, lanceConfig, commitTaskDataCodec);
         this.splitManager = new LanceSplitManager(lanceReader, lanceConfig);
     }
 

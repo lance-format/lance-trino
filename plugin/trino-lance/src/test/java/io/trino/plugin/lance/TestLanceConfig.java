@@ -31,7 +31,10 @@ public class TestLanceConfig
         assertRecordedDefaults(recordDefaults(LanceConfig.class)
                 .setImpl("dir")
                 .setFetchRetryCount(5)
-                .setConnectionTimeout(Duration.valueOf("1m")));
+                .setConnectionTimeout(Duration.valueOf("1m"))
+                .setMaxRowsPerFile(1_000_000)
+                .setMaxRowsPerGroup(100_000)
+                .setWriteBatchSize(10_000));
     }
 
     @Test
@@ -43,12 +46,18 @@ public class TestLanceConfig
                 .put("lance.impl", "rest")
                 .put("lance.connection-retry-count", "1")
                 .put("lance.connection-timeout", "30s")
+                .put("lance.max-rows-per-file", "500000")
+                .put("lance.max-rows-per-group", "50000")
+                .put("lance.write-batch-size", "5000")
                 .buildOrThrow();
 
         LanceConfig expected = new LanceConfig()
                 .setImpl("rest")
                 .setFetchRetryCount(1)
-                .setConnectionTimeout(Duration.valueOf("30s"));
+                .setConnectionTimeout(Duration.valueOf("30s"))
+                .setMaxRowsPerFile(500_000)
+                .setMaxRowsPerGroup(50_000)
+                .setWriteBatchSize(5_000);
 
         assertFullMapping(properties, expected);
     }

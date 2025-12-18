@@ -18,6 +18,9 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
+    - name: Lint
+      run: make lint
+
     - name: Build and test
       run: make install
 

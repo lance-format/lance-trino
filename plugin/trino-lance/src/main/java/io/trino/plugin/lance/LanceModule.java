@@ -17,8 +17,10 @@ import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
 import io.trino.plugin.lance.internal.LanceReader;
+import io.trino.plugin.lance.internal.LanceWriter;
 
 import static io.airlift.configuration.ConfigBinder.configBinder;
+import static io.airlift.json.JsonCodecBinder.jsonCodecBinder;
 
 public class LanceModule
         implements Module
@@ -27,10 +29,21 @@ public class LanceModule
     public void configure(Binder binder)
     {
         configBinder(binder).bindConfig(LanceConfig.class);
+
+        // Read components
         binder.bind(LanceReader.class).in(Scopes.SINGLETON);
         binder.bind(LanceMetadata.class).in(Scopes.SINGLETON);
         binder.bind(LanceSplitManager.class).in(Scopes.SINGLETON);
         binder.bind(LancePageSourceProvider.class).in(Scopes.SINGLETON);
+
+        // Write components
+        binder.bind(LanceWriter.class).in(Scopes.SINGLETON);
+        binder.bind(LancePageSinkProvider.class).in(Scopes.SINGLETON);
+
+        // JSON codecs for serialization
+        jsonCodecBinder(binder).bindJsonCodec(LanceCommitTaskData.class);
+
+        // Connector
         binder.bind(LanceConnector.class).in(Scopes.SINGLETON);
     }
 }

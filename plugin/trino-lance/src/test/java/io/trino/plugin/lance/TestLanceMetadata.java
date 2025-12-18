@@ -17,7 +17,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.Resources;
+import io.airlift.json.JsonCodec;
 import io.trino.plugin.lance.internal.LanceReader;
+import io.trino.plugin.lance.internal.LanceWriter;
 import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.TableNotFoundException;
@@ -61,7 +63,9 @@ public class TestLanceMetadata
         LanceConfig lanceConfig = new LanceConfig();
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
         LanceReader lanceReader = new LanceReader(lanceConfig, catalogProperties);
-        metadata = new LanceMetadata(lanceReader, lanceConfig);
+        LanceWriter lanceWriter = new LanceWriter(lanceConfig);
+        JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
+        metadata = new LanceMetadata(lanceReader, lanceWriter, lanceConfig, commitTaskDataCodec);
     }
 
     @Test

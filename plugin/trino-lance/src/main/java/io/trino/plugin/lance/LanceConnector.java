@@ -17,6 +17,7 @@ import com.google.inject.Inject;
 import io.airlift.bootstrap.LifeCycleManager;
 import io.trino.spi.connector.Connector;
 import io.trino.spi.connector.ConnectorMetadata;
+import io.trino.spi.connector.ConnectorPageSinkProvider;
 import io.trino.spi.connector.ConnectorPageSourceProvider;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
@@ -32,15 +33,21 @@ public class LanceConnector
     private final LanceMetadata metadata;
     private final LanceSplitManager splitManager;
     private final LancePageSourceProvider pageSourceProvider;
+    private final LancePageSinkProvider pageSinkProvider;
 
     @Inject
-    public LanceConnector(LifeCycleManager lifeCycleManager, LanceMetadata metadata, LanceSplitManager splitManager,
-            LancePageSourceProvider pageSourceProvider)
+    public LanceConnector(
+            LifeCycleManager lifeCycleManager,
+            LanceMetadata metadata,
+            LanceSplitManager splitManager,
+            LancePageSourceProvider pageSourceProvider,
+            LancePageSinkProvider pageSinkProvider)
     {
         this.lifeCycleManager = requireNonNull(lifeCycleManager, "lifeCycleManager is null");
         this.metadata = requireNonNull(metadata, "metadata is null");
         this.splitManager = requireNonNull(splitManager, "splitManager is null");
         this.pageSourceProvider = requireNonNull(pageSourceProvider, "pageSourceProvider is null");
+        this.pageSinkProvider = requireNonNull(pageSinkProvider, "pageSinkProvider is null");
     }
 
     @Override
@@ -66,6 +73,12 @@ public class LanceConnector
     public ConnectorPageSourceProvider getPageSourceProvider()
     {
         return pageSourceProvider;
+    }
+
+    @Override
+    public ConnectorPageSinkProvider getPageSinkProvider()
+    {
+        return pageSinkProvider;
     }
 
     @Override
