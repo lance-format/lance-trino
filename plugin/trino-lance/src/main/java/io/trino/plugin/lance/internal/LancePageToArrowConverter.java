@@ -177,183 +177,191 @@ public final class LancePageToArrowConverter
 
     /**
      * Write a Trino Block to an Arrow FieldVector.
+     * Note: Caller must have already allocated the vector. This method writes at offset 0.
      */
     public static void writeBlockToVector(Block block, FieldVector vector, Type type, int rowCount)
     {
-        vector.allocateNew();
+        writeBlockToVectorAtOffset(block, vector, type, rowCount, 0);
+    }
 
+    /**
+     * Write a Trino Block to an Arrow FieldVector at a specific offset.
+     * Note: Caller must have already allocated the vector.
+     */
+    public static void writeBlockToVectorAtOffset(Block block, FieldVector vector, Type type, int rowCount, int offset)
+    {
         if (type.equals(BOOLEAN)) {
-            writeBooleanBlock(block, (BitVector) vector, rowCount);
+            writeBooleanBlock(block, (BitVector) vector, rowCount, offset);
         }
         else if (type.equals(INTEGER)) {
-            writeIntegerBlock(block, (IntVector) vector, rowCount);
+            writeIntegerBlock(block, (IntVector) vector, rowCount, offset);
         }
         else if (type.equals(BIGINT)) {
-            writeBigintBlock(block, (BigIntVector) vector, rowCount);
+            writeBigintBlock(block, (BigIntVector) vector, rowCount, offset);
         }
         else if (type.equals(REAL)) {
-            writeRealBlock(block, (Float4Vector) vector, rowCount);
+            writeRealBlock(block, (Float4Vector) vector, rowCount, offset);
         }
         else if (type.equals(DOUBLE)) {
-            writeDoubleBlock(block, (Float8Vector) vector, rowCount);
+            writeDoubleBlock(block, (Float8Vector) vector, rowCount, offset);
         }
         else if (type instanceof VarcharType) {
-            writeVarcharBlock(block, (VarCharVector) vector, rowCount);
+            writeVarcharBlock(block, (VarCharVector) vector, rowCount, offset);
         }
         else if (type instanceof VarbinaryType) {
-            writeVarbinaryBlock(block, (VarBinaryVector) vector, rowCount);
+            writeVarbinaryBlock(block, (VarBinaryVector) vector, rowCount, offset);
         }
         else if (type instanceof DateType) {
-            writeDateBlock(block, (DateDayVector) vector, rowCount);
+            writeDateBlock(block, (DateDayVector) vector, rowCount, offset);
         }
         else if (type instanceof ArrayType arrayType) {
-            writeArrayBlock(block, (ListVector) vector, arrayType, rowCount);
+            writeArrayBlock(block, (ListVector) vector, arrayType, rowCount, offset);
         }
         else if (type instanceof RowType rowType) {
-            writeRowBlock(block, (StructVector) vector, rowType, rowCount);
+            writeRowBlock(block, (StructVector) vector, rowType, rowCount, offset);
         }
         else {
             throw new TrinoException(NOT_SUPPORTED, format("Unsupported type for writing to Arrow: %s", type));
         }
     }
 
-    private static void writeBooleanBlock(Block block, BitVector vector, int rowCount)
+    private static void writeBooleanBlock(Block block, BitVector vector, int rowCount, int offset)
     {
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
-                vector.setNull(i);
+                vector.setNull(offset + i);
             }
             else {
-                vector.set(i, BOOLEAN.getBoolean(block, i) ? 1 : 0);
+                vector.setSafe(offset + i, BOOLEAN.getBoolean(block, i) ? 1 : 0);
             }
         }
-        vector.setValueCount(rowCount);
+        vector.setValueCount(offset + rowCount);
     }
 
-    private static void writeIntegerBlock(Block block, IntVector vector, int rowCount)
+    private static void writeIntegerBlock(Block block, IntVector vector, int rowCount, int offset)
     {
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
-                vector.setNull(i);
+                vector.setNull(offset + i);
             }
             else {
-                vector.set(i, (int) INTEGER.getLong(block, i));
+                vector.setSafe(offset + i, (int) INTEGER.getLong(block, i));
             }
         }
-        vector.setValueCount(rowCount);
+        vector.setValueCount(offset + rowCount);
     }
 
-    private static void writeBigintBlock(Block block, BigIntVector vector, int rowCount)
+    private static void writeBigintBlock(Block block, BigIntVector vector, int rowCount, int offset)
     {
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
-                vector.setNull(i);
+                vector.setNull(offset + i);
             }
             else {
-                vector.set(i, BIGINT.getLong(block, i));
+                vector.setSafe(offset + i, BIGINT.getLong(block, i));
             }
         }
-        vector.setValueCount(rowCount);
+        vector.setValueCount(offset + rowCount);
     }
 
-    private static void writeRealBlock(Block block, Float4Vector vector, int rowCount)
+    private static void writeRealBlock(Block block, Float4Vector vector, int rowCount, int offset)
     {
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
-                vector.setNull(i);
+                vector.setNull(offset + i);
             }
             else {
                 // Trino stores REAL as int bits, need to convert to float
                 int intBits = (int) REAL.getLong(block, i);
-                vector.set(i, Float.intBitsToFloat(intBits));
+                vector.setSafe(offset + i, Float.intBitsToFloat(intBits));
             }
         }
-        vector.setValueCount(rowCount);
+        vector.setValueCount(offset + rowCount);
     }
 
-    private static void writeDoubleBlock(Block block, Float8Vector vector, int rowCount)
+    private static void writeDoubleBlock(Block block, Float8Vector vector, int rowCount, int offset)
     {
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
-                vector.setNull(i);
+                vector.setNull(offset + i);
             }
             else {
-                vector.set(i, DOUBLE.getDouble(block, i));
+                vector.setSafe(offset + i, DOUBLE.getDouble(block, i));
             }
         }
-        vector.setValueCount(rowCount);
+        vector.setValueCount(offset + rowCount);
     }
 
-    private static void writeVarcharBlock(Block block, VarCharVector vector, int rowCount)
+    private static void writeVarcharBlock(Block block, VarCharVector vector, int rowCount, int offset)
     {
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
-                vector.setNull(i);
+                vector.setNull(offset + i);
             }
             else {
                 Slice slice = VARCHAR.getSlice(block, i);
-                vector.set(i, slice.getBytes());
+                vector.setSafe(offset + i, slice.getBytes());
             }
         }
-        vector.setValueCount(rowCount);
+        vector.setValueCount(offset + rowCount);
     }
 
-    private static void writeVarbinaryBlock(Block block, VarBinaryVector vector, int rowCount)
+    private static void writeVarbinaryBlock(Block block, VarBinaryVector vector, int rowCount, int offset)
     {
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
-                vector.setNull(i);
+                vector.setNull(offset + i);
             }
             else {
                 Slice slice = VARBINARY.getSlice(block, i);
-                vector.set(i, slice.getBytes());
+                vector.setSafe(offset + i, slice.getBytes());
             }
         }
-        vector.setValueCount(rowCount);
+        vector.setValueCount(offset + rowCount);
     }
 
-    private static void writeDateBlock(Block block, DateDayVector vector, int rowCount)
+    private static void writeDateBlock(Block block, DateDayVector vector, int rowCount, int offset)
     {
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
-                vector.setNull(i);
+                vector.setNull(offset + i);
             }
             else {
                 // Trino DATE is days since epoch stored as int
-                vector.set(i, (int) DATE.getLong(block, i));
+                vector.setSafe(offset + i, (int) DATE.getLong(block, i));
             }
         }
-        vector.setValueCount(rowCount);
+        vector.setValueCount(offset + rowCount);
     }
 
-    private static void writeArrayBlock(Block block, ListVector vector, ArrayType arrayType, int rowCount)
+    private static void writeArrayBlock(Block block, ListVector vector, ArrayType arrayType, int rowCount, int rowOffset)
     {
         Type elementType = arrayType.getElementType();
         FieldVector dataVector = vector.getDataVector();
 
-        int offset = 0;
+        int elementOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
-                vector.setNull(i);
+                vector.setNull(rowOffset + i);
             }
             else {
                 Block arrayBlock = arrayType.getObject(block, i);
                 int arrayLength = arrayBlock.getPositionCount();
 
-                vector.startNewValue(i);
+                vector.startNewValue(rowOffset + i);
                 // Write array elements to data vector starting at current offset
-                writeArrayElements(arrayBlock, dataVector, elementType, offset, arrayLength);
-                vector.endValue(i, arrayLength);
-                offset += arrayLength;
+                writeArrayElements(arrayBlock, dataVector, elementType, elementOffset, arrayLength);
+                vector.endValue(rowOffset + i, arrayLength);
+                elementOffset += arrayLength;
             }
         }
-        vector.setValueCount(rowCount);
+        vector.setValueCount(rowOffset + rowCount);
     }
 
     private static void writeArrayElements(Block arrayBlock, FieldVector dataVector, Type elementType, int offset, int length)
     {
         // This is a simplified implementation - for complex nested types more work is needed
-        dataVector.allocateNew();
+        // Note: We don't call allocateNew() here as the parent vector manages allocation
 
         if (elementType.equals(INTEGER)) {
             IntVector intVector = (IntVector) dataVector;
@@ -362,7 +370,7 @@ public final class LancePageToArrowConverter
                     intVector.setNull(offset + i);
                 }
                 else {
-                    intVector.set(offset + i, (int) INTEGER.getLong(arrayBlock, i));
+                    intVector.setSafe(offset + i, (int) INTEGER.getLong(arrayBlock, i));
                 }
             }
             intVector.setValueCount(offset + length);
@@ -374,7 +382,7 @@ public final class LancePageToArrowConverter
                     bigIntVector.setNull(offset + i);
                 }
                 else {
-                    bigIntVector.set(offset + i, BIGINT.getLong(arrayBlock, i));
+                    bigIntVector.setSafe(offset + i, BIGINT.getLong(arrayBlock, i));
                 }
             }
             bigIntVector.setValueCount(offset + length);
@@ -386,7 +394,7 @@ public final class LancePageToArrowConverter
                     doubleVector.setNull(offset + i);
                 }
                 else {
-                    doubleVector.set(offset + i, DOUBLE.getDouble(arrayBlock, i));
+                    doubleVector.setSafe(offset + i, DOUBLE.getDouble(arrayBlock, i));
                 }
             }
             doubleVector.setValueCount(offset + length);
@@ -399,7 +407,7 @@ public final class LancePageToArrowConverter
                 }
                 else {
                     Slice slice = VARCHAR.getSlice(arrayBlock, i);
-                    varcharVector.set(offset + i, slice.getBytes());
+                    varcharVector.setSafe(offset + i, slice.getBytes());
                 }
             }
             varcharVector.setValueCount(offset + length);
@@ -407,7 +415,7 @@ public final class LancePageToArrowConverter
         // Add more element types as needed
     }
 
-    private static void writeRowBlock(Block block, StructVector vector, RowType rowType, int rowCount)
+    private static void writeRowBlock(Block block, StructVector vector, RowType rowType, int rowCount, int offset)
     {
         // For now, ROW type write is not fully implemented
         // This requires more complex handling of SqlRow objects

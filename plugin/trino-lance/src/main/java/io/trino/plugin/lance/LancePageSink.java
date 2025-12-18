@@ -175,11 +175,12 @@ public class LancePageSink
         int pageRows = page.getPositionCount();
 
         for (int channel = 0; channel < page.getChannelCount(); channel++) {
-            LancePageToArrowConverter.writeBlockToVector(
+            LancePageToArrowConverter.writeBlockToVectorAtOffset(
                     page.getBlock(channel),
                     root.getVector(channel),
                     columnTypes.get(channel),
-                    pageRows);
+                    pageRows,
+                    offset);
         }
     }
 
