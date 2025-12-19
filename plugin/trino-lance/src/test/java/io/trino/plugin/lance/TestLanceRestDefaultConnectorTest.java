@@ -13,21 +13,38 @@
  */
 package io.trino.plugin.lance;
 
-import org.junit.jupiter.api.Disabled;
+import io.trino.testing.QueryRunner;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assumptions.abort;
 
 /**
- * Connector test for REST namespace in default mode backend.
- *
- * Note: This test is currently disabled until a REST server test container
- * is available. It uses a directory backend with REST configuration placeholders.
+ * Connector test for REST namespace in default mode (2nd level access).
+ * This mode has full schema support with direct schema-to-namespace mapping.
  */
-@Disabled("REST server test container not yet implemented")
 public class TestLanceRestDefaultConnectorTest
-        extends BaseLanceRestConnectorTest
+        extends BaseLanceConnectorTest
 {
     @Override
     protected LanceNamespaceTestConfig getNamespaceTestConfig()
     {
         return LanceNamespaceTestConfig.REST_DEFAULT;
+    }
+
+    @Override
+    protected QueryRunner createQueryRunner()
+            throws Exception
+    {
+        return LanceQueryRunner.builderForRest(getNamespaceTestConfig())
+                .setInitialTables(REQUIRED_TPCH_TABLES)
+                .build();
+    }
+
+    @Test
+    @Override
+    public void testCreateSchemaWithLongName()
+    {
+        // REST namespace has URL length limits that prevent very long schema names
+        abort("REST namespace has URL length limits for schema names");
     }
 }
