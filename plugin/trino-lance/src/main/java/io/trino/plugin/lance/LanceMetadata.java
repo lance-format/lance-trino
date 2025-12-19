@@ -575,13 +575,8 @@ public class LanceMetadata
         try {
             List<String> tableId = namespaceHolder.getTableId(schemaTableName.getSchemaName(), schemaTableName.getTableName());
             DescribeTableRequest request = new DescribeTableRequest()
-                    .id(tableId)
-                    .withTableUri(true);
+                    .id(tableId);
             DescribeTableResponse response = getNamespace().describeTable(request);
-            String tableUri = response.getTableUri();
-            if (tableUri != null && !tableUri.isEmpty()) {
-                return tableUri;
-            }
             return response.getLocation();
         }
         catch (Exception e) {

@@ -46,12 +46,12 @@ public class TestLanceConfig
         // All values must be different from defaults
         Map<String, String> properties = ImmutableMap.<String, String>builder()
                 .put("lance.impl", "rest")
-                .put("lance.connection-retry-count", "1")
-                .put("lance.connection-timeout", "30s")
-                .put("lance.max-rows-per-file", "500000")
-                .put("lance.max-rows-per-group", "50000")
-                .put("lance.write-batch-size", "5000")
-                .put("lance.single-level-ns", "true")
+                .put("lance.connection_retry_count", "1")
+                .put("lance.connection_timeout", "30s")
+                .put("lance.max_rows_per_file", "500000")
+                .put("lance.max_rows_per_group", "50000")
+                .put("lance.write_batch_size", "5000")
+                .put("lance.single_level_ns", "true")
                 .put("lance.parent", "p1$p2")
                 .buildOrThrow();
 

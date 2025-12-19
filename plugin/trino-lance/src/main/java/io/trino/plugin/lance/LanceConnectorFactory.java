@@ -42,12 +42,12 @@ public class LanceConnectorFactory
     // Properties that are handled by LanceConfig via @Config annotations
     private static final Set<String> KNOWN_CONFIG_PROPERTIES = ImmutableSet.of(
             "lance.impl",
-            "lance.connection-timeout",
-            "lance.connection-retry-count",
-            "lance.max-rows-per-file",
-            "lance.max-rows-per-group",
-            "lance.write-batch-size",
-            "lance.single-level-ns",
+            "lance.connection_timeout",
+            "lance.connection_retry_count",
+            "lance.max_rows_per_file",
+            "lance.max_rows_per_group",
+            "lance.write_batch_size",
+            "lance.single_level_ns",
             "lance.parent");
 
     private final Optional<Module> extension;

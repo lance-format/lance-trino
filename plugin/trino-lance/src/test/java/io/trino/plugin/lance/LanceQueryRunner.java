@@ -56,7 +56,7 @@ public final class LanceQueryRunner
     {
         return new Builder()
                 .addConnectorProperty("lance.root", Resources.getResource(LanceQueryRunner.class, "/example_db").toString())
-                .addConnectorProperty("lance.single-level-ns", "true");
+                .addConnectorProperty("lance.single_level_ns", "true");
     }
 
     /**
@@ -184,7 +184,7 @@ public final class LanceQueryRunner
                 Path tempDir = Files.createTempDirectory("lance-trino-test");
                 tempDir.toFile().deleteOnExit();
                 connectorProperties.put("lance.root", tempDir.toUri().toString());
-                connectorProperties.putIfAbsent("lance.single-level-ns", "true");
+                connectorProperties.putIfAbsent("lance.single_level_ns", "true");
                 log.info("Using temporary directory for Lance (single-level mode): %s", tempDir);
             }
 
@@ -196,8 +196,8 @@ public final class LanceQueryRunner
                 queryRunner.installPlugin(new LancePlugin());
 
                 // Determine if we're in single-level mode
-                boolean singleLevelMode = connectorProperties.containsKey("lance.single-level-ns") &&
-                        Boolean.parseBoolean(connectorProperties.get("lance.single-level-ns"));
+                boolean singleLevelMode = connectorProperties.containsKey("lance.single_level_ns") &&
+                        Boolean.parseBoolean(connectorProperties.get("lance.single_level_ns"));
 
                 // Check if we have a parent namespace configuration
                 boolean hasParent = namespaceTestConfig.isPresent() && namespaceTestConfig.get().hasParent();
@@ -245,7 +245,7 @@ public final class LanceQueryRunner
                                 // Create catalog with current parent prefix
                                 Map<String, String> propsWithPartialParent = new HashMap<>(connectorProperties);
                                 propsWithPartialParent.put("lance.parent", parentPrefix);
-                                propsWithPartialParent.remove("lance.single-level-ns");
+                                propsWithPartialParent.remove("lance.single_level_ns");
                                 queryRunner.createCatalog(LANCE_CATALOG, "lance", propsWithPartialParent);
 
                                 // Create the namespace at this level

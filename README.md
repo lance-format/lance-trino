@@ -12,8 +12,8 @@ Create a catalog properties file (e.g., `etc/catalog/lance.properties`):
 | Property                       | Description                                                                           | Default |
 |--------------------------------|---------------------------------------------------------------------------------------|---------|
 | `lance.impl`                   | Namespace implementation: `dir`, `rest`, `glue`, `hive2`, `hive3`, or full class name | `dir`   |
-| `lance.connection-timeout`     | Connection timeout duration                                                           | `1m`    |
-| `lance.connection-retry-count` | Number of retries for failed connections                                              | `5`     |
+| `lance.connection_timeout`     | Connection timeout duration                                                           | `1m`    |
+| `lance.connection_retry_count` | Number of retries for failed connections                                              | `5`     |
 
 Any other `lance.*` properties are stripped of the `lance.` prefix and passed to the namespace implementation.
 

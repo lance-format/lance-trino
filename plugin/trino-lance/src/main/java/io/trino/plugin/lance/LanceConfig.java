@@ -79,7 +79,7 @@ public class LanceConfig
         return connectionTimeout;
     }
 
-    @Config("lance.connection-timeout")
+    @Config("lance.connection_timeout")
     public LanceConfig setConnectionTimeout(Duration connectionTimeout)
     {
         this.connectionTimeout = connectionTimeout;
@@ -91,7 +91,7 @@ public class LanceConfig
         return this.fetchRetryCount;
     }
 
-    @Config("lance.connection-retry-count")
+    @Config("lance.connection_retry_count")
     public LanceConfig setFetchRetryCount(int fetchRetryCount)
     {
         this.fetchRetryCount = fetchRetryCount;
@@ -119,7 +119,7 @@ public class LanceConfig
         return singleLevelNs;
     }
 
-    @Config("lance.single-level-ns")
+    @Config("lance.single_level_ns")
     @ConfigDescription("Access 1st level namespace with virtual 'default' schema (no CREATE SCHEMA)")
     public LanceConfig setSingleLevelNs(boolean singleLevelNs)
     {
@@ -151,7 +151,7 @@ public class LanceConfig
         return maxRowsPerFile;
     }
 
-    @Config("lance.max-rows-per-file")
+    @Config("lance.max_rows_per_file")
     @ConfigDescription("Maximum number of rows per Lance file")
     public LanceConfig setMaxRowsPerFile(int maxRowsPerFile)
     {
@@ -164,7 +164,7 @@ public class LanceConfig
         return maxRowsPerGroup;
     }
 
-    @Config("lance.max-rows-per-group")
+    @Config("lance.max_rows_per_group")
     @ConfigDescription("Maximum number of rows per row group within a Lance file")
     public LanceConfig setMaxRowsPerGroup(int maxRowsPerGroup)
     {
@@ -177,7 +177,7 @@ public class LanceConfig
         return writeBatchSize;
     }
 
-    @Config("lance.write-batch-size")
+    @Config("lance.write_batch_size")
     @ConfigDescription("Number of rows to batch before writing to Arrow")
     public LanceConfig setWriteBatchSize(int writeBatchSize)
     {

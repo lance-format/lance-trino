@@ -154,7 +154,7 @@ public enum LanceNamespaceTestConfig
         properties.put("lance.root", rootPath);
 
         if (singleLevelNs) {
-            properties.put("lance.single-level-ns", "true");
+            properties.put("lance.single_level_ns", "true");
         }
 
         parent.ifPresent(p -> properties.put("lance.parent", p));
@@ -175,7 +175,7 @@ public enum LanceNamespaceTestConfig
         properties.put("lance.uri", restUri);
 
         if (singleLevelNs) {
-            properties.put("lance.single-level-ns", "true");
+            properties.put("lance.single_level_ns", "true");
         }
 
         parent.ifPresent(p -> properties.put("lance.parent", p));
@@ -204,7 +204,7 @@ public enum LanceNamespaceTestConfig
         properties.put("lance.storage.aws_region", "us-east-1");
 
         if (singleLevelNs) {
-            properties.put("lance.single-level-ns", "true");
+            properties.put("lance.single_level_ns", "true");
         }
 
         parent.ifPresent(p -> properties.put("lance.parent", p));
