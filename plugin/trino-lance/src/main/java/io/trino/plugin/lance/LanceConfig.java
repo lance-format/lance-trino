@@ -98,6 +98,48 @@ public class LanceConfig
         return this;
     }
 
+    // ===== Namespace Configuration =====
+
+    /**
+     * Single-level namespace mode.
+     * When true, access 1st level (root) with virtual "default" schema.
+     * CREATE SCHEMA is not allowed in this mode.
+     */
+    private boolean singleLevelNs;
+
+    /**
+     * Parent namespace prefix for multi-level namespaces (3+ levels).
+     * Format: "prefix$path" using $ as delimiter.
+     * Example: "hive$catalog" to access namespaces under hive/catalog.
+     */
+    private String parent;
+
+    public boolean isSingleLevelNs()
+    {
+        return singleLevelNs;
+    }
+
+    @Config("lance.single-level-ns")
+    @ConfigDescription("Access 1st level namespace with virtual 'default' schema (no CREATE SCHEMA)")
+    public LanceConfig setSingleLevelNs(boolean singleLevelNs)
+    {
+        this.singleLevelNs = singleLevelNs;
+        return this;
+    }
+
+    public String getParent()
+    {
+        return parent;
+    }
+
+    @Config("lance.parent")
+    @ConfigDescription("Parent namespace prefix for 3+ level namespaces (use $ as delimiter)")
+    public LanceConfig setParent(String parent)
+    {
+        this.parent = parent;
+        return this;
+    }
+
     // ===== Write Configuration =====
 
     private int maxRowsPerFile = 1_000_000;

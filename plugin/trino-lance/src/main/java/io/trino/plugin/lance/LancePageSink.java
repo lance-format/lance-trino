@@ -18,21 +18,17 @@ import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
 import io.trino.plugin.lance.internal.LancePageToArrowConverter;
-import io.trino.plugin.lance.internal.LanceWriter;
 import io.trino.spi.Page;
 import io.trino.spi.connector.ConnectorPageSink;
 import io.trino.spi.type.Type;
-import org.apache.arrow.c.ArrowArrayStream;
-import org.apache.arrow.c.Data;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.ipc.ArrowReader;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Fragment;
 import org.lance.FragmentMetadata;
-import org.lance.WriteParams;
+import org.lance.namespace.LanceNamespace;
+import org.lance.namespace.LanceNamespaceStorageOptionsProvider;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -46,6 +42,7 @@ import static java.util.concurrent.CompletableFuture.completedFuture;
 /**
  * ConnectorPageSink implementation for Lance.
  * Receives Trino Pages, converts them to Arrow format, and writes them as Lance fragments.
+ * Supports namespace-aware storage options for credential vending.
  */
 public class LancePageSink
         implements ConnectorPageSink
@@ -57,6 +54,8 @@ public class LancePageSink
     private final List<Type> columnTypes;
     private final JsonCodec<LanceCommitTaskData> jsonCodec;
     private final BufferAllocator allocator;
+    private final LanceNamespace namespace;
+    private final List<String> tableId;
 
     private final List<Page> bufferedPages = new ArrayList<>();
     private long writtenBytes;
@@ -67,7 +66,9 @@ public class LancePageSink
             String datasetUri,
             Schema arrowSchema,
             List<LanceColumnHandle> columns,
-            JsonCodec<LanceCommitTaskData> jsonCodec)
+            JsonCodec<LanceCommitTaskData> jsonCodec,
+            LanceNamespace namespace,
+            List<String> tableId)
     {
         this.datasetUri = requireNonNull(datasetUri, "datasetUri is null");
         this.arrowSchema = requireNonNull(arrowSchema, "arrowSchema is null");
@@ -75,7 +76,9 @@ public class LancePageSink
                 .map(LanceColumnHandle::trinoType)
                 .collect(toImmutableList());
         this.jsonCodec = requireNonNull(jsonCodec, "jsonCodec is null");
-        this.allocator = LanceWriter.getAllocator().newChildAllocator("page-sink", 0, Long.MAX_VALUE);
+        this.namespace = requireNonNull(namespace, "namespace is null");
+        this.tableId = requireNonNull(tableId, "tableId is null");
+        this.allocator = LanceNamespaceHolder.getAllocator().newChildAllocator("page-sink", 0, Long.MAX_VALUE);
     }
 
     @Override
@@ -154,16 +157,45 @@ public class LancePageSink
             }
             root.setRowCount(totalRows);
 
-            // Create an ArrowReader from the VectorSchemaRoot
-            ArrowReader reader = new VectorSchemaRootReader(allocator, root);
+            // Get storage options from namespace (for endpoint, region, credentials, etc.)
+            java.util.Map<String, String> storageOptions = null;
+            try {
+                org.lance.namespace.model.DescribeTableRequest descReq = new org.lance.namespace.model.DescribeTableRequest();
+                descReq.setId(tableId);
+                org.lance.namespace.model.DescribeTableResponse descResp = namespace.describeTable(descReq);
+                storageOptions = descResp.getStorageOptions();
+                log.debug("Storage options for table %s: %s", tableId, storageOptions);
+            }
+            catch (Exception e) {
+                log.warn(e, "Failed to get storage options for table %s", tableId);
+            }
 
             // Write fragments using Lance API
-            try (ArrowArrayStream arrowStream = ArrowArrayStream.allocateNew(allocator)) {
-                Data.exportArrayStream(allocator, reader, arrowStream);
-                WriteParams params = new WriteParams.Builder().build();
-                List<FragmentMetadata> fragments = Fragment.create(datasetUri, arrowStream, params);
-                return LanceWriter.serializeFragments(fragments);
+            // Use storageOptionsProvider only if credentials have expiration (expires_at_millis)
+            // Otherwise use static storage_options directly
+            var fragmentWriter = Fragment.write()
+                    .datasetUri(datasetUri)
+                    .allocator(allocator)
+                    .data(root);
+
+            if (storageOptions != null && !storageOptions.isEmpty()) {
+                if (storageOptions.containsKey("expires_at_millis")) {
+                    // Credentials have expiration - use provider for auto-refresh
+                    LanceNamespaceStorageOptionsProvider storageOptionsProvider =
+                            new LanceNamespaceStorageOptionsProvider(namespace, tableId);
+                    fragmentWriter = fragmentWriter
+                            .storageOptions(storageOptions)
+                            .storageOptionsProvider(storageOptionsProvider);
+                }
+                else {
+                    // Static credentials - use storage options directly without provider
+                    fragmentWriter = fragmentWriter.storageOptions(storageOptions);
+                }
             }
+
+            List<FragmentMetadata> fragments = fragmentWriter.execute();
+
+            return LanceMetadata.serializeFragments(fragments);
         }
     }
 
@@ -198,60 +230,6 @@ public class LancePageSink
         }
         catch (Exception e) {
             log.warn(e, "Failed to close allocator");
-        }
-    }
-
-    /**
-     * Simple ArrowReader implementation that wraps a VectorSchemaRoot.
-     */
-    private static class VectorSchemaRootReader
-            extends ArrowReader
-    {
-        private final VectorSchemaRoot root;
-        private boolean consumed;
-
-        public VectorSchemaRootReader(BufferAllocator allocator, VectorSchemaRoot root)
-        {
-            super(allocator);
-            this.root = root;
-            this.consumed = false;
-        }
-
-        @Override
-        public boolean loadNextBatch()
-                throws IOException
-        {
-            if (consumed) {
-                return false;
-            }
-            consumed = true;
-            return root.getRowCount() > 0;
-        }
-
-        @Override
-        public VectorSchemaRoot getVectorSchemaRoot()
-        {
-            return root;
-        }
-
-        @Override
-        public long bytesRead()
-        {
-            return 0;
-        }
-
-        @Override
-        protected void closeReadSource()
-                throws IOException
-        {
-            // root is managed by the caller
-        }
-
-        @Override
-        protected Schema readSchema()
-                throws IOException
-        {
-            return root.getSchema();
         }
     }
 }

@@ -14,7 +14,6 @@
 package io.trino.plugin.lance;
 
 import com.google.inject.Inject;
-import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorPageSourceProvider;
@@ -23,22 +22,26 @@ import io.trino.spi.connector.ConnectorSplit;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTransactionHandle;
 import io.trino.spi.connector.DynamicFilter;
+import org.lance.namespace.model.DescribeTableRequest;
+import org.lance.namespace.model.DescribeTableResponse;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static java.util.Objects.requireNonNull;
 
 public class LancePageSourceProvider
         implements ConnectorPageSourceProvider
 {
-    private final LanceReader lanceReader;
+    private final LanceNamespaceHolder namespaceHolder;
     private final LanceConfig lanceConfig;
 
     @Inject
-    public LancePageSourceProvider(LanceReader lanceReader, LanceConfig lanceConfig)
+    public LancePageSourceProvider(LanceNamespaceHolder namespaceHolder, LanceConfig lanceConfig)
     {
-        this.lanceReader = requireNonNull(lanceReader, "lanceClient is null");
-        this.lanceConfig = lanceConfig;
+        this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
+        this.lanceConfig = requireNonNull(lanceConfig, "lanceConfig is null");
     }
 
     @Override
@@ -53,7 +56,46 @@ public class LancePageSourceProvider
         List<LanceColumnHandle> lanceColumns = columns.stream()
                 .map(LanceColumnHandle.class::cast)
                 .toList();
+
+        // Use storage options from handle, refreshing if expired
+        Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+
         // Each split contains exactly one fragment for parallel processing
-        return new LanceFragmentPageSource(lanceReader, lanceTableHandle, lanceColumns, lanceSplit.getFragments(), lanceConfig.getFetchRetryCount());
+        return new LanceFragmentPageSource(lanceTableHandle, lanceColumns, lanceSplit.getFragments(), lanceConfig.getFetchRetryCount(), storageOptions);
+    }
+
+    /**
+     * Get effective storage options from the table handle, refreshing if expired.
+     */
+    private Map<String, String> getEffectiveStorageOptions(LanceTableHandle handle)
+    {
+        // If handle has storage options and they're not expired, use them directly
+        if (!handle.getStorageOptions().isEmpty() && !handle.isStorageOptionsExpired()) {
+            return handle.getStorageOptions();
+        }
+        // Otherwise, refresh from the namespace
+        return refreshStorageOptions(handle.getTableId());
+    }
+
+    private Map<String, String> refreshStorageOptions(List<String> tableId)
+    {
+        try {
+            DescribeTableRequest request = new DescribeTableRequest().id(tableId);
+            DescribeTableResponse response = namespaceHolder.getNamespace().describeTable(request);
+            Map<String, String> storageOptions = response.getStorageOptions();
+            if (storageOptions != null && !storageOptions.isEmpty()) {
+                return storageOptions;
+            }
+        }
+        catch (Exception e) {
+            // Fall through to namespace-level options
+        }
+
+        Map<String, String> nsOptions = namespaceHolder.getNamespaceStorageOptions();
+        if (!nsOptions.isEmpty()) {
+            return nsOptions;
+        }
+
+        return new HashMap<>();
     }
 }

@@ -16,12 +16,20 @@ package io.trino.plugin.lance;
 import io.airlift.json.JsonCodec;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Map;
+
 import static io.airlift.json.JsonCodec.jsonCodec;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestLanceTableHandle
 {
-    private final LanceTableHandle tableHandle = new LanceTableHandle("schemaName", "tableName", "path/to/table");
+    private final LanceTableHandle tableHandle = new LanceTableHandle(
+            "schemaName",
+            "tableName",
+            "path/to/table",
+            List.of("schemaName", "tableName"),
+            Map.of());
 
     @Test
     public void testJsonRoundTrip()

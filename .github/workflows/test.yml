@@ -5,9 +5,8 @@ on:
   pull_request:
 
 jobs:
-  build:
+  lint:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
 
@@ -21,13 +20,88 @@ jobs:
     - name: Lint
       run: make lint
 
-    - name: Build and test
-      run: make install
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK 25
+      uses: actions/setup-java@v4
+      with:
+        java-version: '25'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Run unit tests
+      run: |
+        ./mvnw test -pl plugin/trino-lance \
+          -Dtest='TestLanceConfig,TestLancePlugin,TestLanceTableHandle,TestLanceMetadata,TestLanceFragmentPageSource' \
+          -Dair.check.skip-enforcer=true
 
     - name: Upload test results
       uses: actions/upload-artifact@v4
       if: failure()
       with:
-        name: test-results
+        name: unit-test-results
         path: '**/target/surefire-reports/'
         retention-days: 7
+
+  connector-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test-group:
+          - name: 'single-level'
+            tests: 'TestLanceConnectorTest,TestLanceConnectorSmokeTest,TestLanceDirectorySingleLevelConnectorTest,TestLanceDirectorySingleLevelConnectorSmokeTest'
+          - name: 'directory-default'
+            tests: 'TestLanceDirectoryDefaultConnectorTest,TestLanceDirectoryDefaultConnectorSmokeTest'
+          - name: 'directory-with-parent'
+            tests: 'TestLanceDirectoryWithParentConnectorTest,TestLanceDirectoryWithParentConnectorSmokeTest'
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK 25
+      uses: actions/setup-java@v4
+      with:
+        java-version: '25'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Run ${{ matrix.test-group.name }} connector tests
+      run: |
+        ./mvnw test -pl plugin/trino-lance \
+          -Dtest='${{ matrix.test-group.tests }}' \
+          -Dair.check.skip-enforcer=true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: connector-test-results-${{ matrix.test-group.name }}
+        path: '**/target/surefire-reports/'
+        retention-days: 7
+
+  # S3 tests require LocalStack - run separately with services
+  # s3-tests:
+  #   runs-on: ubuntu-latest
+  #   services:
+  #     localstack:
+  #       image: localstack/localstack:latest
+  #       ports:
+  #         - 4566:4566
+  #       env:
+  #         SERVICES: s3
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: Set up JDK 25
+  #     uses: actions/setup-java@v4
+  #     with:
+  #       java-version: '25'
+  #       distribution: 'temurin'
+  #       cache: maven
+  #   - name: Run S3 tests
+  #     run: |
+  #       ./mvnw test -pl plugin/trino-lance \
+  #         -Dtest='TestLanceS3*' \
+  #         -Dair.check.skip-enforcer=true

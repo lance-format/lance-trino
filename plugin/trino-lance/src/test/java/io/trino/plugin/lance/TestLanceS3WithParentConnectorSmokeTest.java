@@ -11,17 +11,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.lance.internal;
+package io.trino.plugin.lance;
 
-import org.apache.arrow.memory.BufferAllocator;
-import org.lance.ipc.LanceScanner;
-
-import java.util.List;
-import java.util.Map;
-
-public interface ScannerFactory
+/**
+ * Smoke test for S3 directory namespace with parent prefix.
+ * Uses LocalStack for S3 emulation.
+ */
+public class TestLanceS3WithParentConnectorSmokeTest
+        extends BaseLanceS3SmokeTest
 {
-    LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns, Map<String, String> storageOptions);
-
-    void close();
+    @Override
+    protected LanceNamespaceTestConfig getNamespaceTestConfig()
+    {
+        return LanceNamespaceTestConfig.S3_WITH_PARENT;
+    }
 }

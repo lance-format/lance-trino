@@ -14,7 +14,6 @@
 package io.trino.plugin.lance;
 
 import com.google.inject.Inject;
-import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
 import io.trino.spi.connector.ConnectorSplitSource;
@@ -24,32 +23,74 @@ import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.DynamicFilter;
 import io.trino.spi.connector.FixedSplitSource;
 import org.lance.Fragment;
+import org.lance.namespace.model.DescribeTableRequest;
+import org.lance.namespace.model.DescribeTableResponse;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static java.util.Objects.requireNonNull;
 
 public class LanceSplitManager
         implements ConnectorSplitManager
 {
-    private final LanceReader lanceReader;
-    private final LanceConfig lanceConfig;
+    private final LanceNamespaceHolder namespaceHolder;
 
     @Inject
-    public LanceSplitManager(LanceReader lanceReader, LanceConfig lanceConfig)
+    public LanceSplitManager(LanceNamespaceHolder namespaceHolder)
     {
-        this.lanceReader = requireNonNull(lanceReader, "reader is null");
-        this.lanceConfig = requireNonNull(lanceConfig, "config is null");
+        this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
     }
 
     @Override
     public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session,
             ConnectorTableHandle tableHandle, DynamicFilter dynamicFilter, Constraint constraint)
     {
-        // Always distribute fragments - each fragment becomes a split for parallel processing
-        List<Integer> fragmentIds = lanceReader.getFragments((LanceTableHandle) tableHandle)
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
+
+        // Use storage options from handle, refreshing if expired
+        Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+
+        // Get fragments from cache and create splits for parallel processing
+        List<Integer> fragmentIds = LanceDatasetCache.getFragments(lanceTableHandle.getTablePath(), storageOptions)
                 .stream().map(Fragment::getId).toList();
         return new FixedSplitSource(fragmentIds.stream().map(id -> new LanceSplit(Collections.singletonList(id))).toList());
+    }
+
+    /**
+     * Get effective storage options from the table handle, refreshing if expired.
+     */
+    private Map<String, String> getEffectiveStorageOptions(LanceTableHandle handle)
+    {
+        // If handle has storage options and they're not expired, use them directly
+        if (!handle.getStorageOptions().isEmpty() && !handle.isStorageOptionsExpired()) {
+            return handle.getStorageOptions();
+        }
+        // Otherwise, refresh from the namespace
+        return refreshStorageOptions(handle.getTableId());
+    }
+
+    private Map<String, String> refreshStorageOptions(List<String> tableId)
+    {
+        try {
+            DescribeTableRequest request = new DescribeTableRequest().id(tableId);
+            DescribeTableResponse response = namespaceHolder.getNamespace().describeTable(request);
+            Map<String, String> storageOptions = response.getStorageOptions();
+            if (storageOptions != null && !storageOptions.isEmpty()) {
+                return storageOptions;
+            }
+        }
+        catch (Exception e) {
+            // Fall through to namespace-level options
+        }
+
+        Map<String, String> nsOptions = namespaceHolder.getNamespaceStorageOptions();
+        if (!nsOptions.isEmpty()) {
+            return nsOptions;
+        }
+
+        return new HashMap<>();
     }
 }

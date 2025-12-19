@@ -14,7 +14,6 @@
 package io.trino.plugin.lance;
 
 import io.airlift.log.Logger;
-import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.plugin.lance.internal.ScannerFactory;
 import org.apache.arrow.memory.BufferAllocator;
 import org.lance.Fragment;
@@ -22,6 +21,7 @@ import org.lance.ipc.LanceScanner;
 import org.lance.ipc.ScanOptions;
 
 import java.util.List;
+import java.util.Map;
 
 import static com.google.common.base.Preconditions.checkState;
 
@@ -30,9 +30,9 @@ public class LanceFragmentPageSource
 {
     private static final Logger log = Logger.get(LanceFragmentPageSource.class);
 
-    public LanceFragmentPageSource(LanceReader lanceReader, LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<Integer> fragments, int maxReadRowsRetries)
+    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<Integer> fragments, int maxReadRowsRetries, Map<String, String> storageOptions)
     {
-        super(lanceReader, tableHandle, columns, maxReadRowsRetries, createScannerFactory(fragments));
+        super(tableHandle, columns, maxReadRowsRetries, createScannerFactory(fragments), storageOptions);
     }
 
     private static ScannerFactory createScannerFactory(List<Integer> fragments)
@@ -54,10 +54,10 @@ public class LanceFragmentPageSource
         }
 
         @Override
-        public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns)
+        public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns, Map<String, String> storageOptions)
         {
-            // Use cached fragment lookup instead of opening dataset and filtering
-            this.lanceFragment = LanceReader.getFragment(tablePath, this.fragmentId);
+            // Use LanceDatasetCache for fragment lookup with storage options for S3 access
+            this.lanceFragment = LanceDatasetCache.getFragment(tablePath, this.fragmentId, storageOptions);
             if (this.lanceFragment == null) {
                 throw new RuntimeException("Fragment not found: " + this.fragmentId);
             }
@@ -73,7 +73,7 @@ public class LanceFragmentPageSource
         @Override
         public void close()
         {
-            // Only close the scanner; the dataset is managed by LanceReader's cache
+            // Only close the scanner; the dataset is managed by LanceDatasetCache
             try {
                 if (lanceScanner != null) {
                     lanceScanner.close();
