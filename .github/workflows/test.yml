@@ -52,7 +52,7 @@ jobs:
       fail-fast: false
       matrix:
         test-group:
-          - name: 'single-level'
+          - name: 'directory-single-level'
             tests: 'TestLanceConnectorTest,TestLanceConnectorSmokeTest,TestLanceDirectorySingleLevelConnectorTest,TestLanceDirectorySingleLevelConnectorSmokeTest'
           - name: 'directory-default'
             tests: 'TestLanceDirectoryDefaultConnectorTest,TestLanceDirectoryDefaultConnectorSmokeTest'
