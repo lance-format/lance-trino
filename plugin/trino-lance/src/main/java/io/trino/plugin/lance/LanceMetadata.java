@@ -420,6 +420,8 @@ public class LanceMetadata
         Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns());
         String schemaJson = arrowSchema.toJson();
 
+        Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
+
         log.debug("beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s", tableName, tablePath, replace, tableExisted);
 
         return new LanceWritableTableHandle(
@@ -428,6 +430,7 @@ public class LanceMetadata
                 schemaJson,
                 columns,
                 tableId,
+                storageOptions,
                 true,
                 replace,
                 tableExisted);
@@ -452,7 +455,7 @@ public class LanceMetadata
         log.debug("finishCreateTable: table=%s, fragments=%d, replace=%s, tableExisted=%s",
                 handle.tableName(), fragments.size(), handle.replace(), handle.tableExisted());
 
-        Map<String, String> storageOptions = getStorageOptionsForTable(handle.tableId());
+        Map<String, String> storageOptions = handle.storageOptions();
 
         if (handle.tableExisted()) {
             if (fragments.isEmpty()) {
@@ -510,6 +513,7 @@ public class LanceMetadata
                 schemaJson,
                 lanceColumns,
                 tableId,
+                storageOptions,
                 false,
                 false,
                 true);
@@ -532,7 +536,7 @@ public class LanceMetadata
         }
 
         List<String> allFragmentsJson = collectFragmentsFromSlices(fragments);
-        Map<String, String> storageOptions = getStorageOptionsForTable(handle.tableId());
+        Map<String, String> storageOptions = handle.storageOptions();
         commitAppend(handle.tablePath(), allFragmentsJson, storageOptions);
 
         LanceDatasetCache.invalidate(handle.tablePath());

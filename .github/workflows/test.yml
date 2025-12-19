@@ -88,16 +88,27 @@ jobs:
         path: '**/target/surefire-reports/'
         retention-days: 7
 
-  # S3 tests require LocalStack - run separately with services
+  # S3 tests are currently @Disabled due to eventual consistency issues
+  # with the Lance DirectoryNamespace on S3 storage.
+  # See: https://github.com/lancedb/lance-trino/issues/XXX
+  # To be enabled in a follow-up PR.
   # s3-tests:
   #   runs-on: ubuntu-latest
   #   services:
   #     localstack:
-  #       image: localstack/localstack:latest
+  #       image: localstack/localstack:3.3
   #       ports:
   #         - 4566:4566
   #       env:
   #         SERVICES: s3
+  #         DEBUG: 1
+  #         AWS_ACCESS_KEY_ID: ACCESSKEY
+  #         AWS_SECRET_ACCESS_KEY: SECRETKEY
+  #       options: >-
+  #         --health-cmd "curl -s http://localhost:4566/_localstack/health"
+  #         --health-interval 10s
+  #         --health-timeout 5s
+  #         --health-retries 5
   #   steps:
   #   - uses: actions/checkout@v4
   #   - name: Set up JDK 25
@@ -106,6 +117,13 @@ jobs:
   #       java-version: '25'
   #       distribution: 'temurin'
   #       cache: maven
+  #   - name: Create S3 bucket
+  #     run: |
+  #       aws --endpoint-url=http://localhost:4566 s3 mb s3://lance-test-bucket
+  #     env:
+  #       AWS_ACCESS_KEY_ID: ACCESSKEY
+  #       AWS_SECRET_ACCESS_KEY: SECRETKEY
+  #       AWS_DEFAULT_REGION: us-east-1
   #   - name: Run S3 tests
   #     run: |
   #       ./mvnw test -pl plugin/trino-lance \

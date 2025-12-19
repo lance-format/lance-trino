@@ -32,6 +32,7 @@ import org.lance.namespace.LanceNamespaceStorageOptionsProvider;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -56,6 +57,7 @@ public class LancePageSink
     private final BufferAllocator allocator;
     private final LanceNamespace namespace;
     private final List<String> tableId;
+    private final Map<String, String> configuredStorageOptions;
 
     private final List<Page> bufferedPages = new ArrayList<>();
     private long writtenBytes;
@@ -68,7 +70,8 @@ public class LancePageSink
             List<LanceColumnHandle> columns,
             JsonCodec<LanceCommitTaskData> jsonCodec,
             LanceNamespace namespace,
-            List<String> tableId)
+            List<String> tableId,
+            Map<String, String> configuredStorageOptions)
     {
         this.datasetUri = requireNonNull(datasetUri, "datasetUri is null");
         this.arrowSchema = requireNonNull(arrowSchema, "arrowSchema is null");
@@ -78,6 +81,7 @@ public class LancePageSink
         this.jsonCodec = requireNonNull(jsonCodec, "jsonCodec is null");
         this.namespace = requireNonNull(namespace, "namespace is null");
         this.tableId = requireNonNull(tableId, "tableId is null");
+        this.configuredStorageOptions = requireNonNull(configuredStorageOptions, "configuredStorageOptions is null");
         this.allocator = LanceNamespaceHolder.getAllocator().newChildAllocator("page-sink", 0, Long.MAX_VALUE);
     }
 
@@ -157,18 +161,9 @@ public class LancePageSink
             }
             root.setRowCount(totalRows);
 
-            // Get storage options from namespace (for endpoint, region, credentials, etc.)
-            java.util.Map<String, String> storageOptions = null;
-            try {
-                org.lance.namespace.model.DescribeTableRequest descReq = new org.lance.namespace.model.DescribeTableRequest();
-                descReq.setId(tableId);
-                org.lance.namespace.model.DescribeTableResponse descResp = namespace.describeTable(descReq);
-                storageOptions = descResp.getStorageOptions();
-                log.debug("Storage options for table %s: %s", tableId, storageOptions);
-            }
-            catch (Exception e) {
-                log.warn(e, "Failed to get storage options for table %s", tableId);
-            }
+            // Use storage options from the handle (already merged with namespace options)
+            Map<String, String> storageOptions = configuredStorageOptions;
+            log.debug("Using storage options for table %s: %s", tableId, storageOptions);
 
             // Write fragments using Lance API
             // Use storageOptionsProvider only if credentials have expiration (expires_at_millis)
