@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Configuration for different Lance namespace test scenarios.
@@ -195,6 +196,60 @@ public enum LanceNamespaceTestConfig
         Map<String, String> properties = new HashMap<>();
         properties.put("lance.impl", impl);
         properties.put("lance.root", "s3://" + bucketName + "/lance-test");
+
+        // S3 storage options
+        properties.put("lance.storage.allow_http", "true");
+        properties.put("lance.storage.aws_access_key_id", "ACCESSKEY");
+        properties.put("lance.storage.aws_secret_access_key", "SECRETKEY");
+        properties.put("lance.storage.aws_endpoint", s3Endpoint);
+        properties.put("lance.storage.aws_region", "us-east-1");
+
+        if (singleLevelNs) {
+            properties.put("lance.single_level_ns", "true");
+        }
+
+        parent.ifPresent(p -> properties.put("lance.parent", p));
+
+        return properties;
+    }
+
+    /**
+     * Default LocalStack endpoint for local testing.
+     */
+    public static final String DEFAULT_LOCALSTACK_ENDPOINT = "http://localhost:4566";
+
+    /**
+     * Default bucket name for S3 tests.
+     */
+    public static final String DEFAULT_S3_BUCKET = "lance-test-bucket";
+
+    /**
+     * Build S3 storage options for local LocalStack (docker-compose).
+     * Uses default endpoint (http://localhost:4566) and bucket (lance-test-bucket).
+     * Each call generates a unique prefix to avoid interference between parallel test classes.
+     *
+     * @return map of connector properties with S3 configuration
+     */
+    public Map<String, String> buildLocalS3ConnectorProperties()
+    {
+        // Generate unique prefix per call to avoid conflicts between parallel test classes
+        String uniquePrefix = UUID.randomUUID().toString().substring(0, 8);
+        return buildS3ConnectorPropertiesWithPrefix(DEFAULT_LOCALSTACK_ENDPOINT, DEFAULT_S3_BUCKET, uniquePrefix);
+    }
+
+    /**
+     * Build S3 storage options with a unique prefix per test run.
+     *
+     * @param s3Endpoint the S3 endpoint URL
+     * @param bucketName the S3 bucket name
+     * @param runPrefix unique prefix for this test run
+     * @return map of connector properties with S3 configuration
+     */
+    public Map<String, String> buildS3ConnectorPropertiesWithPrefix(String s3Endpoint, String bucketName, String runPrefix)
+    {
+        Map<String, String> properties = new HashMap<>();
+        properties.put("lance.impl", impl);
+        properties.put("lance.root", "s3://" + bucketName + "/lance-test-" + runPrefix);
 
         // S3 storage options
         properties.put("lance.storage.allow_http", "true");

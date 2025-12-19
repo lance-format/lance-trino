@@ -72,15 +72,28 @@ public final class LanceQueryRunner
 
     /**
      * Create a builder for a specific namespace test configuration.
+     * For S3 configs, uses local LocalStack endpoint (http://localhost:4566).
      *
      * @param config the namespace test configuration
      * @return a builder configured for the specified namespace mode
      */
     public static Builder builderForConfig(LanceNamespaceTestConfig config)
     {
-        return new Builder()
-                .setUseTempDirectory(true)
+        Builder builder = new Builder()
                 .setNamespaceTestConfig(config);
+
+        if (config.isS3Config()) {
+            // For S3 configs, use local LocalStack endpoint
+            Map<String, String> s3Props = config.buildLocalS3ConnectorProperties();
+            for (Map.Entry<String, String> entry : s3Props.entrySet()) {
+                builder.addConnectorProperty(entry.getKey(), entry.getValue());
+            }
+        }
+        else {
+            builder.setUseTempDirectory(true);
+        }
+
+        return builder;
     }
 
     /**

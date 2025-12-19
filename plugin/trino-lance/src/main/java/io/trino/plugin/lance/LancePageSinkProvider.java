@@ -85,6 +85,7 @@ public class LancePageSinkProvider
                 handle.inputColumns(),
                 jsonCodec,
                 namespaceHolder.getNamespace(),
-                handle.tableId());
+                handle.tableId(),
+                handle.storageOptions());
     }
 }

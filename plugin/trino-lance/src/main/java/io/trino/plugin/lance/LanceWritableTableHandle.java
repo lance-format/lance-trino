@@ -20,6 +20,7 @@ import io.trino.spi.connector.ConnectorOutputTableHandle;
 import io.trino.spi.connector.SchemaTableName;
 
 import java.util.List;
+import java.util.Map;
 
 import static java.util.Objects.requireNonNull;
 
@@ -34,6 +35,7 @@ public record LanceWritableTableHandle(
         String schemaJson,
         List<LanceColumnHandle> inputColumns,
         List<String> tableId,
+        Map<String, String> storageOptions,
         boolean forCreateTable,
         boolean replace,
         boolean tableExisted)
@@ -46,6 +48,7 @@ public record LanceWritableTableHandle(
             @JsonProperty("schemaJson") String schemaJson,
             @JsonProperty("inputColumns") List<LanceColumnHandle> inputColumns,
             @JsonProperty("tableId") List<String> tableId,
+            @JsonProperty("storageOptions") Map<String, String> storageOptions,
             @JsonProperty("forCreateTable") boolean forCreateTable,
             @JsonProperty("replace") boolean replace,
             @JsonProperty("tableExisted") boolean tableExisted)
@@ -55,6 +58,7 @@ public record LanceWritableTableHandle(
         this.schemaJson = requireNonNull(schemaJson, "schemaJson is null");
         this.inputColumns = requireNonNull(inputColumns, "inputColumns is null");
         this.tableId = requireNonNull(tableId, "tableId is null");
+        this.storageOptions = requireNonNull(storageOptions, "storageOptions is null");
         this.forCreateTable = forCreateTable;
         this.replace = replace;
         this.tableExisted = tableExisted;
@@ -96,6 +100,16 @@ public record LanceWritableTableHandle(
     public List<String> tableId()
     {
         return tableId;
+    }
+
+    /**
+     * Get storage options for accessing the table (S3 credentials, endpoint, etc.).
+     */
+    @JsonProperty
+    @Override
+    public Map<String, String> storageOptions()
+    {
+        return storageOptions;
     }
 
     @JsonProperty
