@@ -21,6 +21,7 @@ import io.trino.plugin.tpch.TpchPlugin;
 import io.trino.testing.DistributedQueryRunner;
 import io.trino.testing.QueryRunner;
 import io.trino.tpch.TpchTable;
+import org.lance.namespace.RestAdapter;
 
 import java.io.Closeable;
 import java.nio.file.Files;
@@ -104,6 +105,45 @@ public final class LanceQueryRunner
         return builder;
     }
 
+    /**
+     * Create a builder for REST namespace tests.
+     * This starts a local REST server backed by DirectoryNamespace.
+     *
+     * @param config the namespace test configuration (should be REST_*)
+     * @return a builder configured for REST namespace mode with embedded REST server
+     */
+    public static Builder builderForRest(LanceNamespaceTestConfig config)
+            throws Exception
+    {
+        // Create temp directory for REST backend
+        Path tempDir = Files.createTempDirectory("lance-rest-test-" + config.name());
+        tempDir.toFile().deleteOnExit();
+        log.info("REST backend using directory: %s", tempDir);
+
+        // Configure and start RestAdapter
+        Map<String, String> backendConfig = new HashMap<>();
+        backendConfig.put("root", tempDir.toString());
+
+        RestAdapter restAdapter = new RestAdapter("dir", backendConfig, "127.0.0.1", 0);
+        restAdapter.start();
+        int restPort = restAdapter.getPort();
+        String restUri = "http://127.0.0.1:" + restPort;
+        log.info("REST server started on port: %d", restPort);
+
+        // Create builder with REST connector properties
+        Builder builder = new Builder()
+                .setNamespaceTestConfig(config)
+                .setExternalResource(restAdapter);
+
+        // Set REST connector properties
+        Map<String, String> restProps = config.buildRestConnectorProperties(restUri);
+        for (Map.Entry<String, String> entry : restProps.entrySet()) {
+            builder.addConnectorProperty(entry.getKey(), entry.getValue());
+        }
+
+        return builder;
+    }
+
     public static final class Builder
             extends DistributedQueryRunner.Builder<Builder>
     {
@@ -178,9 +218,10 @@ public final class LanceQueryRunner
                     log.info("Using temporary directory for Lance with config %s: %s", config, tempDir);
                 }
             }
-            else if (useTempDirectory && !connectorProperties.containsKey("lance.root")) {
+            else if (useTempDirectory && !connectorProperties.containsKey("lance.root") && !connectorProperties.containsKey("lance.uri")) {
                 // Default behavior: use temp directory without namespace config
                 // Use single-level mode for backwards compatibility with DirectoryNamespace
+                // Only apply when not using REST (which has lance.uri instead of lance.root)
                 Path tempDir = Files.createTempDirectory("lance-trino-test");
                 tempDir.toFile().deleteOnExit();
                 connectorProperties.put("lance.root", tempDir.toUri().toString());

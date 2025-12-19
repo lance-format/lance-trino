@@ -58,6 +58,12 @@ jobs:
             tests: 'TestLanceDirectoryDefaultConnectorTest,TestLanceDirectoryDefaultConnectorSmokeTest'
           - name: 'directory-with-parent'
             tests: 'TestLanceDirectoryWithParentConnectorTest,TestLanceDirectoryWithParentConnectorSmokeTest'
+          - name: 'rest-single-level'
+            tests: 'TestLanceRestSingleLevelConnectorTest,TestLanceRestSingleLevelConnectorSmokeTest'
+          - name: 'rest-default'
+            tests: 'TestLanceRestDefaultConnectorTest,TestLanceRestDefaultConnectorSmokeTest'
+          - name: 'rest-with-parent'
+            tests: 'TestLanceRestWithParentConnectorTest,TestLanceRestWithParentConnectorSmokeTest'
     steps:
     - uses: actions/checkout@v4
 

@@ -13,21 +13,30 @@
  */
 package io.trino.plugin.lance;
 
-import org.junit.jupiter.api.Disabled;
+import io.trino.testing.QueryRunner;
+
+import static io.trino.tpch.TpchTable.NATION;
+import static io.trino.tpch.TpchTable.REGION;
 
 /**
- * Smoke test for REST namespace with parent prefix backend.
- *
- * Note: This test is currently disabled until a REST server test container
- * is available.
+ * Smoke test for REST namespace with parent prefix (3+ level access).
+ * This mode has full schema support with parent namespace prefix.
  */
-@Disabled("REST server test container not yet implemented")
-public class TestLanceRestWithParentSmokeTest
-        extends BaseLanceRestSmokeTest
+public class TestLanceRestWithParentConnectorSmokeTest
+        extends BaseLanceConnectorSmokeTest
 {
     @Override
     protected LanceNamespaceTestConfig getNamespaceTestConfig()
     {
         return LanceNamespaceTestConfig.REST_WITH_PARENT;
+    }
+
+    @Override
+    protected QueryRunner createQueryRunner()
+            throws Exception
+    {
+        return LanceQueryRunner.builderForRest(getNamespaceTestConfig())
+                .setInitialTables(NATION, REGION)
+                .build();
     }
 }
