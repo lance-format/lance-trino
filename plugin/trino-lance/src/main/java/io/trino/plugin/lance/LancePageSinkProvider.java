@@ -33,16 +33,19 @@ import static java.util.Objects.requireNonNull;
 /**
  * Provider for creating LancePageSink instances.
  * Used for both CREATE TABLE AS SELECT and INSERT operations.
+ * Provides namespace-aware page sinks for credential vending support.
  */
 public class LancePageSinkProvider
         implements ConnectorPageSinkProvider
 {
     private final JsonCodec<LanceCommitTaskData> jsonCodec;
+    private final LanceNamespaceHolder namespaceHolder;
 
     @Inject
-    public LancePageSinkProvider(JsonCodec<LanceCommitTaskData> jsonCodec)
+    public LancePageSinkProvider(JsonCodec<LanceCommitTaskData> jsonCodec, LanceNamespaceHolder namespaceHolder)
     {
         this.jsonCodec = requireNonNull(jsonCodec, "jsonCodec is null");
+        this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
     }
 
     @Override
@@ -80,6 +83,8 @@ public class LancePageSinkProvider
                 handle.tablePath(),
                 arrowSchema,
                 handle.inputColumns(),
-                jsonCodec);
+                jsonCodec,
+                namespaceHolder.getNamespace(),
+                handle.tableId());
     }
 }

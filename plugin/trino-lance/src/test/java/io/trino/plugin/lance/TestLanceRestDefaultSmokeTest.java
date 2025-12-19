@@ -11,17 +11,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.lance.internal;
+package io.trino.plugin.lance;
 
-import org.apache.arrow.memory.BufferAllocator;
-import org.lance.ipc.LanceScanner;
+import org.junit.jupiter.api.Disabled;
 
-import java.util.List;
-import java.util.Map;
-
-public interface ScannerFactory
+/**
+ * Smoke test for REST namespace in default mode backend.
+ *
+ * Note: This test is currently disabled until a REST server test container
+ * is available.
+ */
+@Disabled("REST server test container not yet implemented")
+public class TestLanceRestDefaultSmokeTest
+        extends BaseLanceRestSmokeTest
 {
-    LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns, Map<String, String> storageOptions);
-
-    void close();
+    @Override
+    protected LanceNamespaceTestConfig getNamespaceTestConfig()
+    {
+        return LanceNamespaceTestConfig.REST_DEFAULT;
+    }
 }

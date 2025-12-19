@@ -14,7 +14,6 @@
 package io.trino.plugin.lance;
 
 import io.trino.testing.BaseConnectorSmokeTest;
-import io.trino.testing.QueryRunner;
 import io.trino.testing.TestingConnectorBehavior;
 import org.junit.jupiter.api.Test;
 
@@ -35,25 +34,21 @@ import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_RENAME_TABLE_AC
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ROW_LEVEL_DELETE;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_TRUNCATE;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_UPDATE;
-import static io.trino.tpch.TpchTable.NATION;
-import static io.trino.tpch.TpchTable.REGION;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.abort;
 
 /**
- * Smoke test for the Lance connector extending BaseConnectorSmokeTest.
- * This test verifies basic connector functionality including read and write operations.
+ * Abstract base class for Lance connector smoke tests.
+ * Subclasses should override {@link #getNamespaceTestConfig()} to specify the namespace configuration.
  */
-public class TestLanceConnectorSmokeTest
+public abstract class BaseLanceConnectorSmokeTest
         extends BaseConnectorSmokeTest
 {
-    @Override
-    protected QueryRunner createQueryRunner()
-            throws Exception
-    {
-        return LanceQueryRunner.builderForWriteTests()
-                .setInitialTables(NATION, REGION)
-                .build();
-    }
+    /**
+     * Get the namespace test configuration for this test class.
+     * Subclasses must implement this to specify their namespace mode.
+     */
+    protected abstract LanceNamespaceTestConfig getNamespaceTestConfig();
 
     @Override
     protected boolean hasBehavior(TestingConnectorBehavior connectorBehavior)
@@ -64,10 +59,11 @@ public class TestLanceConnectorSmokeTest
                     SUPPORTS_CREATE_TABLE_WITH_DATA,
                     SUPPORTS_INSERT -> true;
 
+            // Schema operations - depends on namespace configuration
+            case SUPPORTS_CREATE_SCHEMA -> getNamespaceTestConfig().supportsCreateSchema();
+
             // Not supported behaviors
-            // CASCADE is not supported for DROP SCHEMA
-            case SUPPORTS_CREATE_SCHEMA,
-                    SUPPORTS_DROP_SCHEMA_CASCADE,
+            case SUPPORTS_DROP_SCHEMA_CASCADE,
                     SUPPORTS_RENAME_SCHEMA,
                     SUPPORTS_RENAME_TABLE,
                     SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
@@ -154,6 +150,37 @@ public class TestLanceConnectorSmokeTest
         }
         finally {
             assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    // ===== Namespace-specific tests =====
+
+    @Test
+    public void testCreateSchemaNotSupportedInSingleLevelMode()
+    {
+        if (!getNamespaceTestConfig().isSingleLevelNs()) {
+            abort("Test only applies to single-level namespace mode");
+        }
+
+        assertQueryFails(
+                "CREATE SCHEMA test_schema_not_allowed",
+                ".*This connector does not support creating schemas.*");
+    }
+
+    @Test
+    public void testCreateAndDropSchemaSmoke()
+    {
+        if (getNamespaceTestConfig().isSingleLevelNs()) {
+            abort("Test does not apply to single-level namespace mode");
+        }
+
+        String schemaName = "test_schema_smoke_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE SCHEMA " + schemaName);
+            assertQuery("SHOW SCHEMAS LIKE '" + schemaName + "'", "SELECT '" + schemaName + "'");
+        }
+        finally {
+            assertUpdate("DROP SCHEMA IF EXISTS " + schemaName);
         }
     }
 }

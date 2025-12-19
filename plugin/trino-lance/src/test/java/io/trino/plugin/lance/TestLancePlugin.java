@@ -15,7 +15,6 @@ package io.trino.plugin.lance;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Resources;
-import io.trino.plugin.lance.internal.LanceReader;
 import io.trino.spi.connector.ConnectorFactory;
 import io.trino.testing.TestingConnectorContext;
 import org.junit.jupiter.api.Test;
@@ -31,7 +30,7 @@ final class TestLancePlugin
         factory.create(
                         "test",
                         ImmutableMap.of(
-                                "lance.root", Resources.getResource(LanceReader.class, "/example_db").toString(),
+                                "lance.root", Resources.getResource(TestLancePlugin.class, "/example_db").toString(),
                                 "bootstrap.quiet", "true"),
                         new TestingConnectorContext())
                 .shutdown();

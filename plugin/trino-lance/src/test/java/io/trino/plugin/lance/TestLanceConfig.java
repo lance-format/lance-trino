@@ -34,7 +34,9 @@ public class TestLanceConfig
                 .setConnectionTimeout(Duration.valueOf("1m"))
                 .setMaxRowsPerFile(1_000_000)
                 .setMaxRowsPerGroup(100_000)
-                .setWriteBatchSize(10_000));
+                .setWriteBatchSize(10_000)
+                .setSingleLevelNs(false)
+                .setParent(null));
     }
 
     @Test
@@ -44,11 +46,13 @@ public class TestLanceConfig
         // All values must be different from defaults
         Map<String, String> properties = ImmutableMap.<String, String>builder()
                 .put("lance.impl", "rest")
-                .put("lance.connection-retry-count", "1")
-                .put("lance.connection-timeout", "30s")
-                .put("lance.max-rows-per-file", "500000")
-                .put("lance.max-rows-per-group", "50000")
-                .put("lance.write-batch-size", "5000")
+                .put("lance.connection_retry_count", "1")
+                .put("lance.connection_timeout", "30s")
+                .put("lance.max_rows_per_file", "500000")
+                .put("lance.max_rows_per_group", "50000")
+                .put("lance.write_batch_size", "5000")
+                .put("lance.single_level_ns", "true")
+                .put("lance.parent", "p1$p2")
                 .buildOrThrow();
 
         LanceConfig expected = new LanceConfig()
@@ -57,7 +61,9 @@ public class TestLanceConfig
                 .setConnectionTimeout(Duration.valueOf("30s"))
                 .setMaxRowsPerFile(500_000)
                 .setMaxRowsPerGroup(50_000)
-                .setWriteBatchSize(5_000);
+                .setWriteBatchSize(5_000)
+                .setSingleLevelNs(true)
+                .setParent("p1$p2");
 
         assertFullMapping(properties, expected);
     }

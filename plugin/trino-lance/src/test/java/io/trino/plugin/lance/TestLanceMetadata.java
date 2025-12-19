@@ -18,8 +18,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.Resources;
 import io.airlift.json.JsonCodec;
-import io.trino.plugin.lance.internal.LanceReader;
-import io.trino.plugin.lance.internal.LanceWriter;
 import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.TableNotFoundException;
@@ -30,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import java.net.URL;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -41,12 +40,12 @@ import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_METHOD;
 @TestInstance(PER_METHOD)
 public class TestLanceMetadata
 {
-    // Use URL.toString() to match the format used by LanceReader (file:/... vs file:///...)
+    // Use URL.toString() to match the format used by LanceNamespaceHolder (file:/... vs file:///...)
     private static final String TEST_DB_PATH = Resources.getResource(TestLanceMetadata.class, "/example_db").toString() + "/";
     private static final LanceTableHandle TEST_TABLE_1_HANDLE = new LanceTableHandle("default", "test_table1",
-            TEST_DB_PATH + "test_table1.lance");
+            TEST_DB_PATH + "test_table1.lance", List.of("test_table1"), Map.of());
     private static final LanceTableHandle TEST_TABLE_2_HANDLE = new LanceTableHandle("default", "test_table2",
-            TEST_DB_PATH + "test_table2.lance");
+            TEST_DB_PATH + "test_table2.lance", List.of("test_table2"), Map.of());
 
     // Actual column order in test data: x, y, b, c
     private static final ArrowType INT64_TYPE = new ArrowType.Int(64, true);
@@ -56,16 +55,16 @@ public class TestLanceMetadata
     public void setUp()
             throws Exception
     {
-        URL lanceURL = Resources.getResource(LanceReader.class, "/example_db");
+        URL lanceURL = Resources.getResource(TestLanceMetadata.class, "/example_db");
         assertThat(lanceURL)
                 .describedAs("example db is null")
                 .isNotNull();
-        LanceConfig lanceConfig = new LanceConfig();
+        LanceConfig lanceConfig = new LanceConfig()
+                .setSingleLevelNs(true);  // example_db is flat (tables at root)
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
-        LanceReader lanceReader = new LanceReader(lanceConfig, catalogProperties);
-        LanceWriter lanceWriter = new LanceWriter(lanceConfig);
+        LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
-        metadata = new LanceMetadata(lanceReader, lanceWriter, lanceConfig, commitTaskDataCodec);
+        metadata = new LanceMetadata(namespaceHolder, lanceConfig, commitTaskDataCodec);
     }
 
     @Test
@@ -95,10 +94,10 @@ public class TestLanceMetadata
                 "y", new LanceColumnHandle("y", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE))));
 
         // unknown table
-        assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, new LanceTableHandle("unknown", "unknown", "unknown")))
+        assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, new LanceTableHandle("unknown", "unknown", "unknown", List.of("unknown"), Map.of())))
                 .isInstanceOf(TableNotFoundException.class)
                 .hasMessage("Table 'unknown.unknown' not found");
-        assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, new LanceTableHandle("example", "unknown", "unknown")))
+        assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, new LanceTableHandle("example", "unknown", "unknown", List.of("unknown"), Map.of())))
                 .isInstanceOf(TableNotFoundException.class)
                 .hasMessage("Table 'example.unknown' not found");
     }
@@ -117,8 +116,8 @@ public class TestLanceMetadata
                 new LanceColumnHandle("c", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)).getColumnMetadata()));
 
         // unknown tables should produce null
-        assertThat(metadata.getTableMetadata(SESSION, new LanceTableHandle("unknown", "unknown", "unknown"))).isNull();
-        assertThat(metadata.getTableMetadata(SESSION, new LanceTableHandle("default", "unknown", "unknown"))).isNull();
+        assertThat(metadata.getTableMetadata(SESSION, new LanceTableHandle("unknown", "unknown", "unknown", List.of("unknown"), Map.of()))).isNull();
+        assertThat(metadata.getTableMetadata(SESSION, new LanceTableHandle("default", "unknown", "unknown", List.of("unknown"), Map.of()))).isNull();
     }
 
     @Test

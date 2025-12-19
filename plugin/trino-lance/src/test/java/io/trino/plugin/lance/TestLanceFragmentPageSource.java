@@ -16,8 +16,6 @@ package io.trino.plugin.lance;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Resources;
 import io.airlift.json.JsonCodec;
-import io.trino.plugin.lance.internal.LanceReader;
-import io.trino.plugin.lance.internal.LanceWriter;
 import io.trino.spi.Page;
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.ConnectorSplitSource;
@@ -28,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import java.net.URL;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,22 +43,23 @@ public class TestLanceFragmentPageSource
 
     private LanceMetadata metadata;
     private LanceSplitManager splitManager;
+    private LanceNamespaceHolder namespaceHolder;
 
     @BeforeEach
     public void setUp()
             throws Exception
     {
-        URL lanceURL = Resources.getResource(LanceReader.class, "/example_db");
+        URL lanceURL = Resources.getResource(TestLanceFragmentPageSource.class, "/example_db");
         assertThat(lanceURL)
                 .describedAs("example db is null")
                 .isNotNull();
-        LanceConfig lanceConfig = new LanceConfig();
+        LanceConfig lanceConfig = new LanceConfig()
+                .setSingleLevelNs(true);  // example_db is flat (tables at root)
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
-        LanceReader lanceReader = new LanceReader(lanceConfig, catalogProperties);
-        LanceWriter lanceWriter = new LanceWriter(lanceConfig);
+        namespaceHolder = new LanceNamespaceHolder(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
-        this.metadata = new LanceMetadata(lanceReader, lanceWriter, lanceConfig, commitTaskDataCodec);
-        this.splitManager = new LanceSplitManager(lanceReader, lanceConfig);
+        this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, commitTaskDataCodec);
+        this.splitManager = new LanceSplitManager(namespaceHolder);
     }
 
     @Test
@@ -71,9 +71,10 @@ public class TestLanceFragmentPageSource
         ConnectorSplitSource.ConnectorSplitBatch batch = splits.getNextBatch(2).get();
         assertThat(batch.getSplits().size()).isEqualTo(2);
         LanceSplit lanceSplit = (LanceSplit) batch.getSplits().get(0);
-        List<LanceColumnHandle> columns = LanceBasePageSource.toColumnHandles(metadata.getLanceReader(), (LanceTableHandle) tableHandle);
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
+        List<LanceColumnHandle> columns = LanceBasePageSource.toColumnHandles(lanceTableHandle, Collections.emptyMap());
         // testing split 0 is enough
-        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(metadata.getLanceReader(), (LanceTableHandle) tableHandle, columns, lanceSplit.getFragments(), metadata.getLanceConfig().getFetchRetryCount())) {
+        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), metadata.getLanceConfig().getFetchRetryCount(), Collections.emptyMap())) {
             Page page = pageSource.getNextPage();
             // assert row/column count
             assertThat(page.getChannelCount()).isEqualTo(4);
@@ -104,7 +105,8 @@ public class TestLanceFragmentPageSource
         LanceSplit lanceSplit = (LanceSplit) batch.getSplits().get(0);
 
         // Get column handles
-        List<LanceColumnHandle> allColumns = LanceBasePageSource.toColumnHandles(metadata.getLanceReader(), (LanceTableHandle) tableHandle);
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
+        List<LanceColumnHandle> allColumns = LanceBasePageSource.toColumnHandles(lanceTableHandle, Collections.emptyMap());
         LanceColumnHandle colB = allColumns.stream().filter(c -> c.name().equals("b")).findFirst().orElseThrow();
         LanceColumnHandle colX = allColumns.stream().filter(c -> c.name().equals("x")).findFirst().orElseThrow();
 
@@ -112,11 +114,11 @@ public class TestLanceFragmentPageSource
         List<LanceColumnHandle> projectedColumns = List.of(colB, colX);
 
         try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(
-                metadata.getLanceReader(),
-                (LanceTableHandle) tableHandle,
+                lanceTableHandle,
                 projectedColumns,
                 lanceSplit.getFragments(),
-                metadata.getLanceConfig().getFetchRetryCount())) {
+                metadata.getLanceConfig().getFetchRetryCount(),
+                Collections.emptyMap())) {
             Page page = pageSource.getNextPage();
 
             assertThat(page.getChannelCount()).isEqualTo(2);
@@ -145,7 +147,8 @@ public class TestLanceFragmentPageSource
         ConnectorSplitSource.ConnectorSplitBatch batch = splits.getNextBatch(2).get();
         LanceSplit lanceSplit = (LanceSplit) batch.getSplits().get(0);
 
-        List<LanceColumnHandle> allColumns = LanceBasePageSource.toColumnHandles(metadata.getLanceReader(), (LanceTableHandle) tableHandle);
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
+        List<LanceColumnHandle> allColumns = LanceBasePageSource.toColumnHandles(lanceTableHandle, Collections.emptyMap());
         LanceColumnHandle colX = allColumns.stream().filter(c -> c.name().equals("x")).findFirst().orElseThrow();
         LanceColumnHandle colC = allColumns.stream().filter(c -> c.name().equals("c")).findFirst().orElseThrow();
 
@@ -153,11 +156,11 @@ public class TestLanceFragmentPageSource
         List<LanceColumnHandle> projectedColumns = List.of(colC, colX);
 
         try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(
-                metadata.getLanceReader(),
-                (LanceTableHandle) tableHandle,
+                lanceTableHandle,
                 projectedColumns,
                 lanceSplit.getFragments(),
-                metadata.getLanceConfig().getFetchRetryCount())) {
+                metadata.getLanceConfig().getFetchRetryCount(),
+                Collections.emptyMap())) {
             Page page = pageSource.getNextPage();
 
             // assert only 2 columns returned

@@ -13,39 +13,12 @@
  */
 package io.trino.plugin.lance;
 
-import com.google.common.collect.ImmutableMap;
-import io.airlift.json.JsonCodec;
-import io.trino.spi.connector.ColumnHandle;
-import io.trino.spi.connector.ColumnMetadata;
-import io.trino.spi.connector.SchemaTableName;
-import io.trino.spi.type.VarcharType;
 import io.trino.testing.BaseConnectorTest;
-import io.trino.testing.QueryRunner;
 import io.trino.testing.TestingConnectorBehavior;
-import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.IntVector;
-import org.apache.arrow.vector.LargeVarCharVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
-import org.apache.arrow.vector.types.pojo.ArrowType;
-import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import org.lance.Dataset;
-import org.lance.Fragment;
-import org.lance.FragmentMetadata;
-import org.lance.FragmentOperation;
-import org.lance.WriteParams;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
-import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN_WITH_COMMENT;
@@ -77,31 +50,21 @@ import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_SET_COLUMN_TYPE
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_TOPN_PUSHDOWN;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_TRUNCATE;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_UPDATE;
-import static io.trino.testing.TestingConnectorSession.SESSION;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.abort;
 
 /**
- * Comprehensive connector test for the Lance connector extending BaseConnectorTest.
- * This test verifies full connector functionality including reads, writes, and DDL operations.
+ * Abstract base class for Lance connector tests.
+ * Subclasses should override {@link #getNamespaceTestConfig()} to specify the namespace configuration.
  */
-public class TestLanceConnectorTest
+public abstract class BaseLanceConnectorTest
         extends BaseConnectorTest
 {
-    private static final Schema LARGE_UTF8_SCHEMA = new Schema(
-            Arrays.asList(
-                    Field.nullable("id", new ArrowType.Int(32, true)),
-                    Field.nullable("large_text", ArrowType.LargeUtf8.INSTANCE)),
-            null);
-
-    @Override
-    protected QueryRunner createQueryRunner()
-            throws Exception
-    {
-        return LanceQueryRunner.builderForWriteTests()
-                .setInitialTables(REQUIRED_TPCH_TABLES)
-                .build();
-    }
+    /**
+     * Get the namespace test configuration for this test class.
+     * Subclasses must implement this to specify their namespace mode.
+     */
+    protected abstract LanceNamespaceTestConfig getNamespaceTestConfig();
 
     @Override
     protected boolean hasBehavior(TestingConnectorBehavior connectorBehavior)
@@ -117,11 +80,10 @@ public class TestLanceConnectorTest
             case SUPPORTS_ROW_TYPE,
                     SUPPORTS_MAP_TYPE -> false;
 
-            // Schema operations - not supported in single-level mode (which builderForWriteTests uses)
-            // CASCADE is not supported for DROP SCHEMA
-            case SUPPORTS_CREATE_SCHEMA,
-                    SUPPORTS_RENAME_SCHEMA,
-                    SUPPORTS_DROP_SCHEMA_CASCADE -> false;
+            // Schema operations - depends on namespace configuration
+            case SUPPORTS_CREATE_SCHEMA -> getNamespaceTestConfig().supportsCreateSchema();
+            case SUPPORTS_DROP_SCHEMA_CASCADE,
+                    SUPPORTS_RENAME_SCHEMA -> false;
 
             // Table modification operations - not supported
             case SUPPORTS_RENAME_TABLE,
@@ -331,16 +293,22 @@ public class TestLanceConnectorTest
     @Override
     public void testCreateTableSchemaNotFound()
     {
-        // Lance uses a single "default" schema, schema not found errors don't apply
-        abort("Lance uses a single default schema");
+        if (getNamespaceTestConfig().isSingleLevelNs()) {
+            // Single-level mode uses virtual "default" schema, schema not found errors don't apply
+            abort("Single-level mode uses virtual default schema");
+        }
+        super.testCreateTableSchemaNotFound();
     }
 
     @Test
     @Override
     public void testCreateTableAsSelectSchemaNotFound()
     {
-        // Lance uses a single "default" schema, schema not found errors don't apply
-        abort("Lance uses a single default schema");
+        if (getNamespaceTestConfig().isSingleLevelNs()) {
+            // Single-level mode uses virtual "default" schema, schema not found errors don't apply
+            abort("Single-level mode uses virtual default schema");
+        }
+        super.testCreateTableAsSelectSchemaNotFound();
     }
 
     @Test
@@ -415,140 +383,49 @@ public class TestLanceConnectorTest
         abort("Lance does not support timestamp type yet");
     }
 
-    // ===== LargeUtf8 Support Tests =====
+    // ===== Namespace-specific tests =====
 
     @Test
-    public void testToTrinoTypeWithLargeUtf8()
+    public void testCreateSchemaNotSupportedInSingleLevelMode()
     {
-        // Test that LargeUtf8 is correctly converted to VARCHAR
-        assertThat(LanceColumnHandle.toTrinoType(ArrowType.LargeUtf8.INSTANCE))
-                .isEqualTo(VarcharType.VARCHAR);
-
-        // Also verify regular Utf8 still works
-        assertThat(LanceColumnHandle.toTrinoType(ArrowType.Utf8.INSTANCE))
-                .isEqualTo(VarcharType.VARCHAR);
-    }
-
-    @Test
-    public void testReadLargeUtf8Dataset(@TempDir Path tempDir)
-    {
-        String datasetPath = tempDir.resolve("large_utf8_test.lance").toString();
-
-        // Step 1: Create a Lance dataset with LargeUtf8 column using the Java SDK
-        try (BufferAllocator allocator = new RootAllocator()) {
-            // Create empty dataset with schema
-            Dataset dataset = Dataset.create(allocator, datasetPath, LARGE_UTF8_SCHEMA,
-                    new WriteParams.Builder().build());
-            dataset.close();
-
-            // Write some data
-            try (VectorSchemaRoot root = VectorSchemaRoot.create(LARGE_UTF8_SCHEMA, allocator)) {
-                root.allocateNew();
-                IntVector idVector = (IntVector) root.getVector("id");
-                LargeVarCharVector textVector = (LargeVarCharVector) root.getVector("large_text");
-
-                // Add test data
-                for (int i = 0; i < 5; i++) {
-                    idVector.setSafe(i, i);
-                    String text = "Large text value " + i;
-                    textVector.setSafe(i, text.getBytes(StandardCharsets.UTF_8));
-                }
-                root.setRowCount(5);
-
-                List<FragmentMetadata> fragments = Fragment.create(
-                        datasetPath,
-                        allocator,
-                        root,
-                        new WriteParams.Builder().build());
-
-                FragmentOperation.Append appendOp = new FragmentOperation.Append(fragments);
-                try (Dataset appendedDataset = Dataset.commit(allocator, datasetPath, appendOp, Optional.of(1L))) {
-                    assertThat(appendedDataset.countRows()).isEqualTo(5);
-                }
-            }
-
-            // Step 2: Read the dataset using LanceDatasetCache and verify schema mapping
-            // Use single-level mode since we're using a flat directory structure
-            LanceConfig config = new LanceConfig().setSingleLevelNs(true);
-            Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
-            LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(config, catalogProperties);
-
-            // Get column handles using the table path
-            String tablePath = datasetPath;
-            Map<String, ColumnHandle> columnHandles = LanceDatasetCache.getColumnHandles(tablePath, null);
-            assertThat(columnHandles).hasSize(2);
-
-            // Verify the large_text column is mapped to VARCHAR
-            LanceColumnHandle largeTextHandle = (LanceColumnHandle) columnHandles.get("large_text");
-            assertThat(largeTextHandle).isNotNull();
-            assertThat(largeTextHandle.trinoType()).isEqualTo(VarcharType.VARCHAR);
-
-            // Verify id column
-            LanceColumnHandle idHandle = (LanceColumnHandle) columnHandles.get("id");
-            assertThat(idHandle).isNotNull();
-            assertThat(idHandle.trinoType()).isEqualTo(INTEGER);
-
-            // Step 3: Verify table metadata using the table path
-            List<ColumnMetadata> columnsMetadata = LanceDatasetCache.getColumnMetadata(tablePath, null);
-            assertThat(columnsMetadata).hasSize(2);
-
-            // Find the large_text column metadata
-            ColumnMetadata largeTextMetadata = columnsMetadata.stream()
-                    .filter(cm -> cm.getName().equals("large_text"))
-                    .findFirst()
-                    .orElseThrow();
-            assertThat(largeTextMetadata.getType()).isEqualTo(VarcharType.VARCHAR);
+        if (!getNamespaceTestConfig().isSingleLevelNs()) {
+            abort("Test only applies to single-level namespace mode");
         }
+
+        assertQueryFails(
+                "CREATE SCHEMA test_schema_not_allowed",
+                ".*This connector does not support creating schemas.*");
     }
 
     @Test
-    public void testLanceMetadataWithLargeUtf8(@TempDir Path tempDir)
+    public void testDropSchemaNotSupportedInSingleLevelMode()
     {
-        String datasetPath = tempDir.resolve("metadata_test.lance").toString();
+        if (!getNamespaceTestConfig().isSingleLevelNs()) {
+            abort("Test only applies to single-level namespace mode");
+        }
 
-        try (BufferAllocator allocator = new RootAllocator()) {
-            // Create and populate dataset
-            Dataset dataset = Dataset.create(allocator, datasetPath, LARGE_UTF8_SCHEMA,
-                    new WriteParams.Builder().build());
-            dataset.close();
+        // In single-level mode, only the virtual "default" schema exists
+        // Attempting to drop a non-existent schema results in "Schema does not exist" error
+        // from Trino's built-in validation (before our dropSchema method is called)
+        assertQueryFails(
+                "DROP SCHEMA test_schema_not_allowed",
+                ".*Schema.*does not exist.*");
+    }
 
-            try (VectorSchemaRoot root = VectorSchemaRoot.create(LARGE_UTF8_SCHEMA, allocator)) {
-                root.allocateNew();
-                IntVector idVector = (IntVector) root.getVector("id");
-                LargeVarCharVector textVector = (LargeVarCharVector) root.getVector("large_text");
+    @Test
+    public void testCreateAndDropSchema()
+    {
+        if (getNamespaceTestConfig().isSingleLevelNs()) {
+            abort("Test does not apply to single-level namespace mode");
+        }
 
-                idVector.setSafe(0, 1);
-                textVector.setSafe(0, "test".getBytes(StandardCharsets.UTF_8));
-                root.setRowCount(1);
-
-                List<FragmentMetadata> fragments = Fragment.create(datasetPath, allocator, root,
-                        new WriteParams.Builder().build());
-                FragmentOperation.Append appendOp = new FragmentOperation.Append(fragments);
-                Dataset.commit(allocator, datasetPath, appendOp, Optional.of(1L)).close();
-            }
-
-            // Create LanceMetadata and verify it can read the table
-            // Use single-level mode since we're using a flat directory structure
-            LanceConfig config = new LanceConfig().setSingleLevelNs(true);
-            Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
-            LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(config, catalogProperties);
-            JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
-            LanceMetadata metadata = new LanceMetadata(namespaceHolder, config, commitTaskDataCodec);
-
-            // Get table handle - this should NOT return null anymore
-            LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
-                    SESSION,
-                    new SchemaTableName("default", "metadata_test"),
-                    Optional.empty(),
-                    Optional.empty());
-            assertThat(tableHandle).isNotNull();
-
-            // Get table metadata - this should NOT return null anymore
-            var tableMetadata = metadata.getTableMetadata(SESSION, tableHandle);
-            assertThat(tableMetadata)
-                    .describedAs("getTableMetadata should not return null for LargeUtf8 columns")
-                    .isNotNull();
-            assertThat(tableMetadata.getColumns()).hasSize(2);
+        String schemaName = "test_schema_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE SCHEMA " + schemaName);
+            assertQuery("SHOW SCHEMAS LIKE '" + schemaName + "'", "SELECT '" + schemaName + "'");
+        }
+        finally {
+            assertUpdate("DROP SCHEMA IF EXISTS " + schemaName);
         }
     }
 }

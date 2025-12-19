@@ -33,8 +33,10 @@ public record LanceWritableTableHandle(
         String tablePath,
         String schemaJson,
         List<LanceColumnHandle> inputColumns,
+        List<String> tableId,
         boolean forCreateTable,
-        boolean replace)
+        boolean replace,
+        boolean tableExisted)
         implements ConnectorInsertTableHandle, ConnectorOutputTableHandle
 {
     @JsonCreator
@@ -43,15 +45,19 @@ public record LanceWritableTableHandle(
             @JsonProperty("tablePath") String tablePath,
             @JsonProperty("schemaJson") String schemaJson,
             @JsonProperty("inputColumns") List<LanceColumnHandle> inputColumns,
+            @JsonProperty("tableId") List<String> tableId,
             @JsonProperty("forCreateTable") boolean forCreateTable,
-            @JsonProperty("replace") boolean replace)
+            @JsonProperty("replace") boolean replace,
+            @JsonProperty("tableExisted") boolean tableExisted)
     {
         this.tableName = requireNonNull(tableName, "tableName is null");
         this.tablePath = requireNonNull(tablePath, "tablePath is null");
         this.schemaJson = requireNonNull(schemaJson, "schemaJson is null");
         this.inputColumns = requireNonNull(inputColumns, "inputColumns is null");
+        this.tableId = requireNonNull(tableId, "tableId is null");
         this.forCreateTable = forCreateTable;
         this.replace = replace;
+        this.tableExisted = tableExisted;
     }
 
     @JsonProperty
@@ -82,6 +88,16 @@ public record LanceWritableTableHandle(
         return inputColumns;
     }
 
+    /**
+     * Get the Lance table identifier for namespace operations.
+     */
+    @JsonProperty
+    @Override
+    public List<String> tableId()
+    {
+        return tableId;
+    }
+
     @JsonProperty
     @Override
     public boolean forCreateTable()
@@ -94,5 +110,16 @@ public record LanceWritableTableHandle(
     public boolean replace()
     {
         return replace;
+    }
+
+    /**
+     * Returns true if the table existed before this operation.
+     * Used to determine whether to use overwrite mode (existing table) or create mode (new table).
+     */
+    @JsonProperty
+    @Override
+    public boolean tableExisted()
+    {
+        return tableExisted;
     }
 }

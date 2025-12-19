@@ -79,7 +79,7 @@ public class LanceConfig
         return connectionTimeout;
     }
 
-    @Config("lance.connection-timeout")
+    @Config("lance.connection_timeout")
     public LanceConfig setConnectionTimeout(Duration connectionTimeout)
     {
         this.connectionTimeout = connectionTimeout;
@@ -91,10 +91,52 @@ public class LanceConfig
         return this.fetchRetryCount;
     }
 
-    @Config("lance.connection-retry-count")
+    @Config("lance.connection_retry_count")
     public LanceConfig setFetchRetryCount(int fetchRetryCount)
     {
         this.fetchRetryCount = fetchRetryCount;
+        return this;
+    }
+
+    // ===== Namespace Configuration =====
+
+    /**
+     * Single-level namespace mode.
+     * When true, access 1st level (root) with virtual "default" schema.
+     * CREATE SCHEMA is not allowed in this mode.
+     */
+    private boolean singleLevelNs;
+
+    /**
+     * Parent namespace prefix for multi-level namespaces (3+ levels).
+     * Format: "prefix$path" using $ as delimiter.
+     * Example: "hive$catalog" to access namespaces under hive/catalog.
+     */
+    private String parent;
+
+    public boolean isSingleLevelNs()
+    {
+        return singleLevelNs;
+    }
+
+    @Config("lance.single_level_ns")
+    @ConfigDescription("Access 1st level namespace with virtual 'default' schema (no CREATE SCHEMA)")
+    public LanceConfig setSingleLevelNs(boolean singleLevelNs)
+    {
+        this.singleLevelNs = singleLevelNs;
+        return this;
+    }
+
+    public String getParent()
+    {
+        return parent;
+    }
+
+    @Config("lance.parent")
+    @ConfigDescription("Parent namespace prefix for 3+ level namespaces (use $ as delimiter)")
+    public LanceConfig setParent(String parent)
+    {
+        this.parent = parent;
         return this;
     }
 
@@ -109,7 +151,7 @@ public class LanceConfig
         return maxRowsPerFile;
     }
 
-    @Config("lance.max-rows-per-file")
+    @Config("lance.max_rows_per_file")
     @ConfigDescription("Maximum number of rows per Lance file")
     public LanceConfig setMaxRowsPerFile(int maxRowsPerFile)
     {
@@ -122,7 +164,7 @@ public class LanceConfig
         return maxRowsPerGroup;
     }
 
-    @Config("lance.max-rows-per-group")
+    @Config("lance.max_rows_per_group")
     @ConfigDescription("Maximum number of rows per row group within a Lance file")
     public LanceConfig setMaxRowsPerGroup(int maxRowsPerGroup)
     {
@@ -135,7 +177,7 @@ public class LanceConfig
         return writeBatchSize;
     }
 
-    @Config("lance.write-batch-size")
+    @Config("lance.write_batch_size")
     @ConfigDescription("Number of rows to batch before writing to Arrow")
     public LanceConfig setWriteBatchSize(int writeBatchSize)
     {
