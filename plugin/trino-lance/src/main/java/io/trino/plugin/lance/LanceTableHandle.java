@@ -155,7 +155,7 @@ public class LanceTableHandle
         if (substraitFilter == null || substraitFilter.length == 0) {
             return Optional.empty();
         }
-        return Optional.of(ByteBuffer.wrap(substraitFilter));
+        return Optional.of(ByteBuffer.wrap(substraitFilter).asReadOnlyBuffer());
     }
 
     /**

@@ -376,6 +376,11 @@ public class LanceMetadata
         Map<String, Integer> fieldIdMap = new HashMap<>();
         Map<LanceColumnHandle, Domain> domains = supportedConstraint.getDomains().orElse(Map.of());
         for (LanceColumnHandle column : domains.keySet()) {
+            if (column.fieldId() < 0) {
+                throw new IllegalStateException(
+                        "Column " + column.name() + " has invalid field ID. " +
+                        "This is unexpected - all columns should have valid field IDs from Lance schema.");
+            }
             fieldIdMap.put(column.name(), column.fieldId());
         }
 
@@ -426,7 +431,6 @@ public class LanceMetadata
         for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
             LanceColumnHandle column = entry.getKey();
             Domain domain = entry.getValue();
-            // Check both type support and domain complexity (e.g., not too many ranges)
             if (isSupportedType(column.trinoType()) && isDomainPushable(domain)) {
                 supportedDomains.put(column, domain);
             }
@@ -451,7 +455,6 @@ public class LanceMetadata
         for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
             LanceColumnHandle column = entry.getKey();
             Domain domain = entry.getValue();
-            // Include domains that are unsupported type OR not pushable (e.g., too many ranges)
             if (!isSupportedType(column.trinoType()) || !isDomainPushable(domain)) {
                 unsupportedDomains.put(column, domain);
             }

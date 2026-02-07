@@ -280,20 +280,20 @@ public final class SubstraitExpressionBuilder
     private static Expression isNullExpression(int ordinal, Type type)
     {
         Expression fieldRef = fieldReference(ordinal, type);
-        return scalarFunction("is_null", "is_null:any", R.BOOLEAN, fieldRef);
+        return scalarFunction("is_null:any", R.BOOLEAN, fieldRef);
     }
 
     private static Expression isNotNullExpression(int ordinal, Type type)
     {
         Expression fieldRef = fieldReference(ordinal, type);
-        return scalarFunction("is_not_null", "is_not_null:any", R.BOOLEAN, fieldRef);
+        return scalarFunction("is_not_null:any", R.BOOLEAN, fieldRef);
     }
 
     private static Expression equalExpression(int ordinal, Type substraitType, io.trino.spi.type.Type trinoType, Object value)
     {
         Expression fieldRef = fieldReference(ordinal, substraitType);
         Expression literal = toLiteral(trinoType, value, substraitType);
-        return scalarFunction("equal", "equal:any_any", R.BOOLEAN, fieldRef, literal);
+        return scalarFunction("equal:any_any", R.BOOLEAN, fieldRef, literal);
     }
 
     private static Expression inExpression(int ordinal, Type substraitType, io.trino.spi.type.Type trinoType, List<Range> ranges)
@@ -311,22 +311,22 @@ public final class SubstraitExpressionBuilder
 
     private static Expression greaterThan(Expression left, Expression right)
     {
-        return scalarFunction("gt", "gt:any_any", R.BOOLEAN, left, right);
+        return scalarFunction("gt:any_any", R.BOOLEAN, left, right);
     }
 
     private static Expression greaterThanOrEqual(Expression left, Expression right)
     {
-        return scalarFunction("gte", "gte:any_any", R.BOOLEAN, left, right);
+        return scalarFunction("gte:any_any", R.BOOLEAN, left, right);
     }
 
     private static Expression lessThan(Expression left, Expression right)
     {
-        return scalarFunction("lt", "lt:any_any", R.BOOLEAN, left, right);
+        return scalarFunction("lt:any_any", R.BOOLEAN, left, right);
     }
 
     private static Expression lessThanOrEqual(Expression left, Expression right)
     {
-        return scalarFunction("lte", "lte:any_any", R.BOOLEAN, left, right);
+        return scalarFunction("lte:any_any", R.BOOLEAN, left, right);
     }
 
     private static Expression andExpressions(List<Expression> expressions)
@@ -361,7 +361,7 @@ public final class SubstraitExpressionBuilder
                 .build();
     }
 
-    private static Expression scalarFunction(String name, String key, Type outputType, Expression... args)
+    private static Expression scalarFunction(String key, Type outputType, Expression... args)
     {
         SimpleExtension.ScalarFunctionVariant declaration =
                 EXTENSIONS.getScalarFunction(SimpleExtension.FunctionAnchor.of(
