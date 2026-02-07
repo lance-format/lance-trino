@@ -30,9 +30,9 @@ public class LanceFragmentPageSource
 {
     private static final Logger log = Logger.get(LanceFragmentPageSource.class);
 
-    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<Integer> fragments, int maxReadRowsRetries, Map<String, String> storageOptions)
+    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<Integer> fragments, Map<String, String> storageOptions)
     {
-        super(tableHandle, columns, maxReadRowsRetries, createScannerFactory(fragments), storageOptions);
+        super(tableHandle, columns, createScannerFactory(fragments), storageOptions);
     }
 
     private static ScannerFactory createScannerFactory(List<Integer> fragments)

@@ -1,0 +1,5 @@
+title: DDL
+nav:
+  - show-schemas.md
+  - show-tables.md
+  - describe-table.md

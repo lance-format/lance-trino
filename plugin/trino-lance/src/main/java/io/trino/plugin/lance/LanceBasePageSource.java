@@ -37,7 +37,6 @@ public abstract class LanceBasePageSource
     private static final BufferAllocator allocator = new RootAllocator(
             RootAllocator.configBuilder().from(RootAllocator.defaultConfig()).maxAllocation(Integer.MAX_VALUE).build());
 
-    protected final int maxReadRowsRetries;
     protected final LanceTableHandle tableHandle;
 
     protected final AtomicLong readBytes = new AtomicLong();
@@ -47,9 +46,8 @@ public abstract class LanceBasePageSource
     protected final BufferAllocator bufferAllocator;
     protected final PageBuilder pageBuilder;
 
-    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, int maxReadRowsRetries, ScannerFactory scannerFactory, Map<String, String> storageOptions)
+    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions)
     {
-        this.maxReadRowsRetries = maxReadRowsRetries;
         this.tableHandle = tableHandle;
         this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
         this.lanceArrowToPageScanner =

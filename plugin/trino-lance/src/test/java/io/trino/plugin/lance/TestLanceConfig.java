@@ -14,7 +14,6 @@
 package io.trino.plugin.lance;
 
 import com.google.common.collect.ImmutableMap;
-import io.airlift.units.Duration;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -30,8 +29,6 @@ public class TestLanceConfig
     {
         assertRecordedDefaults(recordDefaults(LanceConfig.class)
                 .setImpl("dir")
-                .setFetchRetryCount(5)
-                .setConnectionTimeout(Duration.valueOf("1m"))
                 .setMaxRowsPerFile(1_000_000)
                 .setMaxRowsPerGroup(100_000)
                 .setWriteBatchSize(10_000)
@@ -46,8 +43,6 @@ public class TestLanceConfig
         // All values must be different from defaults
         Map<String, String> properties = ImmutableMap.<String, String>builder()
                 .put("lance.impl", "rest")
-                .put("lance.connection_retry_count", "1")
-                .put("lance.connection_timeout", "30s")
                 .put("lance.max_rows_per_file", "500000")
                 .put("lance.max_rows_per_group", "50000")
                 .put("lance.write_batch_size", "5000")
@@ -57,8 +52,6 @@ public class TestLanceConfig
 
         LanceConfig expected = new LanceConfig()
                 .setImpl("rest")
-                .setFetchRetryCount(1)
-                .setConnectionTimeout(Duration.valueOf("30s"))
                 .setMaxRowsPerFile(500_000)
                 .setMaxRowsPerGroup(50_000)
                 .setWriteBatchSize(5_000)

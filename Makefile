@@ -1,4 +1,4 @@
-.PHONY: build test clean install compile package help run lint format check
+.PHONY: build test clean install compile package help run lint format check serve-docs
 
 # Default target
 help:
@@ -14,6 +14,7 @@ help:
 	@echo "  lint      - Run all code style checks (checkstyle, modernizer, sortpom)"
 	@echo "  format    - Format pom.xml files"
 	@echo "  check     - Run lint checks without tests"
+	@echo "  serve-docs - Serve documentation locally"
 
 # Build the project
 build: compile package
@@ -57,3 +58,7 @@ format:
 # Run all checks without tests
 check:
 	./mvnw compile checkstyle:check sortpom:verify modernizer:modernizer -Dair.check.skip-enforcer=true -DskipTests
+
+# Serve documentation locally
+serve-docs:
+	cd docs && uv run --with-requirements requirements.txt mkdocs serve

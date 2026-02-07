@@ -35,13 +35,11 @@ public class LancePageSourceProvider
         implements ConnectorPageSourceProvider
 {
     private final LanceNamespaceHolder namespaceHolder;
-    private final LanceConfig lanceConfig;
 
     @Inject
-    public LancePageSourceProvider(LanceNamespaceHolder namespaceHolder, LanceConfig lanceConfig)
+    public LancePageSourceProvider(LanceNamespaceHolder namespaceHolder)
     {
         this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
-        this.lanceConfig = requireNonNull(lanceConfig, "lanceConfig is null");
     }
 
     @Override
@@ -61,7 +59,7 @@ public class LancePageSourceProvider
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
 
         // Each split contains exactly one fragment for parallel processing
-        return new LanceFragmentPageSource(lanceTableHandle, lanceColumns, lanceSplit.getFragments(), lanceConfig.getFetchRetryCount(), storageOptions);
+        return new LanceFragmentPageSource(lanceTableHandle, lanceColumns, lanceSplit.getFragments(), storageOptions);
     }
 
     /**
