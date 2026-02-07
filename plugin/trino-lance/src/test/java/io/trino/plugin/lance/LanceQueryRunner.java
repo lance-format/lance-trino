@@ -26,9 +26,8 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
-import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
-import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 
 import java.io.Closeable;
 import java.net.URI;
@@ -182,13 +181,12 @@ public final class LanceQueryRunner
                 .credentialsProvider(StaticCredentialsProvider.create(credentials))
                 .build()) {
             try {
-                s3Client.headBucket(HeadBucketRequest.builder().bucket(bucketName).build());
-                log.info("S3 bucket already exists: %s", bucketName);
-            }
-            catch (NoSuchBucketException e) {
                 log.info("Creating S3 bucket: %s", bucketName);
                 s3Client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
                 log.info("S3 bucket created successfully: %s", bucketName);
+            }
+            catch (BucketAlreadyOwnedByYouException e) {
+                log.info("S3 bucket already exists: %s", bucketName);
             }
         }
     }
