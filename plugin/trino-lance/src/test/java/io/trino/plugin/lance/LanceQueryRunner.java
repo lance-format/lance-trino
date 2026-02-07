@@ -179,6 +179,7 @@ public final class LanceQueryRunner
                 .endpointOverride(URI.create(endpoint))
                 .region(Region.US_EAST_1)
                 .credentialsProvider(StaticCredentialsProvider.create(credentials))
+                .forcePathStyle(true)
                 .build()) {
             try {
                 log.info("Creating S3 bucket: %s", bucketName);
