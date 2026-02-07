@@ -195,14 +195,6 @@ public abstract class BaseLanceConnectorTest
 
     @Test
     @Override
-    public void testInsertRowConcurrently()
-    {
-        // Lance doesn't handle concurrent inserts well, especially on S3
-        abort("Lance does not support concurrent inserts");
-    }
-
-    @Test
-    @Override
     public void testCharVarcharComparison()
     {
         // Lance doesn't support CHAR type

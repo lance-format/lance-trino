@@ -49,6 +49,7 @@ import org.lance.Dataset;
 import org.lance.FragmentMetadata;
 import org.lance.FragmentOperation;
 import org.lance.ReadOptions;
+import org.lance.Transaction;
 import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateEmptyTableRequest;
@@ -65,6 +66,7 @@ import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
+import org.lance.operation.Append;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -658,19 +660,17 @@ public class LanceMetadata
         log.debug("Committing %d fragments to dataset: %s (append)", serializedFragments.size(), datasetUri);
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        FragmentOperation.Append appendOp = new FragmentOperation.Append(fragments);
-
         ReadOptions readOptions = new ReadOptions.Builder()
                 .setStorageOptions(storageOptions)
                 .build();
 
         try (Dataset dataset = Dataset.open(datasetUri, readOptions)) {
-            Dataset.commit(
-                    LanceNamespaceHolder.getAllocator(),
-                    datasetUri,
-                    appendOp,
-                    Optional.of(dataset.version()),
-                    storageOptions).close();
+            Transaction transaction = dataset
+                    .newTransactionBuilder()
+                    .writeParams(storageOptions)
+                    .operation(Append.builder().fragments(fragments).build())
+                    .build();
+            transaction.commit().close();
         }
     }
 
