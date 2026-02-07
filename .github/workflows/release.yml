@@ -1,0 +1,181 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Version bump type (patch/minor/major bumps version, current keeps it unchanged)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - current
+      release_channel:
+        description: 'Release channel (preview creates beta tag, stable creates release tag)'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - preview
+          - stable
+      dry_run:
+        description: 'Dry run (simulate the release without pushing)'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Output Inputs
+      run: echo "${{ toJSON(github.event.inputs) }}"
+
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        ref: main
+        token: ${{ secrets.LANCE_RELEASE_TOKEN }}
+        fetch-depth: 0
+
+    - name: Set up JDK 25
+      uses: actions/setup-java@v4
+      with:
+        java-version: '25'
+        distribution: 'temurin'
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install packaging lxml bump-my-version
+
+    - name: Get current version
+      id: current_version
+      run: |
+        CURRENT_VERSION=$(grep 'current_version' .bumpversion.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+        echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "Current version: $CURRENT_VERSION"
+
+    - name: Calculate base version
+      id: base_version
+      run: |
+        python ci/calculate_version.py \
+          --current "${{ steps.current_version.outputs.version }}" \
+          --type "${{ inputs.release_type }}" \
+          --channel "${{ inputs.release_channel }}"
+
+    - name: Determine tag and pom version
+      id: versions
+      run: |
+        BASE_VERSION="${{ steps.base_version.outputs.version }}"
+        CURRENT_VERSION="${{ steps.current_version.outputs.version }}"
+        if [ "${{ inputs.release_channel }}" == "stable" ]; then
+          TAG="v${BASE_VERSION}"
+          POM_VERSION="${BASE_VERSION}"
+        else
+          # For preview releases, find the next beta number for this base version
+          BETA_TAGS=$(git tag -l "v${BASE_VERSION}-beta.*" | sort -V)
+          if [ -z "$BETA_TAGS" ]; then
+            BETA_NUM=1
+          else
+            LAST_BETA=$(echo "$BETA_TAGS" | tail -n 1)
+            LAST_NUM=$(echo "$LAST_BETA" | sed "s/v${BASE_VERSION}-beta.//")
+            BETA_NUM=$((LAST_NUM + 1))
+          fi
+          TAG="v${BASE_VERSION}-beta.${BETA_NUM}"
+          # For preview releases, pom version should include the beta suffix
+          POM_VERSION="${BASE_VERSION}-beta.${BETA_NUM}"
+        fi
+
+        # Check if version actually changes (needed for commit/push decisions)
+        if [ "$CURRENT_VERSION" != "$POM_VERSION" ]; then
+          VERSION_CHANGED="true"
+        else
+          VERSION_CHANGED="false"
+        fi
+
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "pom_version=$POM_VERSION" >> $GITHUB_OUTPUT
+        echo "version_changed=$VERSION_CHANGED" >> $GITHUB_OUTPUT
+        echo "Tag will be: $TAG"
+        echo "POM version will be: $POM_VERSION"
+        echo "Version changed: $VERSION_CHANGED"
+
+    - name: Update version (when version changes)
+      if: steps.versions.outputs.version_changed == 'true'
+      run: |
+        python ci/bump_version.py --version "${{ steps.versions.outputs.pom_version }}"
+
+    - name: Configure git identity
+      run: |
+        git config user.name 'github-actions[bot]'
+        git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+    - name: Create release commit (when version changes)
+      if: steps.versions.outputs.version_changed == 'true'
+      run: |
+        git add -A
+        git commit -m "chore: bump version to ${{ steps.versions.outputs.pom_version }}" || echo "No changes to commit"
+
+    - name: Create tag
+      run: |
+        git tag -a "${{ steps.versions.outputs.tag }}" -m "Release ${{ steps.versions.outputs.tag }}"
+
+    - name: Push changes (if not dry run)
+      if: ${{ !inputs.dry_run }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.LANCE_RELEASE_TOKEN }}
+      run: |
+        # Configure git to use the token for authentication
+        git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+
+        if [ "${{ steps.versions.outputs.version_changed }}" == "true" ]; then
+          # Push the version bump commit
+          git push origin main
+        fi
+        # Always push the tag
+        git push origin "${{ steps.versions.outputs.tag }}"
+
+    - name: Create GitHub Release Draft (if not dry run)
+      if: ${{ !inputs.dry_run }}
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.versions.outputs.tag }}
+        name: ${{ steps.versions.outputs.tag }}
+        generate_release_notes: true
+        draft: true
+        prerelease: ${{ inputs.release_channel == 'preview' }}
+        token: ${{ secrets.LANCE_RELEASE_TOKEN }}
+
+    - name: Summary
+      run: |
+        echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Release Type:** ${{ inputs.release_type }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Release Channel:** ${{ inputs.release_channel }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Current Version:** ${{ steps.current_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ steps.versions.outputs.version_changed }}" == "true" ]; then
+          echo "- **New Version:** ${{ steps.versions.outputs.pom_version }}" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "- **Tag:** ${{ steps.versions.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Dry Run:** ${{ inputs.dry_run }}" >> $GITHUB_STEP_SUMMARY
+
+        if [ "${{ inputs.dry_run }}" == "true" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This was a dry run. No changes were pushed." >> $GITHUB_STEP_SUMMARY
+        else
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Draft release created successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review the draft release on the [releases page](https://github.com/${{ github.repository }}/releases)" >> $GITHUB_STEP_SUMMARY
+          echo "2. Edit the release notes if needed" >> $GITHUB_STEP_SUMMARY
+          echo "3. Publish the release" >> $GITHUB_STEP_SUMMARY
+        fi
