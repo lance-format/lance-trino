@@ -87,6 +87,16 @@
         </dependency>
 
         <dependency>
+            <groupId>org.lance</groupId>
+            <artifactId>lance-namespace-apache-client</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.lance</groupId>
+            <artifactId>lance-namespace-core</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>org.weakref</groupId>
             <artifactId>jmxutils</artifactId>
         </dependency>
