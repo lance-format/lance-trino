@@ -1,0 +1,64 @@
+site_name: Trino Lance Connector
+site_description: The Trino Connector for Lance allows Trino to efficiently read datasets stored in Lance format.
+site_url: https://lance.org/integrations/trino/
+docs_dir: src
+
+repo_name: lancedb/lance-trino
+repo_url: https://github.com/lancedb/lance-trino
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - awesome-pages
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/lancedb/lance-trino
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/zMM32dvNtd
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/lancedb

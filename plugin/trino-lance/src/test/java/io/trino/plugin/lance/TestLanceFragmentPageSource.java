@@ -74,7 +74,7 @@ public class TestLanceFragmentPageSource
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
         List<LanceColumnHandle> columns = LanceBasePageSource.toColumnHandles(lanceTableHandle, Collections.emptyMap());
         // testing split 0 is enough
-        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), metadata.getLanceConfig().getFetchRetryCount(), Collections.emptyMap())) {
+        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap())) {
             Page page = pageSource.getNextPage();
             // assert row/column count
             assertThat(page.getChannelCount()).isEqualTo(4);
@@ -117,7 +117,6 @@ public class TestLanceFragmentPageSource
                 lanceTableHandle,
                 projectedColumns,
                 lanceSplit.getFragments(),
-                metadata.getLanceConfig().getFetchRetryCount(),
                 Collections.emptyMap())) {
             Page page = pageSource.getNextPage();
 
@@ -159,7 +158,6 @@ public class TestLanceFragmentPageSource
                 lanceTableHandle,
                 projectedColumns,
                 lanceSplit.getFragments(),
-                metadata.getLanceConfig().getFetchRetryCount(),
                 Collections.emptyMap())) {
             Page page = pageSource.getNextPage();
 

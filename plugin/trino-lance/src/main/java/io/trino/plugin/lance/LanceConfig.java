@@ -15,11 +15,7 @@ package io.trino.plugin.lance;
 
 import io.airlift.configuration.Config;
 import io.airlift.configuration.ConfigDescription;
-import io.airlift.units.Duration;
-import io.airlift.units.MinDuration;
 import jakarta.validation.constraints.NotNull;
-
-import java.util.concurrent.TimeUnit;
 
 /**
  * Configuration for Lance connector.
@@ -54,10 +50,6 @@ public class LanceConfig
      */
     private String impl = "dir";
 
-    private Duration connectionTimeout = new Duration(1, TimeUnit.MINUTES);
-
-    private int fetchRetryCount = 5;
-
     @NotNull
     public String getImpl()
     {
@@ -69,32 +61,6 @@ public class LanceConfig
     public LanceConfig setImpl(String impl)
     {
         this.impl = impl;
-        return this;
-    }
-
-    @MinDuration("15s")
-    @NotNull
-    public Duration getConnectionTimeout()
-    {
-        return connectionTimeout;
-    }
-
-    @Config("lance.connection_timeout")
-    public LanceConfig setConnectionTimeout(Duration connectionTimeout)
-    {
-        this.connectionTimeout = connectionTimeout;
-        return this;
-    }
-
-    public Integer getFetchRetryCount()
-    {
-        return this.fetchRetryCount;
-    }
-
-    @Config("lance.connection_retry_count")
-    public LanceConfig setFetchRetryCount(int fetchRetryCount)
-    {
-        this.fetchRetryCount = fetchRetryCount;
         return this;
     }
 
