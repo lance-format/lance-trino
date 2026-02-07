@@ -46,6 +46,8 @@ import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.security.TrinoPrincipal;
 import io.trino.spi.statistics.ComputedStatistics;
+import io.trino.spi.statistics.Estimate;
+import io.trino.spi.statistics.TableStatistics;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Dataset;
 import org.lance.FragmentMetadata;
@@ -310,6 +312,38 @@ public class LanceMetadata
             ConnectorTableHandle handle, List<ConnectorExpression> projections, Map<String, ColumnHandle> assignments)
     {
         return Optional.empty();
+    }
+
+    @Override
+    public TableStatistics getTableStatistics(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
+
+        // If there's a filter, we can't easily get accurate statistics
+        // Return unknown to let Trino handle it
+        if (lanceTableHandle.getFilterOptional().isPresent()) {
+            return TableStatistics.empty();
+        }
+
+        try {
+            Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+            ReadOptions readOptions = new ReadOptions.Builder()
+                    .setStorageOptions(storageOptions)
+                    .build();
+
+            try (Dataset dataset = Dataset.open(lanceTableHandle.getTablePath(), readOptions)) {
+                long rowCount = dataset.countRows();
+                log.debug("getTableStatistics: table=%s, rowCount=%d", lanceTableHandle.getTableName(), rowCount);
+
+                return TableStatistics.builder()
+                        .setRowCount(Estimate.of(rowCount))
+                        .build();
+            }
+        }
+        catch (Exception e) {
+            log.warn(e, "Failed to get table statistics for %s", lanceTableHandle.getTableName());
+            return TableStatistics.empty();
+        }
     }
 
     @Override
