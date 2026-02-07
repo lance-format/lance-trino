@@ -170,7 +170,7 @@ public class LanceMetadata
 
         DropNamespaceRequest request = new DropNamespaceRequest();
         request.setId(namespaceId);
-        request.setBehavior(DropNamespaceRequest.BehaviorEnum.RESTRICT);
+        request.setBehavior("Restrict");
         getNamespace().dropNamespace(request);
     }
 
