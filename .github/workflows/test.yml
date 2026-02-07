@@ -88,44 +88,66 @@ jobs:
         path: '**/target/surefire-reports/'
         retention-days: 7
 
-  # S3 tests are currently @Disabled due to eventual consistency issues
-  # with the Lance DirectoryNamespace on S3 storage.
-  # See: https://github.com/lancedb/lance-trino/issues/XXX
-  # To be enabled in a follow-up PR.
-  # s3-tests:
-  #   runs-on: ubuntu-latest
-  #   services:
-  #     localstack:
-  #       image: localstack/localstack:3.3
-  #       ports:
-  #         - 4566:4566
-  #       env:
-  #         SERVICES: s3
-  #         DEBUG: 1
-  #         AWS_ACCESS_KEY_ID: ACCESSKEY
-  #         AWS_SECRET_ACCESS_KEY: SECRETKEY
-  #       options: >-
-  #         --health-cmd "curl -s http://localhost:4566/_localstack/health"
-  #         --health-interval 10s
-  #         --health-timeout 5s
-  #         --health-retries 5
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #   - name: Set up JDK 25
-  #     uses: actions/setup-java@v4
-  #     with:
-  #       java-version: '25'
-  #       distribution: 'temurin'
-  #       cache: maven
-  #   - name: Create S3 bucket
-  #     run: |
-  #       aws --endpoint-url=http://localhost:4566 s3 mb s3://lance-test-bucket
-  #     env:
-  #       AWS_ACCESS_KEY_ID: ACCESSKEY
-  #       AWS_SECRET_ACCESS_KEY: SECRETKEY
-  #       AWS_DEFAULT_REGION: us-east-1
-  #   - name: Run S3 tests
-  #     run: |
-  #       ./mvnw test -pl plugin/trino-lance \
-  #         -Dtest='TestLanceS3*' \
-  #         -Dair.check.skip-enforcer=true
+  s3-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test-group:
+          - name: 's3-single-level'
+            tests: 'TestLanceS3SingleLevelConnectorTest,TestLanceS3SingleLevelConnectorSmokeTest'
+          - name: 's3-default'
+            tests: 'TestLanceS3DefaultConnectorTest,TestLanceS3DefaultConnectorSmokeTest'
+          - name: 's3-with-parent'
+            tests: 'TestLanceS3WithParentConnectorTest,TestLanceS3WithParentConnectorSmokeTest'
+    services:
+      localstack:
+        image: localstack/localstack:3.3
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: s3
+          DEBUG: 1
+          AWS_ACCESS_KEY_ID: ACCESSKEY
+          AWS_SECRET_ACCESS_KEY: SECRETKEY
+        options: >-
+          --health-cmd "curl -s http://localhost:4566/_localstack/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK 25
+      uses: actions/setup-java@v4
+      with:
+        java-version: '25'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Install AWS CLI
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y awscli
+
+    - name: Create S3 bucket
+      run: |
+        aws --endpoint-url=http://localhost:4566 s3 mb s3://lance-test-bucket
+      env:
+        AWS_ACCESS_KEY_ID: ACCESSKEY
+        AWS_SECRET_ACCESS_KEY: SECRETKEY
+        AWS_DEFAULT_REGION: us-east-1
+
+    - name: Run ${{ matrix.test-group.name }} S3 tests
+      run: |
+        ./mvnw test -pl plugin/trino-lance \
+          -Dtest='${{ matrix.test-group.tests }}' \
+          -Dair.check.skip-enforcer=true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: s3-test-results-${{ matrix.test-group.name }}
+        path: '**/target/surefire-reports/'
+        retention-days: 7

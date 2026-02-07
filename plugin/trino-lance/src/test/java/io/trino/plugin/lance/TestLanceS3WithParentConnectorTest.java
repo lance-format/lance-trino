@@ -14,17 +14,12 @@
 package io.trino.plugin.lance;
 
 import io.trino.testing.QueryRunner;
-import org.junit.jupiter.api.Disabled;
 
 /**
  * Connector test for S3 directory namespace with parent prefix (3+ level access).
  * This mode has full schema support with parent namespace prefix.
  * Requires LocalStack to be running locally via docker-compose.
- *
- * <p>Disabled due to S3 eventual consistency issues with schema listing.
- * See: https://github.com/lancedb/lance-trino/issues/XXX
  */
-@Disabled("S3 eventual consistency issues with schema listing - to be fixed in follow-up")
 public class TestLanceS3WithParentConnectorTest
         extends BaseLanceConnectorTest
 {
