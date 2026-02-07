@@ -53,8 +53,6 @@ import static io.trino.spi.type.TinyintType.TINYINT;
 public final class SubstraitExpressionBuilder
 {
     private static final TypeCreator R = TypeCreator.of(false);
-    private static final TypeCreator N = TypeCreator.of(true);
-    private static final int MAX_RANGES_FOR_PUSHDOWN = 100;
 
     private static final SimpleExtension.ExtensionCollection EXTENSIONS;
 
@@ -489,24 +487,10 @@ public final class SubstraitExpressionBuilder
 
     /**
      * Check if a domain can be pushed down via Substrait.
-     * A domain cannot be pushed if it has too many ranges (e.g., large IN/NOT IN clauses).
+     * Lance is optimized for random reads, so we always push down all predicates including large IN clauses.
      */
     public static boolean isDomainPushable(Domain domain)
     {
-        if (domain.isAll() || domain.isNone()) {
-            return true;
-        }
-
-        ValueSet valueSet = domain.getValues();
-        if (valueSet.isNone() || valueSet.isAll()) {
-            return true;
-        }
-
-        if (valueSet.isSingleValue()) {
-            return true;
-        }
-
-        List<Range> ranges = valueSet.getRanges().getOrderedRanges();
-        return ranges.size() <= MAX_RANGES_FOR_PUSHDOWN;
+        return true;
     }
 }
