@@ -17,12 +17,14 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.trino.spi.connector.ConnectorTableHandle;
-import io.trino.spi.predicate.TupleDomain;
 
+import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalLong;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
@@ -39,7 +41,7 @@ public class LanceTableHandle
     private final String tablePath;
     private final List<String> tableId;
     private final Map<String, String> storageOptions;
-    private final TupleDomain<LanceColumnHandle> constraint;
+    private final byte[] substraitFilter;
     private final OptionalLong limit;
 
     public LanceTableHandle(
@@ -49,7 +51,7 @@ public class LanceTableHandle
             List<String> tableId,
             Map<String, String> storageOptions)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, TupleDomain.all(), OptionalLong.empty());
+        this(schemaName, tableName, tablePath, tableId, storageOptions, null, OptionalLong.empty());
     }
 
     @JsonCreator
@@ -59,9 +61,10 @@ public class LanceTableHandle
             @JsonProperty("tablePath") String tablePath,
             @JsonProperty("tableId") List<String> tableId,
             @JsonProperty("storageOptions") Map<String, String> storageOptions,
+            @JsonProperty("substraitFilter") byte[] substraitFilter,
             @JsonProperty("limit") Long limit)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, TupleDomain.all(),
+        this(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter,
                 limit != null ? OptionalLong.of(limit) : OptionalLong.empty());
     }
 
@@ -71,7 +74,7 @@ public class LanceTableHandle
             String tablePath,
             List<String> tableId,
             Map<String, String> storageOptions,
-            TupleDomain<LanceColumnHandle> constraint,
+            byte[] substraitFilter,
             OptionalLong limit)
     {
         this.schemaName = requireNonNull(schemaName, "schemaName is null");
@@ -79,7 +82,7 @@ public class LanceTableHandle
         this.tablePath = requireNonNull(tablePath, "tablePath is null");
         this.tableId = requireNonNull(tableId, "tableId is null");
         this.storageOptions = storageOptions != null ? new HashMap<>(storageOptions) : new HashMap<>();
-        this.constraint = requireNonNull(constraint, "constraint is null");
+        this.substraitFilter = substraitFilter;
         this.limit = requireNonNull(limit, "limit is null");
     }
 
@@ -144,12 +147,33 @@ public class LanceTableHandle
     }
 
     /**
-     * Get the constraint (pushed filter predicate).
+     * Get the Substrait filter as a ByteBuffer for Lance scanning.
      */
     @JsonIgnore
-    public TupleDomain<LanceColumnHandle> getConstraint()
+    public Optional<ByteBuffer> getSubstraitFilterBuffer()
     {
-        return constraint;
+        if (substraitFilter == null || substraitFilter.length == 0) {
+            return Optional.empty();
+        }
+        return Optional.of(ByteBuffer.wrap(substraitFilter));
+    }
+
+    /**
+     * Get the raw Substrait filter bytes for JSON serialization.
+     */
+    @JsonProperty("substraitFilter")
+    public byte[] getSubstraitFilter()
+    {
+        return substraitFilter;
+    }
+
+    /**
+     * Check if there is a filter applied.
+     */
+    @JsonIgnore
+    public boolean hasFilter()
+    {
+        return substraitFilter != null && substraitFilter.length > 0;
     }
 
     /**
@@ -175,15 +199,15 @@ public class LanceTableHandle
      */
     public LanceTableHandle withStorageOptions(Map<String, String> newStorageOptions)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, constraint, limit);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, limit);
     }
 
     /**
-     * Create a new handle with the given constraint.
+     * Create a new handle with the given Substrait filter.
      */
-    public LanceTableHandle withConstraint(TupleDomain<LanceColumnHandle> newConstraint)
+    public LanceTableHandle withSubstraitFilter(byte[] newSubstraitFilter)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newConstraint, limit);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, limit);
     }
 
     /**
@@ -191,7 +215,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withLimit(long newLimit)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, constraint, OptionalLong.of(newLimit));
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, OptionalLong.of(newLimit));
     }
 
     @Override
@@ -206,13 +230,17 @@ public class LanceTableHandle
         LanceTableHandle that = (LanceTableHandle) o;
         return Objects.equals(tableName, that.tableName) &&
                 Objects.equals(tablePath, that.tablePath) &&
-                Objects.equals(tableId, that.tableId);
+                Objects.equals(tableId, that.tableId) &&
+                Arrays.equals(substraitFilter, that.substraitFilter) &&
+                Objects.equals(limit, that.limit);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(tableName, tablePath, tableId);
+        int result = Objects.hash(tableName, tablePath, tableId, limit);
+        result = 31 * result + Arrays.hashCode(substraitFilter);
+        return result;
     }
 
     @Override
@@ -223,7 +251,7 @@ public class LanceTableHandle
                 .add("tablePath", tablePath)
                 .add("tableId", tableId)
                 .add("hasStorageOptions", !storageOptions.isEmpty())
-                .add("constraint", constraint)
+                .add("hasFilter", hasFilter())
                 .add("limit", limit)
                 .toString();
     }

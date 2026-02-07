@@ -20,11 +20,8 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.util.VisibleForTesting;
 
-import java.nio.ByteBuffer;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -52,7 +49,6 @@ public abstract class LanceBasePageSource
         this.tableHandle = tableHandle;
         this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
 
-        Optional<ByteBuffer> substraitFilter = buildSubstraitFilter(tableHandle, columns);
         this.lanceArrowToPageScanner =
                 new LanceArrowToPageScanner(
                         bufferAllocator,
@@ -60,25 +56,11 @@ public abstract class LanceBasePageSource
                         columns,
                         scannerFactory,
                         storageOptions,
-                        substraitFilter,
+                        tableHandle.getSubstraitFilterBuffer(),
                         tableHandle.getLimit());
         this.pageBuilder =
                 new PageBuilder(columns.stream().map(LanceColumnHandle::trinoType).collect(toImmutableList()));
         this.isFinished.set(false);
-    }
-
-    private static Optional<ByteBuffer> buildSubstraitFilter(LanceTableHandle tableHandle, List<LanceColumnHandle> columns)
-    {
-        if (tableHandle.getConstraint().isAll()) {
-            return Optional.empty();
-        }
-
-        Map<String, Integer> columnOrdinals = new HashMap<>();
-        for (int i = 0; i < columns.size(); i++) {
-            columnOrdinals.put(columns.get(i).name(), i);
-        }
-
-        return SubstraitExpressionBuilder.tupleDomainToSubstrait(tableHandle.getConstraint(), columnOrdinals);
     }
 
     @VisibleForTesting

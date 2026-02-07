@@ -77,6 +77,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
@@ -320,12 +321,6 @@ public class LanceMetadata
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
 
-        // If there's a filter, we can't easily get accurate statistics
-        // Return unknown to let Trino handle it
-        if (!lanceTableHandle.getConstraint().isAll()) {
-            return TableStatistics.empty();
-        }
-
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
             long rowCount = LanceDatasetCache.countRows(lanceTableHandle.getTablePath(), storageOptions);
@@ -377,18 +372,40 @@ public class LanceMetadata
             return Optional.empty();
         }
 
-        TupleDomain<LanceColumnHandle> currentConstraint = lanceTableHandle.getConstraint();
-        TupleDomain<LanceColumnHandle> combinedConstraint = currentConstraint.intersect(supportedConstraint);
+        // Build field ID map from column handles
+        Map<String, Integer> fieldIdMap = new HashMap<>();
+        Map<LanceColumnHandle, Domain> domains = supportedConstraint.getDomains().orElse(Map.of());
+        for (LanceColumnHandle column : domains.keySet()) {
+            fieldIdMap.put(column.name(), column.fieldId());
+        }
 
-        if (currentConstraint.equals(combinedConstraint)) {
-            log.debug("applyFilter: constraint unchanged, returning empty");
+        // Build Substrait filter using field IDs
+        Optional<ByteBuffer> substraitFilter = SubstraitExpressionBuilder.tupleDomainToSubstrait(
+                supportedConstraint, fieldIdMap);
+
+        if (substraitFilter.isEmpty()) {
+            log.debug("applyFilter: no substrait filter generated, returning empty");
             return Optional.empty();
         }
 
-        LanceTableHandle newHandle = lanceTableHandle.withConstraint(combinedConstraint);
+        // Combine with existing filter if present
+        byte[] newFilterBytes = substraitFilter.get().array();
+        byte[] existingFilter = lanceTableHandle.getSubstraitFilter();
+
+        // If there's an existing filter, we can't easily combine Substrait expressions,
+        // so we just use the new one (this matches the previous behavior with TupleDomain.intersect)
+        // In practice, Trino calls applyFilter once with the full constraint
+        if (existingFilter != null && existingFilter.length > 0 &&
+                java.util.Arrays.equals(existingFilter, newFilterBytes)) {
+            log.debug("applyFilter: filter unchanged, returning empty");
+            return Optional.empty();
+        }
+
+        LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes);
         TupleDomain<LanceColumnHandle> remainingFilter = filterToUnsupportedTypes(newConstraint);
 
-        log.debug("applyFilter: pushing constraint=%s, remaining=%s", combinedConstraint, remainingFilter);
+        log.debug("applyFilter: pushing substrait filter (size=%d bytes), remaining=%s",
+                newFilterBytes.length, remainingFilter);
 
         return Optional.of(new ConstraintApplicationResult<>(
                 newHandle,

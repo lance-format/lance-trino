@@ -18,11 +18,12 @@ import io.airlift.log.Logger;
 import io.trino.cache.EvictableCacheBuilder;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
-import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Dataset;
 import org.lance.Fragment;
 import org.lance.ReadOptions;
+import org.lance.schema.LanceField;
+import org.lance.schema.LanceSchema;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -147,17 +148,35 @@ public final class LanceDatasetCache
     }
 
     /**
-     * Get column handles for a table.
+     * Get column handles for a table with field IDs.
      */
     public static Map<String, ColumnHandle> getColumnHandles(String tablePath, Map<String, String> storageOptions)
     {
-        Schema arrowSchema = getSchema(tablePath, storageOptions);
-        return arrowSchema.getFields().stream().collect(Collectors.toMap(
-                Field::getName,
-                f -> new LanceColumnHandle(f.getName(), LanceColumnHandle.toTrinoType(f.getFieldType().getType()),
-                        f.getFieldType()),
+        LanceSchema lanceSchema = getLanceSchema(tablePath, storageOptions);
+        return lanceSchema.fields().stream().collect(Collectors.toMap(
+                LanceField::getName,
+                f -> new LanceColumnHandle(
+                        f.getName(),
+                        LanceColumnHandle.toTrinoType(f.getType()),
+                        f.isNullable(),
+                        f.getId()),
                 (v1, v2) -> v1,
                 LinkedHashMap::new));
+    }
+
+    /**
+     * Get the Lance schema with field IDs.
+     */
+    public static LanceSchema getLanceSchema(String tablePath, Map<String, String> storageOptions)
+    {
+        log.debug("Loading Lance schema for table: %s", tablePath);
+        ReadOptions.Builder optionsBuilder = new ReadOptions.Builder();
+        if (storageOptions != null && !storageOptions.isEmpty()) {
+            optionsBuilder.setStorageOptions(storageOptions);
+        }
+        try (Dataset dataset = Dataset.open(tablePath, optionsBuilder.build())) {
+            return dataset.getLanceSchema();
+        }
     }
 
     /**

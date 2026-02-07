@@ -85,13 +85,12 @@ public class TestLanceMetadata
     @Test
     public void testGetColumnHandles()
     {
-        // known table
-
+        // known table - field IDs are assigned by Lance based on schema order (x=0, y=1, b=2, c=3)
         assertThat(metadata.getColumnHandles(SESSION, TEST_TABLE_1_HANDLE)).isEqualTo(ImmutableMap.of(
-                "b", new LanceColumnHandle("b", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)),
-                "c", new LanceColumnHandle("c", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)),
-                "x", new LanceColumnHandle("x", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE)),
-                "y", new LanceColumnHandle("y", LanceColumnHandle.toTrinoType(INT64_TYPE), FieldType.nullable(INT64_TYPE))));
+                "b", new LanceColumnHandle("b", LanceColumnHandle.toTrinoType(INT64_TYPE), true, 2),
+                "c", new LanceColumnHandle("c", LanceColumnHandle.toTrinoType(INT64_TYPE), true, 3),
+                "x", new LanceColumnHandle("x", LanceColumnHandle.toTrinoType(INT64_TYPE), true, 0),
+                "y", new LanceColumnHandle("y", LanceColumnHandle.toTrinoType(INT64_TYPE), true, 1)));
 
         // unknown table
         assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, new LanceTableHandle("unknown", "unknown", "unknown", List.of("unknown"), Map.of())))
