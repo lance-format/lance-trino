@@ -191,17 +191,18 @@ public final class LanceDatasetCache
     }
 
     /**
-     * Count rows in the dataset. This reads from Lance's manifest stats without scanning data.
+     * Get the manifest summary for a table. This provides table-level statistics
+     * directly from the manifest without scanning data.
      */
-    public static long countRows(String tablePath, Map<String, String> storageOptions)
+    public static org.lance.ManifestSummary getManifestSummary(String tablePath, Map<String, String> storageOptions)
     {
-        log.debug("Counting rows for table: %s", tablePath);
+        log.debug("Getting manifest summary for table: %s", tablePath);
         ReadOptions.Builder optionsBuilder = new ReadOptions.Builder();
         if (storageOptions != null && !storageOptions.isEmpty()) {
             optionsBuilder.setStorageOptions(storageOptions);
         }
         try (Dataset dataset = Dataset.open(tablePath, optionsBuilder.build())) {
-            return dataset.countRows();
+            return dataset.getVersion().getManifestSummary();
         }
     }
 

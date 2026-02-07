@@ -323,11 +323,19 @@ public class LanceMetadata
 
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
-            long rowCount = LanceDatasetCache.countRows(lanceTableHandle.getTablePath(), storageOptions);
-            log.debug("getTableStatistics: table=%s, rowCount=%d", lanceTableHandle.getTableName(), rowCount);
+            org.lance.ManifestSummary summary = LanceDatasetCache.getManifestSummary(
+                    lanceTableHandle.getTablePath(), storageOptions);
 
+            log.debug("getTableStatistics: table=%s, totalRows=%d, totalFilesSize=%d, totalFragments=%d",
+                    lanceTableHandle.getTableName(),
+                    summary.getTotalRows(),
+                    summary.getTotalFilesSize(),
+                    summary.getTotalFragments());
+
+            // Note: TableStatistics is used for query planning/cost estimation only.
+            // For COUNT(*) optimization, we would need to implement applyAggregation().
             return TableStatistics.builder()
-                    .setRowCount(Estimate.of(rowCount))
+                    .setRowCount(Estimate.of(summary.getTotalRows()))
                     .build();
         }
         catch (Exception e) {
