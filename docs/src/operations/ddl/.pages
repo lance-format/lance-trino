@@ -1,9 +1,9 @@
 title: DDL
 nav:
+  - show-schemas.md
   - create-schema.md
   - drop-schema.md
-  - create-table.md
-  - drop-table.md
-  - show-schemas.md
   - show-tables.md
   - describe-table.md
+  - create-table.md
+  - drop-table.md
