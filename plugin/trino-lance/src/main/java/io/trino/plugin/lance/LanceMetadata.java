@@ -14,12 +14,16 @@
 package io.trino.plugin.lance;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
 import io.trino.spi.TrinoException;
+import io.trino.spi.connector.AggregateFunction;
+import io.trino.spi.connector.AggregationApplicationResult;
+import io.trino.spi.connector.Assignment;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
@@ -41,6 +45,7 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
+import io.trino.spi.expression.Variable;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.security.TrinoPrincipal;
@@ -357,6 +362,147 @@ public class LanceMetadata
 
         LanceTableHandle newHandle = lanceTableHandle.withLimit(limit);
         return Optional.of(new LimitApplicationResult<>(newHandle, false, false));
+    }
+
+    @Override
+    public Optional<AggregationApplicationResult<ConnectorTableHandle>> applyAggregation(
+            ConnectorSession session,
+            ConnectorTableHandle table,
+            List<AggregateFunction> aggregates,
+            Map<String, ColumnHandle> assignments,
+            List<List<ColumnHandle>> groupingSets)
+    {
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
+
+        // Don't push if already has aggregate
+        if (lanceTableHandle.getAggregateSql().isPresent()) {
+            return Optional.empty();
+        }
+
+        // Only support simple cases: single grouping set
+        if (groupingSets.size() != 1) {
+            return Optional.empty();
+        }
+
+        List<ColumnHandle> groupingColumns = groupingSets.get(0);
+
+        // Build SQL query for DataFusion
+        StringBuilder sql = new StringBuilder("SELECT ");
+        ImmutableList.Builder<ConnectorExpression> projections = ImmutableList.builder();
+        ImmutableList.Builder<Assignment> resultAssignments = ImmutableList.builder();
+
+        // Add grouping columns first
+        int columnIndex = 0;
+        for (ColumnHandle columnHandle : groupingColumns) {
+            LanceColumnHandle lanceColumn = (LanceColumnHandle) columnHandle;
+            if (columnIndex > 0) {
+                sql.append(", ");
+            }
+            sql.append("\"").append(lanceColumn.name()).append("\"");
+
+            Variable variable = new Variable(lanceColumn.name(), lanceColumn.trinoType());
+            projections.add(variable);
+            resultAssignments.add(new Assignment(lanceColumn.name(), lanceColumn, lanceColumn.trinoType()));
+            columnIndex++;
+        }
+
+        // Add aggregate functions
+        for (AggregateFunction aggregate : aggregates) {
+            Optional<String> aggregateSql = toAggregateSql(aggregate, assignments);
+            if (aggregateSql.isEmpty()) {
+                // Unsupported aggregate function
+                return Optional.empty();
+            }
+
+            if (columnIndex > 0) {
+                sql.append(", ");
+            }
+
+            String alias = "agg_" + columnIndex;
+            sql.append(aggregateSql.get()).append(" AS \"").append(alias).append("\"");
+
+            // Create synthetic column handle for aggregate result
+            LanceColumnHandle aggColumnHandle = new LanceColumnHandle(alias, aggregate.getOutputType(), false, -1);
+            Variable variable = new Variable(alias, aggregate.getOutputType());
+            projections.add(variable);
+            resultAssignments.add(new Assignment(alias, aggColumnHandle, aggregate.getOutputType()));
+            columnIndex++;
+        }
+
+        sql.append(" FROM dataset");
+
+        // Add GROUP BY if there are grouping columns
+        if (!groupingColumns.isEmpty()) {
+            sql.append(" GROUP BY ");
+            for (int i = 0; i < groupingColumns.size(); i++) {
+                if (i > 0) {
+                    sql.append(", ");
+                }
+                LanceColumnHandle lanceColumn = (LanceColumnHandle) groupingColumns.get(i);
+                sql.append("\"").append(lanceColumn.name()).append("\"");
+            }
+        }
+
+        log.debug("applyAggregation: generated SQL: %s", sql);
+
+        LanceTableHandle newHandle = lanceTableHandle.withAggregateSql(sql.toString());
+
+        return Optional.of(new AggregationApplicationResult<>(
+                newHandle,
+                projections.build(),
+                resultAssignments.build(),
+                ImmutableMap.of(),
+                false)); // precalculateStatisticsForPushdown
+    }
+
+    private Optional<String> toAggregateSql(AggregateFunction aggregate, Map<String, ColumnHandle> assignments)
+    {
+        String functionName = aggregate.getFunctionName().toLowerCase();
+        List<ConnectorExpression> arguments = aggregate.getArguments();
+
+        // Handle DISTINCT - DataFusion supports DISTINCT for some aggregates
+        String distinctPrefix = aggregate.isDistinct() ? "DISTINCT " : "";
+
+        switch (functionName) {
+            case "count":
+                if (arguments.isEmpty()) {
+                    // COUNT(*)
+                    return Optional.of("COUNT(*)");
+                }
+                else if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
+                    String columnName = ((Variable) arguments.get(0)).getName();
+                    return Optional.of("COUNT(" + distinctPrefix + "\"" + columnName + "\")");
+                }
+                break;
+            case "sum":
+                if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
+                    String columnName = ((Variable) arguments.get(0)).getName();
+                    return Optional.of("SUM(" + distinctPrefix + "\"" + columnName + "\")");
+                }
+                break;
+            case "avg":
+                if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
+                    String columnName = ((Variable) arguments.get(0)).getName();
+                    return Optional.of("AVG(" + distinctPrefix + "\"" + columnName + "\")");
+                }
+                break;
+            case "min":
+                if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
+                    String columnName = ((Variable) arguments.get(0)).getName();
+                    return Optional.of("MIN(\"" + columnName + "\")");
+                }
+                break;
+            case "max":
+                if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
+                    String columnName = ((Variable) arguments.get(0)).getName();
+                    return Optional.of("MAX(\"" + columnName + "\")");
+                }
+                break;
+        }
+
+        // Unsupported aggregate function
+        log.debug("Unsupported aggregate function for pushdown: %s", aggregate);
+        return Optional.empty();
     }
 
     @Override

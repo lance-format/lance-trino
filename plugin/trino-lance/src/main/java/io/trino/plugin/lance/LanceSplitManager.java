@@ -50,6 +50,12 @@ public class LanceSplitManager
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
 
+        // For aggregate queries, return a single split that covers the whole dataset
+        // The aggregate SQL will be executed via Dataset.sql()
+        if (lanceTableHandle.getAggregateSql().isPresent()) {
+            return new FixedSplitSource(List.of(new LanceSplit(Collections.emptyList())));
+        }
+
         // Use storage options from handle, refreshing if expired
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
 
