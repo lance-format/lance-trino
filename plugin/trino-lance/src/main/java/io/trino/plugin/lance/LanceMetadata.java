@@ -49,6 +49,7 @@ import org.lance.Dataset;
 import org.lance.FragmentMetadata;
 import org.lance.FragmentOperation;
 import org.lance.ReadOptions;
+import org.lance.Transaction;
 import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateEmptyTableRequest;
@@ -65,6 +66,8 @@ import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
+import org.lance.operation.Append;
+import org.lance.operation.Overwrite;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -80,6 +83,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -92,6 +98,7 @@ public class LanceMetadata
         implements ConnectorMetadata
 {
     private static final Logger log = Logger.get(LanceMetadata.class);
+    private static final ConcurrentMap<String, Dataset> transactionDatasets = new ConcurrentHashMap<>();
 
     private final LanceNamespaceHolder namespaceHolder;
     private final LanceConfig lanceConfig;
@@ -359,7 +366,12 @@ public class LanceMetadata
             // For REPLACE, overwrite with empty dataset
             Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
             Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns());
-            commitOverwrite(existingPath, List.of(), arrowSchema, storageOptions);
+            ReadOptions readOptions = new ReadOptions.Builder()
+                    .setStorageOptions(storageOptions)
+                    .build();
+            try (Dataset dataset = Dataset.open(existingPath, readOptions)) {
+                commitOverwrite(dataset, List.of(), arrowSchema, storageOptions);
+            }
             LanceDatasetCache.invalidate(existingPath);
             log.debug("createTable: replaced table %s at %s", tableName, existingPath);
             return;
@@ -422,7 +434,18 @@ public class LanceMetadata
 
         Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
 
-        log.debug("beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s", tableName, tablePath, replace, tableExisted);
+        String transactionId = null;
+        if (tableExisted) {
+            transactionId = UUID.randomUUID().toString();
+            ReadOptions readOptions = new ReadOptions.Builder()
+                    .setStorageOptions(storageOptions)
+                    .build();
+            Dataset dataset = Dataset.open(tablePath, readOptions);
+            transactionDatasets.put(transactionId, dataset);
+        }
+
+        log.debug("beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s, transactionId=%s",
+                tableName, tablePath, replace, tableExisted, transactionId);
 
         return new LanceWritableTableHandle(
                 tableName,
@@ -433,7 +456,8 @@ public class LanceMetadata
                 storageOptions,
                 true,
                 replace,
-                tableExisted);
+                tableExisted,
+                transactionId);
     }
 
     @Override
@@ -452,18 +476,28 @@ public class LanceMetadata
             throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to parse Arrow schema", e);
         }
 
-        log.debug("finishCreateTable: table=%s, fragments=%d, replace=%s, tableExisted=%s",
-                handle.tableName(), fragments.size(), handle.replace(), handle.tableExisted());
+        String transactionId = handle.transactionId();
+        log.debug("finishCreateTable: table=%s, fragments=%d, replace=%s, tableExisted=%s, transactionId=%s",
+                handle.tableName(), fragments.size(), handle.replace(), handle.tableExisted(), transactionId);
 
         Map<String, String> storageOptions = handle.storageOptions();
 
         if (handle.tableExisted()) {
-            if (fragments.isEmpty()) {
-                commitOverwrite(handle.tablePath(), List.of(), arrowSchema, storageOptions);
+            Dataset dataset = transactionDatasets.remove(transactionId);
+            if (dataset == null) {
+                throw new TrinoException(GENERIC_INTERNAL_ERROR, "No dataset found for transaction: " + transactionId);
             }
-            else {
-                List<String> allFragmentsJson = collectFragmentsFromSlices(fragments);
-                commitOverwrite(handle.tablePath(), allFragmentsJson, arrowSchema, storageOptions);
+            try {
+                if (fragments.isEmpty()) {
+                    commitOverwrite(dataset, List.of(), arrowSchema, storageOptions);
+                }
+                else {
+                    List<String> allFragmentsJson = collectFragmentsFromSlices(fragments);
+                    commitOverwrite(dataset, allFragmentsJson, arrowSchema, storageOptions);
+                }
+            }
+            finally {
+                dataset.close();
             }
         }
         else {
@@ -505,7 +539,14 @@ public class LanceMetadata
         Schema arrowSchema = LanceDatasetCache.getSchema(tablePath, storageOptions);
         String schemaJson = arrowSchema.toJson();
 
-        log.debug("beginInsert: table=%s, path=%s, columns=%d", tableName, tablePath, columns.size());
+        String transactionId = UUID.randomUUID().toString();
+        ReadOptions readOptions = new ReadOptions.Builder()
+                .setStorageOptions(storageOptions)
+                .build();
+        Dataset dataset = Dataset.open(tablePath, readOptions);
+        transactionDatasets.put(transactionId, dataset);
+
+        log.debug("beginInsert: table=%s, path=%s, columns=%d, transactionId=%s", tableName, tablePath, columns.size(), transactionId);
 
         return new LanceWritableTableHandle(
                 tableName,
@@ -516,7 +557,8 @@ public class LanceMetadata
                 storageOptions,
                 false,
                 false,
-                true);
+                true,
+                transactionId);
     }
 
     @Override
@@ -528,19 +570,30 @@ public class LanceMetadata
             Collection<ComputedStatistics> computedStatistics)
     {
         LanceWritableTableHandle handle = (LanceWritableTableHandle) insertHandle;
+        String transactionId = handle.transactionId();
 
-        log.debug("finishInsert: table=%s, fragments=%d", handle.tableName(), fragments.size());
+        log.debug("finishInsert: table=%s, fragments=%d, transactionId=%s", handle.tableName(), fragments.size(), transactionId);
 
-        if (fragments.isEmpty()) {
-            return Optional.empty();
+        Dataset dataset = transactionDatasets.remove(transactionId);
+        if (dataset == null) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "No dataset found for transaction: " + transactionId);
         }
 
-        List<String> allFragmentsJson = collectFragmentsFromSlices(fragments);
-        Map<String, String> storageOptions = handle.storageOptions();
-        commitAppend(handle.tablePath(), allFragmentsJson, storageOptions);
+        try {
+            if (fragments.isEmpty()) {
+                return Optional.empty();
+            }
 
-        LanceDatasetCache.invalidate(handle.tablePath());
-        return Optional.empty();
+            List<String> allFragmentsJson = collectFragmentsFromSlices(fragments);
+            Map<String, String> storageOptions = handle.storageOptions();
+            commitAppend(dataset, allFragmentsJson, storageOptions);
+
+            LanceDatasetCache.invalidate(handle.tablePath());
+            return Optional.empty();
+        }
+        finally {
+            dataset.close();
+        }
     }
 
     // ===== Helper Methods =====
@@ -653,46 +706,30 @@ public class LanceMetadata
         Dataset.create(LanceNamespaceHolder.getAllocator(), datasetUri, schema, params).close();
     }
 
-    private void commitAppend(String datasetUri, List<String> serializedFragments, Map<String, String> storageOptions)
+    private void commitAppend(Dataset dataset, List<String> serializedFragments, Map<String, String> storageOptions)
     {
-        log.debug("Committing %d fragments to dataset: %s (append)", serializedFragments.size(), datasetUri);
+        log.debug("Committing %d fragments to dataset: %s (append)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        FragmentOperation.Append appendOp = new FragmentOperation.Append(fragments);
-
-        ReadOptions readOptions = new ReadOptions.Builder()
-                .setStorageOptions(storageOptions)
+        Transaction transaction = dataset
+                .newTransactionBuilder()
+                .writeParams(storageOptions)
+                .operation(Append.builder().fragments(fragments).build())
                 .build();
-
-        try (Dataset dataset = Dataset.open(datasetUri, readOptions)) {
-            Dataset.commit(
-                    LanceNamespaceHolder.getAllocator(),
-                    datasetUri,
-                    appendOp,
-                    Optional.of(dataset.version()),
-                    storageOptions).close();
-        }
+        transaction.commit().close();
     }
 
-    private void commitOverwrite(String datasetUri, List<String> serializedFragments, Schema schema, Map<String, String> storageOptions)
+    private void commitOverwrite(Dataset dataset, List<String> serializedFragments, Schema schema, Map<String, String> storageOptions)
     {
-        log.debug("Committing %d fragments to dataset: %s (overwrite)", serializedFragments.size(), datasetUri);
+        log.debug("Committing %d fragments to dataset: %s (overwrite)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        FragmentOperation.Overwrite overwriteOp = new FragmentOperation.Overwrite(fragments, schema);
-
-        ReadOptions readOptions = new ReadOptions.Builder()
-                .setStorageOptions(storageOptions)
+        Transaction transaction = dataset
+                .newTransactionBuilder()
+                .writeParams(storageOptions)
+                .operation(Overwrite.builder().fragments(fragments).schema(schema).build())
                 .build();
-
-        try (Dataset dataset = Dataset.open(datasetUri, readOptions)) {
-            Dataset.commit(
-                    LanceNamespaceHolder.getAllocator(),
-                    datasetUri,
-                    overwriteOp,
-                    Optional.of(dataset.version()),
-                    storageOptions).close();
-        }
+        transaction.commit().close();
     }
 
     private void createDatasetWithFragments(String datasetUri, List<String> serializedFragments, Schema schema, WriteParams params, Map<String, String> storageOptions)

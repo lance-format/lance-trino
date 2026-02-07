@@ -203,6 +203,7 @@ public enum LanceNamespaceTestConfig
         properties.put("lance.storage.aws_secret_access_key", "SECRETKEY");
         properties.put("lance.storage.aws_endpoint", s3Endpoint);
         properties.put("lance.storage.aws_region", "us-east-1");
+        properties.put("lance.storage.aws_s3_force_path_style", "true");
 
         if (singleLevelNs) {
             properties.put("lance.single_level_ns", "true");
@@ -257,6 +258,7 @@ public enum LanceNamespaceTestConfig
         properties.put("lance.storage.aws_secret_access_key", "SECRETKEY");
         properties.put("lance.storage.aws_endpoint", s3Endpoint);
         properties.put("lance.storage.aws_region", "us-east-1");
+        properties.put("lance.storage.aws_s3_force_path_style", "true");
 
         if (singleLevelNs) {
             properties.put("lance.single_level_ns", "true");

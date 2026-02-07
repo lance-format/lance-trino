@@ -14,7 +14,8 @@
 package io.trino.plugin.lance;
 
 import io.trino.testing.QueryRunner;
-import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 
 import static io.trino.tpch.TpchTable.NATION;
 import static io.trino.tpch.TpchTable.REGION;
@@ -23,11 +24,8 @@ import static io.trino.tpch.TpchTable.REGION;
  * Smoke test for S3 directory namespace with single_level_ns=true.
  * This mode accesses 1st level (root) with a virtual "default" schema.
  * Requires LocalStack to be running locally via docker-compose.
- *
- * <p>Disabled due to S3 eventual consistency issues with table listing.
- * See: https://github.com/lancedb/lance-trino/issues/XXX
  */
-@Disabled("S3 eventual consistency issues with table listing - to be fixed in follow-up")
+@Execution(ExecutionMode.SAME_THREAD)
 public class TestLanceS3SingleLevelConnectorSmokeTest
         extends BaseLanceConnectorSmokeTest
 {

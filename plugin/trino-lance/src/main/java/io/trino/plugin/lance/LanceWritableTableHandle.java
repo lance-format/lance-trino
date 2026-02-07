@@ -38,7 +38,8 @@ public record LanceWritableTableHandle(
         Map<String, String> storageOptions,
         boolean forCreateTable,
         boolean replace,
-        boolean tableExisted)
+        boolean tableExisted,
+        String transactionId)
         implements ConnectorInsertTableHandle, ConnectorOutputTableHandle
 {
     @JsonCreator
@@ -51,7 +52,8 @@ public record LanceWritableTableHandle(
             @JsonProperty("storageOptions") Map<String, String> storageOptions,
             @JsonProperty("forCreateTable") boolean forCreateTable,
             @JsonProperty("replace") boolean replace,
-            @JsonProperty("tableExisted") boolean tableExisted)
+            @JsonProperty("tableExisted") boolean tableExisted,
+            @JsonProperty("transactionId") String transactionId)
     {
         this.tableName = requireNonNull(tableName, "tableName is null");
         this.tablePath = requireNonNull(tablePath, "tablePath is null");
@@ -62,6 +64,7 @@ public record LanceWritableTableHandle(
         this.forCreateTable = forCreateTable;
         this.replace = replace;
         this.tableExisted = tableExisted;
+        this.transactionId = transactionId;
     }
 
     @JsonProperty
@@ -135,5 +138,15 @@ public record LanceWritableTableHandle(
     public boolean tableExisted()
     {
         return tableExisted;
+    }
+
+    /**
+     * Returns the transaction ID used to look up the cached Dataset.
+     */
+    @JsonProperty
+    @Override
+    public String transactionId()
+    {
+        return transactionId;
     }
 }
