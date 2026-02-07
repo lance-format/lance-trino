@@ -51,6 +51,7 @@ import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Dataset;
 import org.lance.FragmentMetadata;
 import org.lance.FragmentOperation;
+import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
 import org.lance.Transaction;
 import org.lance.WriteParams;
@@ -323,7 +324,7 @@ public class LanceMetadata
 
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
-            org.lance.ManifestSummary summary = LanceDatasetCache.getManifestSummary(
+            ManifestSummary summary = LanceDatasetCache.getManifestSummary(
                     lanceTableHandle.getTablePath(), storageOptions);
 
             log.debug("getTableStatistics: table=%s, totalRows=%d, totalFilesSize=%d, totalFragments=%d",

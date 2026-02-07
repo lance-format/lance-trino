@@ -21,6 +21,7 @@ import io.trino.spi.connector.ColumnMetadata;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Dataset;
 import org.lance.Fragment;
+import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
 import org.lance.schema.LanceField;
 import org.lance.schema.LanceSchema;
@@ -194,7 +195,7 @@ public final class LanceDatasetCache
      * Get the manifest summary for a table. This provides table-level statistics
      * directly from the manifest without scanning data.
      */
-    public static org.lance.ManifestSummary getManifestSummary(String tablePath, Map<String, String> storageOptions)
+    public static ManifestSummary getManifestSummary(String tablePath, Map<String, String> storageOptions)
     {
         log.debug("Getting manifest summary for table: %s", tablePath);
         ReadOptions.Builder optionsBuilder = new ReadOptions.Builder();
