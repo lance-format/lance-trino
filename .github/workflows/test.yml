@@ -125,11 +125,6 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
-    - name: Install AWS CLI
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y awscli
-
     - name: Create S3 bucket
       run: |
         aws --endpoint-url=http://localhost:4566 s3 mb s3://lance-test-bucket
