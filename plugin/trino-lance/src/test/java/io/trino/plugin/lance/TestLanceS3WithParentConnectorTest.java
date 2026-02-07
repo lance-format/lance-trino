@@ -14,12 +14,15 @@
 package io.trino.plugin.lance;
 
 import io.trino.testing.QueryRunner;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 
 /**
  * Connector test for S3 directory namespace with parent prefix (3+ level access).
  * This mode has full schema support with parent namespace prefix.
  * Requires LocalStack to be running locally via docker-compose.
  */
+@Execution(ExecutionMode.SAME_THREAD)
 public class TestLanceS3WithParentConnectorTest
         extends BaseLanceConnectorTest
 {

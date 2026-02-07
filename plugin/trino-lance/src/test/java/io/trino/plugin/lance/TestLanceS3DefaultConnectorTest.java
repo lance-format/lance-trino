@@ -14,12 +14,15 @@
 package io.trino.plugin.lance;
 
 import io.trino.testing.QueryRunner;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 
 /**
  * Connector test for S3 directory namespace in default mode (2nd level access).
  * This mode has full schema support with direct schema-to-namespace mapping.
  * Requires LocalStack to be running locally via docker-compose.
  */
+@Execution(ExecutionMode.SAME_THREAD)
 public class TestLanceS3DefaultConnectorTest
         extends BaseLanceConnectorTest
 {

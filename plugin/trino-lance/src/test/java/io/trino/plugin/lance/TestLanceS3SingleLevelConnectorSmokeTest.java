@@ -14,6 +14,8 @@
 package io.trino.plugin.lance;
 
 import io.trino.testing.QueryRunner;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 
 import static io.trino.tpch.TpchTable.NATION;
 import static io.trino.tpch.TpchTable.REGION;
@@ -23,6 +25,7 @@ import static io.trino.tpch.TpchTable.REGION;
  * This mode accesses 1st level (root) with a virtual "default" schema.
  * Requires LocalStack to be running locally via docker-compose.
  */
+@Execution(ExecutionMode.SAME_THREAD)
 public class TestLanceS3SingleLevelConnectorSmokeTest
         extends BaseLanceConnectorSmokeTest
 {

@@ -14,6 +14,8 @@
 package io.trino.plugin.lance;
 
 import io.trino.testing.QueryRunner;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 
 /**
  * Connector test for S3 directory namespace with single_level_ns=true.
@@ -21,6 +23,7 @@ import io.trino.testing.QueryRunner;
  * CREATE SCHEMA is not allowed in this mode.
  * Requires LocalStack to be running locally via docker-compose.
  */
+@Execution(ExecutionMode.SAME_THREAD)
 public class TestLanceS3SingleLevelConnectorTest
         extends BaseLanceConnectorTest
 {
