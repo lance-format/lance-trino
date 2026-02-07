@@ -22,8 +22,16 @@ import io.trino.testing.DistributedQueryRunner;
 import io.trino.testing.QueryRunner;
 import io.trino.tpch.TpchTable;
 import org.lance.namespace.RestAdapter;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 
 import java.io.Closeable;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -157,6 +165,34 @@ public final class LanceQueryRunner
         return builder;
     }
 
+    /**
+     * Ensure S3 bucket exists by creating it if it doesn't already exist.
+     * Uses the S3 endpoint and credentials from the connector properties.
+     *
+     * @param endpoint the S3 endpoint URL
+     * @param bucketName the bucket name to create
+     */
+    private static void ensureS3BucketExists(String endpoint, String bucketName)
+    {
+        AwsBasicCredentials credentials = AwsBasicCredentials.create("ACCESSKEY", "SECRETKEY");
+
+        try (S3Client s3Client = S3Client.builder()
+                .endpointOverride(URI.create(endpoint))
+                .region(Region.US_EAST_1)
+                .credentialsProvider(StaticCredentialsProvider.create(credentials))
+                .build()) {
+            try {
+                s3Client.headBucket(HeadBucketRequest.builder().bucket(bucketName).build());
+                log.info("S3 bucket already exists: %s", bucketName);
+            }
+            catch (NoSuchBucketException e) {
+                log.info("Creating S3 bucket: %s", bucketName);
+                s3Client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
+                log.info("S3 bucket created successfully: %s", bucketName);
+            }
+        }
+    }
+
     public static final class Builder
             extends DistributedQueryRunner.Builder<Builder>
     {
@@ -240,6 +276,17 @@ public final class LanceQueryRunner
                 connectorProperties.put("lance.root", tempDir.toUri().toString());
                 connectorProperties.putIfAbsent("lance.single_level_ns", "true");
                 log.info("Using temporary directory for Lance (single-level mode): %s", tempDir);
+            }
+
+            // Create S3 bucket if using S3 configuration
+            if (namespaceTestConfig.isPresent() && namespaceTestConfig.get().isS3Config()) {
+                String endpoint = connectorProperties.get("lance.storage.aws_endpoint");
+                String root = connectorProperties.get("lance.root");
+                if (endpoint != null && root != null && root.startsWith("s3://")) {
+                    String bucketName = root.substring(5).split("/")[0];
+                    log.info("Ensuring S3 bucket exists: %s at endpoint %s", bucketName, endpoint);
+                    ensureS3BucketExists(endpoint, bucketName);
+                }
             }
 
             DistributedQueryRunner queryRunner = super.build();

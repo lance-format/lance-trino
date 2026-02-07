@@ -125,14 +125,6 @@ jobs:
         distribution: 'temurin'
         cache: maven
 
-    - name: Create S3 bucket
-      run: |
-        aws --endpoint-url=http://localhost:4566 s3 mb s3://lance-test-bucket
-      env:
-        AWS_ACCESS_KEY_ID: ACCESSKEY
-        AWS_SECRET_ACCESS_KEY: SECRETKEY
-        AWS_DEFAULT_REGION: us-east-1
-
     - name: Run ${{ matrix.test-group.name }} S3 tests
       run: |
         ./mvnw test -pl plugin/trino-lance \
