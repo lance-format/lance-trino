@@ -20,10 +20,14 @@ import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.predicate.ValueSet;
 import io.trino.spi.type.DateType;
+import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +39,8 @@ import static io.trino.spi.type.BooleanType.BOOLEAN;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.RealType.REAL;
+import static io.trino.spi.type.SmallintType.SMALLINT;
+import static io.trino.spi.type.TinyintType.TINYINT;
 
 public final class FilterPushDown
 {
@@ -131,11 +137,8 @@ public final class FilterPushDown
             return Optional.empty();
         }
 
-        // Skip pushdown for very complex filters (e.g., large NOT IN clauses)
-        // Lance has a limit of 500 conditions, so we use a conservative threshold
-        if (ranges.size() > MAX_RANGES_FOR_PUSHDOWN) {
-            return Optional.empty();
-        }
+        // Note: Complex filters (>MAX_RANGES_FOR_PUSHDOWN ranges) are filtered out
+        // by isDomainPushable() in LanceMetadata.filterToSupportedTypes()
 
         if (ranges.size() == 1 && ranges.getFirst().isSingleValue()) {
             Object value = ranges.getFirst().getSingleValue();
@@ -207,13 +210,15 @@ public final class FilterPushDown
         }
 
         if (type instanceof VarcharType) {
+            // Note: Only single quotes are escaped. Lance SQL parser validates input,
+            // so other characters are assumed to be safe in this context.
             String strValue = ((Slice) value).toStringUtf8();
             return "'" + strValue.replace("'", "''") + "'";
         }
         else if (type.equals(BOOLEAN)) {
             return value.toString();
         }
-        else if (type.equals(INTEGER) || type.equals(BIGINT)) {
+        else if (type.equals(TINYINT) || type.equals(SMALLINT) || type.equals(INTEGER) || type.equals(BIGINT)) {
             return value.toString();
         }
         else if (type.equals(REAL)) {
@@ -229,6 +234,13 @@ public final class FilterPushDown
             LocalDate date = LocalDate.ofEpochDay(daysSinceEpoch);
             return "date '" + date.toString() + "'";
         }
+        else if (type instanceof TimestampType) {
+            // Trino stores timestamps as microseconds since epoch
+            long epochMicros = (Long) value;
+            Instant instant = Instant.ofEpochSecond(epochMicros / 1_000_000, (epochMicros % 1_000_000) * 1000);
+            String formatted = DateTimeFormatter.ISO_INSTANT.format(instant.atOffset(ZoneOffset.UTC));
+            return "timestamp '" + formatted + "'";
+        }
 
         return value.toString();
     }
@@ -236,12 +248,15 @@ public final class FilterPushDown
     public static boolean isSupportedType(Type type)
     {
         return type.equals(BOOLEAN) ||
+                type.equals(TINYINT) ||
+                type.equals(SMALLINT) ||
                 type.equals(INTEGER) ||
                 type.equals(BIGINT) ||
                 type.equals(REAL) ||
                 type.equals(DOUBLE) ||
                 type instanceof VarcharType ||
-                type instanceof DateType;
+                type instanceof DateType ||
+                type instanceof TimestampType;
     }
 
     /**

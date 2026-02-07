@@ -93,6 +93,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.plugin.lance.internal.FilterPushDown.isDomainPushable;
+import static io.trino.plugin.lance.internal.FilterPushDown.isSupportedType;
 import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
@@ -327,18 +329,12 @@ public class LanceMetadata
 
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
-            ReadOptions readOptions = new ReadOptions.Builder()
-                    .setStorageOptions(storageOptions)
+            long rowCount = LanceDatasetCache.countRows(lanceTableHandle.getTablePath(), storageOptions);
+            log.debug("getTableStatistics: table=%s, rowCount=%d", lanceTableHandle.getTableName(), rowCount);
+
+            return TableStatistics.builder()
+                    .setRowCount(Estimate.of(rowCount))
                     .build();
-
-            try (Dataset dataset = Dataset.open(lanceTableHandle.getTablePath(), readOptions)) {
-                long rowCount = dataset.countRows();
-                log.debug("getTableStatistics: table=%s, rowCount=%d", lanceTableHandle.getTableName(), rowCount);
-
-                return TableStatistics.builder()
-                        .setRowCount(Estimate.of(rowCount))
-                        .build();
-            }
         }
         catch (Exception e) {
             log.warn(e, "Failed to get table statistics for %s", lanceTableHandle.getTableName());
@@ -416,8 +412,7 @@ public class LanceMetadata
             LanceColumnHandle column = entry.getKey();
             Domain domain = entry.getValue();
             // Check both type support and domain complexity (e.g., not too many ranges)
-            if (io.trino.plugin.lance.internal.FilterPushDown.isSupportedType(column.trinoType()) &&
-                    io.trino.plugin.lance.internal.FilterPushDown.isDomainPushable(domain)) {
+            if (isSupportedType(column.trinoType()) && isDomainPushable(domain)) {
                 supportedDomains.put(column, domain);
             }
         }
@@ -442,8 +437,7 @@ public class LanceMetadata
             LanceColumnHandle column = entry.getKey();
             Domain domain = entry.getValue();
             // Include domains that are unsupported type OR not pushable (e.g., too many ranges)
-            if (!io.trino.plugin.lance.internal.FilterPushDown.isSupportedType(column.trinoType()) ||
-                    !io.trino.plugin.lance.internal.FilterPushDown.isDomainPushable(domain)) {
+            if (!isSupportedType(column.trinoType()) || !isDomainPushable(domain)) {
                 unsupportedDomains.put(column, domain);
             }
         }

@@ -172,6 +172,21 @@ public final class LanceDatasetCache
     }
 
     /**
+     * Count rows in the dataset. This reads from Lance's manifest stats without scanning data.
+     */
+    public static long countRows(String tablePath, Map<String, String> storageOptions)
+    {
+        log.debug("Counting rows for table: %s", tablePath);
+        ReadOptions.Builder optionsBuilder = new ReadOptions.Builder();
+        if (storageOptions != null && !storageOptions.isEmpty()) {
+            optionsBuilder.setStorageOptions(storageOptions);
+        }
+        try (Dataset dataset = Dataset.open(tablePath, optionsBuilder.build())) {
+            return dataset.countRows();
+        }
+    }
+
+    /**
      * Invalidate cache entries for a table path.
      */
     public static void invalidate(String tablePath)
