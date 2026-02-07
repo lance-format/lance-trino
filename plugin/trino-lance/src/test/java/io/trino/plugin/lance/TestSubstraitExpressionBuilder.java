@@ -15,7 +15,6 @@ package io.trino.plugin.lance;
 
 import io.airlift.slice.Slices;
 import io.substrait.expression.Expression;
-import io.trino.plugin.lance.internal.SubstraitExpressionBuilder;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;

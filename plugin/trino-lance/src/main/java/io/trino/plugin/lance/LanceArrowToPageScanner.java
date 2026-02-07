@@ -11,10 +11,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.lance.internal;
+package io.trino.plugin.lance;
 
 import io.airlift.slice.Slice;
-import io.trino.plugin.lance.LanceColumnHandle;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.ArrayBlockBuilder;

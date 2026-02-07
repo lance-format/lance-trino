@@ -13,9 +13,6 @@
  */
 package io.trino.plugin.lance;
 
-import io.trino.plugin.lance.internal.LanceArrowToPageScanner;
-import io.trino.plugin.lance.internal.ScannerFactory;
-import io.trino.plugin.lance.internal.SubstraitExpressionBuilder;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.connector.ConnectorPageSource;

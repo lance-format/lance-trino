@@ -14,7 +14,6 @@
 package io.trino.plugin.lance;
 
 import io.airlift.log.Logger;
-import io.trino.plugin.lance.internal.ScannerFactory;
 import org.apache.arrow.memory.BufferAllocator;
 import org.lance.Fragment;
 import org.lance.ipc.LanceScanner;

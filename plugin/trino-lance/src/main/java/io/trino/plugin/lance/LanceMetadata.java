@@ -19,7 +19,6 @@ import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
-import io.trino.plugin.lance.internal.LancePageToArrowConverter;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
@@ -93,8 +92,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static io.trino.plugin.lance.internal.SubstraitExpressionBuilder.isDomainPushable;
-import static io.trino.plugin.lance.internal.SubstraitExpressionBuilder.isSupportedType;
+import static io.trino.plugin.lance.SubstraitExpressionBuilder.isDomainPushable;
+import static io.trino.plugin.lance.SubstraitExpressionBuilder.isSupportedType;
 import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;

@@ -17,7 +17,6 @@ import com.google.common.collect.ImmutableList;
 import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
-import io.trino.plugin.lance.internal.LancePageToArrowConverter;
 import io.trino.spi.Page;
 import io.trino.spi.connector.ConnectorPageSink;
 import io.trino.spi.type.Type;
