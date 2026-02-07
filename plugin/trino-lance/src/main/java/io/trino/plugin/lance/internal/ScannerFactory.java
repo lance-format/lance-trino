@@ -16,6 +16,7 @@ package io.trino.plugin.lance.internal;
 import org.apache.arrow.memory.BufferAllocator;
 import org.lance.ipc.LanceScanner;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -28,7 +29,7 @@ public interface ScannerFactory
             BufferAllocator allocator,
             List<String> columns,
             Map<String, String> storageOptions,
-            Optional<String> filter,
+            Optional<ByteBuffer> substraitFilter,
             OptionalLong limit);
 
     void close();

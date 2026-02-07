@@ -20,6 +20,7 @@ import org.lance.Fragment;
 import org.lance.ipc.LanceScanner;
 import org.lance.ipc.ScanOptions;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -57,7 +58,7 @@ public class LanceFragmentPageSource
 
         @Override
         public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns,
-                Map<String, String> storageOptions, Optional<String> filter, OptionalLong limit)
+                Map<String, String> storageOptions, Optional<ByteBuffer> substraitFilter, OptionalLong limit)
         {
             this.lanceFragment = LanceDatasetCache.getFragment(tablePath, this.fragmentId, storageOptions);
             if (this.lanceFragment == null) {
@@ -67,13 +68,13 @@ public class LanceFragmentPageSource
             if (!columns.isEmpty()) {
                 optionsBuilder.columns(columns);
             }
-            filter.ifPresent(optionsBuilder::filter);
+            substraitFilter.ifPresent(optionsBuilder::substraitFilter);
             // Push limit to each fragment to reduce data read.
             // Trino will apply another limit on top since we report precalculated=false
             limit.ifPresent(optionsBuilder::limit);
 
-            log.debug("Opening scanner for fragment %d with filter: %s, limit: %s",
-                    fragmentId, filter.orElse("none"), limit.isPresent() ? limit.getAsLong() : "none");
+            log.debug("Opening scanner for fragment %d with substraitFilter: %s, limit: %s",
+                    fragmentId, substraitFilter.isPresent() ? "present" : "none", limit.isPresent() ? limit.getAsLong() : "none");
 
             this.lanceScanner = lanceFragment.newScan(optionsBuilder.build());
             return lanceScanner;

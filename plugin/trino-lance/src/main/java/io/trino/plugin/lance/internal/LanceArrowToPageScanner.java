@@ -45,6 +45,7 @@ import org.apache.arrow.vector.util.TransferPair;
 import org.lance.ipc.LanceScanner;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -82,7 +83,7 @@ public class LanceArrowToPageScanner
             List<LanceColumnHandle> columns,
             ScannerFactory scannerFactory,
             Map<String, String> storageOptions,
-            Optional<String> filter,
+            Optional<ByteBuffer> substraitFilter,
             OptionalLong limit)
     {
         this.allocator = requireNonNull(allocator, "allocator is null");
@@ -92,7 +93,7 @@ public class LanceArrowToPageScanner
         this.columnNames = columns.stream().map(LanceColumnHandle::name).collect(toImmutableList());
         this.scannerFactory = scannerFactory;
         try {
-            lanceScanner = scannerFactory.open(path, allocator, columnNames, storageOptions, filter, limit);
+            lanceScanner = scannerFactory.open(path, allocator, columnNames, storageOptions, substraitFilter, limit);
             this.arrowReader = lanceScanner.scanBatches();
             this.vectorSchemaRoot = arrowReader.getVectorSchemaRoot();
         }

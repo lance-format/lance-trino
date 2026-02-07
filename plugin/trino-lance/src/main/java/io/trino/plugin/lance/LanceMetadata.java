@@ -93,8 +93,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static io.trino.plugin.lance.internal.FilterPushDown.isDomainPushable;
-import static io.trino.plugin.lance.internal.FilterPushDown.isSupportedType;
+import static io.trino.plugin.lance.internal.SubstraitExpressionBuilder.isDomainPushable;
+import static io.trino.plugin.lance.internal.SubstraitExpressionBuilder.isSupportedType;
 import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
@@ -323,7 +323,7 @@ public class LanceMetadata
 
         // If there's a filter, we can't easily get accurate statistics
         // Return unknown to let Trino handle it
-        if (lanceTableHandle.getFilterOptional().isPresent()) {
+        if (!lanceTableHandle.getConstraint().isAll()) {
             return TableStatistics.empty();
         }
 
@@ -389,8 +389,7 @@ public class LanceMetadata
         LanceTableHandle newHandle = lanceTableHandle.withConstraint(combinedConstraint);
         TupleDomain<LanceColumnHandle> remainingFilter = filterToUnsupportedTypes(newConstraint);
 
-        Optional<String> filterSql = io.trino.plugin.lance.internal.FilterPushDown.tupleDomainToFilter(combinedConstraint);
-        log.debug("applyFilter: pushing filter SQL=%s, remaining=%s", filterSql.orElse("none"), remainingFilter);
+        log.debug("applyFilter: pushing constraint=%s, remaining=%s", combinedConstraint, remainingFilter);
 
         return Optional.of(new ConstraintApplicationResult<>(
                 newHandle,
