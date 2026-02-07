@@ -24,6 +24,7 @@ import org.apache.arrow.util.VisibleForTesting;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -50,8 +51,17 @@ public abstract class LanceBasePageSource
     {
         this.tableHandle = tableHandle;
         this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
+
+        Optional<String> filter = tableHandle.getFilterOptional();
         this.lanceArrowToPageScanner =
-                new LanceArrowToPageScanner(bufferAllocator, tableHandle.getTablePath(), columns, scannerFactory, storageOptions);
+                new LanceArrowToPageScanner(
+                        bufferAllocator,
+                        tableHandle.getTablePath(),
+                        columns,
+                        scannerFactory,
+                        storageOptions,
+                        filter,
+                        tableHandle.getLimit());
         this.pageBuilder =
                 new PageBuilder(columns.stream().map(LanceColumnHandle::trinoType).collect(toImmutableList()));
         this.isFinished.set(false);

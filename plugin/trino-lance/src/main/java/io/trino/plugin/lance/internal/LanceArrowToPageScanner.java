@@ -47,6 +47,8 @@ import org.lance.ipc.LanceScanner;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.function.Consumer;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -74,7 +76,14 @@ public class LanceArrowToPageScanner
     private final ArrowReader arrowReader;
     private final VectorSchemaRoot vectorSchemaRoot;
 
-    public LanceArrowToPageScanner(BufferAllocator allocator, String path, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions)
+    public LanceArrowToPageScanner(
+            BufferAllocator allocator,
+            String path,
+            List<LanceColumnHandle> columns,
+            ScannerFactory scannerFactory,
+            Map<String, String> storageOptions,
+            Optional<String> filter,
+            OptionalLong limit)
     {
         this.allocator = requireNonNull(allocator, "allocator is null");
         requireNonNull(columns, "columns is null");
@@ -83,7 +92,7 @@ public class LanceArrowToPageScanner
         this.columnNames = columns.stream().map(LanceColumnHandle::name).collect(toImmutableList());
         this.scannerFactory = scannerFactory;
         try {
-            lanceScanner = scannerFactory.open(path, allocator, columnNames, storageOptions);
+            lanceScanner = scannerFactory.open(path, allocator, columnNames, storageOptions, filter, limit);
             this.arrowReader = lanceScanner.scanBatches();
             this.vectorSchemaRoot = arrowReader.getVectorSchemaRoot();
         }

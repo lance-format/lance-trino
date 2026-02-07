@@ -42,6 +42,8 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
+import io.trino.spi.predicate.Domain;
+import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.security.TrinoPrincipal;
 import io.trino.spi.statistics.ComputedStatistics;
 import org.apache.arrow.vector.types.pojo.Schema;
@@ -314,14 +316,109 @@ public class LanceMetadata
     public Optional<LimitApplicationResult<ConnectorTableHandle>> applyLimit(ConnectorSession session,
             ConnectorTableHandle table, long limit)
     {
-        return Optional.empty();
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
+
+        if (lanceTableHandle.getLimit().isPresent() && lanceTableHandle.getLimit().getAsLong() <= limit) {
+            return Optional.empty();
+        }
+
+        LanceTableHandle newHandle = lanceTableHandle.withLimit(limit);
+        return Optional.of(new LimitApplicationResult<>(newHandle, false, false));
     }
 
     @Override
     public Optional<ConstraintApplicationResult<ConnectorTableHandle>> applyFilter(ConnectorSession session,
             ConnectorTableHandle table, Constraint constraint)
     {
-        return Optional.empty();
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
+
+        TupleDomain<ColumnHandle> summary = constraint.getSummary();
+        if (summary.isAll()) {
+            log.debug("applyFilter: constraint summary is ALL, returning empty");
+            return Optional.empty();
+        }
+
+        TupleDomain<LanceColumnHandle> newConstraint = summary.transformKeys(LanceColumnHandle.class::cast);
+        TupleDomain<LanceColumnHandle> supportedConstraint = filterToSupportedTypes(newConstraint);
+
+        log.debug("applyFilter: newConstraint=%s, supportedConstraint=%s", newConstraint, supportedConstraint);
+
+        if (supportedConstraint.isAll()) {
+            log.debug("applyFilter: supportedConstraint is ALL, returning empty");
+            return Optional.empty();
+        }
+
+        TupleDomain<LanceColumnHandle> currentConstraint = lanceTableHandle.getConstraint();
+        TupleDomain<LanceColumnHandle> combinedConstraint = currentConstraint.intersect(supportedConstraint);
+
+        if (currentConstraint.equals(combinedConstraint)) {
+            log.debug("applyFilter: constraint unchanged, returning empty");
+            return Optional.empty();
+        }
+
+        LanceTableHandle newHandle = lanceTableHandle.withConstraint(combinedConstraint);
+        TupleDomain<LanceColumnHandle> remainingFilter = filterToUnsupportedTypes(newConstraint);
+
+        Optional<String> filterSql = io.trino.plugin.lance.internal.FilterPushDown.tupleDomainToFilter(combinedConstraint);
+        log.debug("applyFilter: pushing filter SQL=%s, remaining=%s", filterSql.orElse("none"), remainingFilter);
+
+        return Optional.of(new ConstraintApplicationResult<>(
+                newHandle,
+                remainingFilter.transformKeys(ColumnHandle.class::cast),
+                constraint.getExpression(),
+                false));
+    }
+
+    private TupleDomain<LanceColumnHandle> filterToSupportedTypes(TupleDomain<LanceColumnHandle> tupleDomain)
+    {
+        if (tupleDomain.isAll() || tupleDomain.isNone()) {
+            return tupleDomain;
+        }
+
+        Map<LanceColumnHandle, Domain> domains = tupleDomain.getDomains().orElse(Map.of());
+        Map<LanceColumnHandle, Domain> supportedDomains = new HashMap<>();
+
+        for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
+            LanceColumnHandle column = entry.getKey();
+            Domain domain = entry.getValue();
+            // Check both type support and domain complexity (e.g., not too many ranges)
+            if (io.trino.plugin.lance.internal.FilterPushDown.isSupportedType(column.trinoType()) &&
+                    io.trino.plugin.lance.internal.FilterPushDown.isDomainPushable(domain)) {
+                supportedDomains.put(column, domain);
+            }
+        }
+
+        if (supportedDomains.isEmpty()) {
+            return TupleDomain.all();
+        }
+
+        return TupleDomain.withColumnDomains(supportedDomains);
+    }
+
+    private TupleDomain<LanceColumnHandle> filterToUnsupportedTypes(TupleDomain<LanceColumnHandle> tupleDomain)
+    {
+        if (tupleDomain.isAll() || tupleDomain.isNone()) {
+            return TupleDomain.all();
+        }
+
+        Map<LanceColumnHandle, Domain> domains = tupleDomain.getDomains().orElse(Map.of());
+        Map<LanceColumnHandle, Domain> unsupportedDomains = new HashMap<>();
+
+        for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
+            LanceColumnHandle column = entry.getKey();
+            Domain domain = entry.getValue();
+            // Include domains that are unsupported type OR not pushable (e.g., too many ranges)
+            if (!io.trino.plugin.lance.internal.FilterPushDown.isSupportedType(column.trinoType()) ||
+                    !io.trino.plugin.lance.internal.FilterPushDown.isDomainPushable(domain)) {
+                unsupportedDomains.put(column, domain);
+            }
+        }
+
+        if (unsupportedDomains.isEmpty()) {
+            return TupleDomain.all();
+        }
+
+        return TupleDomain.withColumnDomains(unsupportedDomains);
     }
 
     // ===== DROP TABLE =====

@@ -22,6 +22,8 @@ import org.lance.ipc.ScanOptions;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 import static com.google.common.base.Preconditions.checkState;
 
@@ -54,18 +56,25 @@ public class LanceFragmentPageSource
         }
 
         @Override
-        public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns, Map<String, String> storageOptions)
+        public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns,
+                Map<String, String> storageOptions, Optional<String> filter, OptionalLong limit)
         {
-            // Use LanceDatasetCache for fragment lookup with storage options for S3 access
             this.lanceFragment = LanceDatasetCache.getFragment(tablePath, this.fragmentId, storageOptions);
             if (this.lanceFragment == null) {
                 throw new RuntimeException("Fragment not found: " + this.fragmentId);
             }
             ScanOptions.Builder optionsBuilder = new ScanOptions.Builder();
-            // Only set columns if non-empty; empty list means read all columns
             if (!columns.isEmpty()) {
                 optionsBuilder.columns(columns);
             }
+            filter.ifPresent(optionsBuilder::filter);
+            // Push limit to each fragment to reduce data read.
+            // Trino will apply another limit on top since we report precalculated=false
+            limit.ifPresent(optionsBuilder::limit);
+
+            log.debug("Opening scanner for fragment %d with filter: %s, limit: %s",
+                    fragmentId, filter.orElse("none"), limit.isPresent() ? limit.getAsLong() : "none");
+
             this.lanceScanner = lanceFragment.newScan(optionsBuilder.build());
             return lanceScanner;
         }
@@ -73,7 +82,6 @@ public class LanceFragmentPageSource
         @Override
         public void close()
         {
-            // Only close the scanner; the dataset is managed by LanceDatasetCache
             try {
                 if (lanceScanner != null) {
                     lanceScanner.close();

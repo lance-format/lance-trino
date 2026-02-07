@@ -18,10 +18,18 @@ import org.lance.ipc.LanceScanner;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 public interface ScannerFactory
 {
-    LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns, Map<String, String> storageOptions);
+    LanceScanner open(
+            String tablePath,
+            BufferAllocator allocator,
+            List<String> columns,
+            Map<String, String> storageOptions,
+            Optional<String> filter,
+            OptionalLong limit);
 
     void close();
 }

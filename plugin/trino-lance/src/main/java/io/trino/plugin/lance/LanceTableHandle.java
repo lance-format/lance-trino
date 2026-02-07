@@ -16,12 +16,16 @@ package io.trino.plugin.lance;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.trino.plugin.lance.internal.FilterPushDown;
 import io.trino.spi.connector.ConnectorTableHandle;
+import io.trino.spi.predicate.TupleDomain;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static java.util.Objects.requireNonNull;
@@ -37,6 +41,19 @@ public class LanceTableHandle
     private final String tablePath;
     private final List<String> tableId;
     private final Map<String, String> storageOptions;
+    private final TupleDomain<LanceColumnHandle> constraint;
+    private final String filter;
+    private final OptionalLong limit;
+
+    public LanceTableHandle(
+            String schemaName,
+            String tableName,
+            String tablePath,
+            List<String> tableId,
+            Map<String, String> storageOptions)
+    {
+        this(schemaName, tableName, tablePath, tableId, storageOptions, TupleDomain.all(), null, OptionalLong.empty());
+    }
 
     @JsonCreator
     public LanceTableHandle(
@@ -44,13 +61,32 @@ public class LanceTableHandle
             @JsonProperty("tableName") String tableName,
             @JsonProperty("tablePath") String tablePath,
             @JsonProperty("tableId") List<String> tableId,
-            @JsonProperty("storageOptions") Map<String, String> storageOptions)
+            @JsonProperty("storageOptions") Map<String, String> storageOptions,
+            @JsonProperty("filter") String filter,
+            @JsonProperty("limit") Long limit)
+    {
+        this(schemaName, tableName, tablePath, tableId, storageOptions, TupleDomain.all(),
+                filter, limit != null ? OptionalLong.of(limit) : OptionalLong.empty());
+    }
+
+    public LanceTableHandle(
+            String schemaName,
+            String tableName,
+            String tablePath,
+            List<String> tableId,
+            Map<String, String> storageOptions,
+            TupleDomain<LanceColumnHandle> constraint,
+            String filter,
+            OptionalLong limit)
     {
         this.schemaName = requireNonNull(schemaName, "schemaName is null");
         this.tableName = requireNonNull(tableName, "tableName is null");
         this.tablePath = requireNonNull(tablePath, "tablePath is null");
         this.tableId = requireNonNull(tableId, "tableId is null");
         this.storageOptions = storageOptions != null ? new HashMap<>(storageOptions) : new HashMap<>();
+        this.constraint = requireNonNull(constraint, "constraint is null");
+        this.filter = filter;
+        this.limit = requireNonNull(limit, "limit is null");
     }
 
     @JsonProperty
@@ -114,11 +150,73 @@ public class LanceTableHandle
     }
 
     /**
+     * Get the constraint (pushed filter predicate).
+     */
+    @JsonIgnore
+    public TupleDomain<LanceColumnHandle> getConstraint()
+    {
+        return constraint;
+    }
+
+    /**
+     * Get the filter as a Lance SQL filter string.
+     */
+    @JsonProperty
+    public String getFilter()
+    {
+        return filter;
+    }
+
+    /**
+     * Get the filter as an Optional.
+     */
+    @JsonIgnore
+    public Optional<String> getFilterOptional()
+    {
+        return Optional.ofNullable(filter);
+    }
+
+    /**
+     * Get the limit if set.
+     */
+    @JsonIgnore
+    public OptionalLong getLimit()
+    {
+        return limit;
+    }
+
+    /**
+     * Get limit as Long for JSON serialization.
+     */
+    @JsonProperty("limit")
+    public Long getLimitForJson()
+    {
+        return limit.isPresent() ? limit.getAsLong() : null;
+    }
+
+    /**
      * Create a new handle with refreshed storage options.
      */
     public LanceTableHandle withStorageOptions(Map<String, String> newStorageOptions)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, constraint, filter, limit);
+    }
+
+    /**
+     * Create a new handle with the given constraint.
+     */
+    public LanceTableHandle withConstraint(TupleDomain<LanceColumnHandle> newConstraint)
+    {
+        String newFilter = FilterPushDown.tupleDomainToFilter(newConstraint).orElse(null);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newConstraint, newFilter, limit);
+    }
+
+    /**
+     * Create a new handle with the given limit.
+     */
+    public LanceTableHandle withLimit(long newLimit)
+    {
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, constraint, filter, OptionalLong.of(newLimit));
     }
 
     @Override
@@ -150,6 +248,8 @@ public class LanceTableHandle
                 .add("tablePath", tablePath)
                 .add("tableId", tableId)
                 .add("hasStorageOptions", !storageOptions.isEmpty())
+                .add("constraint", filter)
+                .add("limit", limit)
                 .toString();
     }
 }

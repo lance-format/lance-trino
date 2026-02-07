@@ -345,6 +345,11 @@
                                 <exclude>org.apache.commons:commons-lang3</exclude>
                                 <exclude>com.google.guava:failureaccess</exclude>
                                 <exclude>org.apache.logging.log4j:log4j-api</exclude>
+                                <!-- arrow dependencies managed by trino but lance-core brings different versions -->
+                                <exclude>org.apache.arrow:arrow-dataset</exclude>
+                                <exclude>org.apache.arrow:arrow-memory-netty</exclude>
+                                <exclude>org.apache.arrow:arrow-vector</exclude>
+                                <exclude>org.apache.arrow:arrow-c-data</exclude>
                             </excludes>
                         </requireUpperBoundDeps>
                         <enforceBytecodeVersion>
