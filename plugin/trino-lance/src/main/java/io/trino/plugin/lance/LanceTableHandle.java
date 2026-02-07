@@ -43,7 +43,7 @@ public class LanceTableHandle
     private final Map<String, String> storageOptions;
     private final byte[] substraitFilter;
     private final OptionalLong limit;
-    private final Optional<String> aggregateSql;
+    private final boolean countStar;
 
     public LanceTableHandle(
             String schemaName,
@@ -52,7 +52,7 @@ public class LanceTableHandle
             List<String> tableId,
             Map<String, String> storageOptions)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, null, OptionalLong.empty(), Optional.empty());
+        this(schemaName, tableName, tablePath, tableId, storageOptions, null, OptionalLong.empty(), false);
     }
 
     @JsonCreator
@@ -64,11 +64,11 @@ public class LanceTableHandle
             @JsonProperty("storageOptions") Map<String, String> storageOptions,
             @JsonProperty("substraitFilter") byte[] substraitFilter,
             @JsonProperty("limit") Long limit,
-            @JsonProperty("aggregateSql") String aggregateSql)
+            @JsonProperty("countStar") Boolean countStar)
     {
         this(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter,
                 limit != null ? OptionalLong.of(limit) : OptionalLong.empty(),
-                Optional.ofNullable(aggregateSql));
+                countStar != null && countStar);
     }
 
     public LanceTableHandle(
@@ -79,7 +79,7 @@ public class LanceTableHandle
             Map<String, String> storageOptions,
             byte[] substraitFilter,
             OptionalLong limit,
-            Optional<String> aggregateSql)
+            boolean countStar)
     {
         this.schemaName = requireNonNull(schemaName, "schemaName is null");
         this.tableName = requireNonNull(tableName, "tableName is null");
@@ -88,7 +88,7 @@ public class LanceTableHandle
         this.storageOptions = storageOptions != null ? new HashMap<>(storageOptions) : new HashMap<>();
         this.substraitFilter = substraitFilter;
         this.limit = requireNonNull(limit, "limit is null");
-        this.aggregateSql = requireNonNull(aggregateSql, "aggregateSql is null");
+        this.countStar = countStar;
     }
 
     @JsonProperty
@@ -152,7 +152,8 @@ public class LanceTableHandle
     }
 
     /**
-     * Get the Substrait filter as a ByteBuffer for Lance scanning.
+     * Get the Substrait filter as a direct ByteBuffer for Lance scanning.
+     * Lance JNI requires a direct buffer for native access.
      */
     @JsonIgnore
     public Optional<ByteBuffer> getSubstraitFilterBuffer()
@@ -160,7 +161,11 @@ public class LanceTableHandle
         if (substraitFilter == null || substraitFilter.length == 0) {
             return Optional.empty();
         }
-        return Optional.of(ByteBuffer.wrap(substraitFilter).asReadOnlyBuffer());
+        // Lance JNI requires a direct ByteBuffer
+        ByteBuffer directBuffer = ByteBuffer.allocateDirect(substraitFilter.length);
+        directBuffer.put(substraitFilter);
+        directBuffer.flip();
+        return Optional.of(directBuffer);
     }
 
     /**
@@ -200,21 +205,12 @@ public class LanceTableHandle
     }
 
     /**
-     * Get the aggregate SQL query for DataFusion execution.
+     * Check if this is a COUNT(*) aggregate query.
      */
-    @JsonIgnore
-    public Optional<String> getAggregateSql()
+    @JsonProperty("countStar")
+    public boolean isCountStar()
     {
-        return aggregateSql;
-    }
-
-    /**
-     * Get aggregate SQL as nullable String for JSON serialization.
-     */
-    @JsonProperty("aggregateSql")
-    public String getAggregateSqlForJson()
-    {
-        return aggregateSql.orElse(null);
+        return countStar;
     }
 
     /**
@@ -222,7 +218,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withStorageOptions(Map<String, String> newStorageOptions)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, limit, aggregateSql);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, limit, countStar);
     }
 
     /**
@@ -230,7 +226,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withSubstraitFilter(byte[] newSubstraitFilter)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, limit, aggregateSql);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, limit, countStar);
     }
 
     /**
@@ -238,15 +234,15 @@ public class LanceTableHandle
      */
     public LanceTableHandle withLimit(long newLimit)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, OptionalLong.of(newLimit), aggregateSql);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, OptionalLong.of(newLimit), countStar);
     }
 
     /**
-     * Create a new handle with the given aggregate SQL query.
+     * Create a new handle for COUNT(*) aggregate.
      */
-    public LanceTableHandle withAggregateSql(String newAggregateSql)
+    public LanceTableHandle withCountStar()
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, limit, Optional.of(newAggregateSql));
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, limit, true);
     }
 
     @Override
@@ -259,18 +255,18 @@ public class LanceTableHandle
             return false;
         }
         LanceTableHandle that = (LanceTableHandle) o;
-        return Objects.equals(tableName, that.tableName) &&
+        return countStar == that.countStar &&
+                Objects.equals(tableName, that.tableName) &&
                 Objects.equals(tablePath, that.tablePath) &&
                 Objects.equals(tableId, that.tableId) &&
                 Arrays.equals(substraitFilter, that.substraitFilter) &&
-                Objects.equals(limit, that.limit) &&
-                Objects.equals(aggregateSql, that.aggregateSql);
+                Objects.equals(limit, that.limit);
     }
 
     @Override
     public int hashCode()
     {
-        int result = Objects.hash(tableName, tablePath, tableId, limit, aggregateSql);
+        int result = Objects.hash(tableName, tablePath, tableId, limit, countStar);
         result = 31 * result + Arrays.hashCode(substraitFilter);
         return result;
     }
@@ -285,7 +281,7 @@ public class LanceTableHandle
                 .add("hasStorageOptions", !storageOptions.isEmpty())
                 .add("hasFilter", hasFilter())
                 .add("limit", limit)
-                .add("aggregateSql", aggregateSql)
+                .add("countStar", countStar)
                 .toString();
     }
 }

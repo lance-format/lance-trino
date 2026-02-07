@@ -375,134 +375,48 @@ public class LanceMetadata
         LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
 
         // Don't push if already has aggregate
-        if (lanceTableHandle.getAggregateSql().isPresent()) {
+        if (lanceTableHandle.isCountStar()) {
             return Optional.empty();
         }
 
-        // Only support simple cases: single grouping set
-        if (groupingSets.size() != 1) {
+        // Only support simple COUNT(*) without grouping
+        if (groupingSets.size() != 1 || !groupingSets.get(0).isEmpty()) {
             return Optional.empty();
         }
 
-        List<ColumnHandle> groupingColumns = groupingSets.get(0);
-
-        // Build SQL query for DataFusion
-        StringBuilder sql = new StringBuilder("SELECT ");
-        ImmutableList.Builder<ConnectorExpression> projections = ImmutableList.builder();
-        ImmutableList.Builder<Assignment> resultAssignments = ImmutableList.builder();
-
-        // Add grouping columns first
-        int columnIndex = 0;
-        for (ColumnHandle columnHandle : groupingColumns) {
-            LanceColumnHandle lanceColumn = (LanceColumnHandle) columnHandle;
-            if (columnIndex > 0) {
-                sql.append(", ");
-            }
-            sql.append("\"").append(lanceColumn.name()).append("\"");
-
-            Variable variable = new Variable(lanceColumn.name(), lanceColumn.trinoType());
-            projections.add(variable);
-            resultAssignments.add(new Assignment(lanceColumn.name(), lanceColumn, lanceColumn.trinoType()));
-            columnIndex++;
+        // Only support single COUNT(*) aggregate
+        if (aggregates.size() != 1) {
+            return Optional.empty();
         }
 
-        // Add aggregate functions
-        for (AggregateFunction aggregate : aggregates) {
-            Optional<String> aggregateSql = toAggregateSql(aggregate, assignments);
-            if (aggregateSql.isEmpty()) {
-                // Unsupported aggregate function
-                return Optional.empty();
-            }
-
-            if (columnIndex > 0) {
-                sql.append(", ");
-            }
-
-            String alias = "agg_" + columnIndex;
-            sql.append(aggregateSql.get()).append(" AS \"").append(alias).append("\"");
-
-            // Create synthetic column handle for aggregate result
-            LanceColumnHandle aggColumnHandle = new LanceColumnHandle(alias, aggregate.getOutputType(), false, -1);
-            Variable variable = new Variable(alias, aggregate.getOutputType());
-            projections.add(variable);
-            resultAssignments.add(new Assignment(alias, aggColumnHandle, aggregate.getOutputType()));
-            columnIndex++;
+        AggregateFunction aggregate = aggregates.get(0);
+        if (!isCountStar(aggregate)) {
+            log.debug("applyAggregation: unsupported aggregate function: %s", aggregate.getFunctionName());
+            return Optional.empty();
         }
 
-        sql.append(" FROM dataset");
+        log.debug("applyAggregation: pushing COUNT(*) for table %s, hasFilter=%s",
+                lanceTableHandle.getTableName(), lanceTableHandle.hasFilter());
 
-        // Add GROUP BY if there are grouping columns
-        if (!groupingColumns.isEmpty()) {
-            sql.append(" GROUP BY ");
-            for (int i = 0; i < groupingColumns.size(); i++) {
-                if (i > 0) {
-                    sql.append(", ");
-                }
-                LanceColumnHandle lanceColumn = (LanceColumnHandle) groupingColumns.get(i);
-                sql.append("\"").append(lanceColumn.name()).append("\"");
-            }
-        }
+        LanceTableHandle newHandle = lanceTableHandle.withCountStar();
 
-        log.debug("applyAggregation: generated SQL: %s", sql);
-
-        LanceTableHandle newHandle = lanceTableHandle.withAggregateSql(sql.toString());
+        // Create synthetic column handle for COUNT(*) result
+        LanceColumnHandle countColumnHandle = new LanceColumnHandle("_count", aggregate.getOutputType(), false, -1);
+        Variable variable = new Variable("_count", aggregate.getOutputType());
 
         return Optional.of(new AggregationApplicationResult<>(
                 newHandle,
-                projections.build(),
-                resultAssignments.build(),
+                ImmutableList.of(variable),
+                ImmutableList.of(new Assignment("_count", countColumnHandle, aggregate.getOutputType())),
                 ImmutableMap.of(),
-                false)); // precalculateStatisticsForPushdown
+                false));
     }
 
-    private Optional<String> toAggregateSql(AggregateFunction aggregate, Map<String, ColumnHandle> assignments)
+    private boolean isCountStar(AggregateFunction aggregate)
     {
-        String functionName = aggregate.getFunctionName().toLowerCase();
-        List<ConnectorExpression> arguments = aggregate.getArguments();
-
-        // Handle DISTINCT - DataFusion supports DISTINCT for some aggregates
-        String distinctPrefix = aggregate.isDistinct() ? "DISTINCT " : "";
-
-        switch (functionName) {
-            case "count":
-                if (arguments.isEmpty()) {
-                    // COUNT(*)
-                    return Optional.of("COUNT(*)");
-                }
-                else if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
-                    String columnName = ((Variable) arguments.get(0)).getName();
-                    return Optional.of("COUNT(" + distinctPrefix + "\"" + columnName + "\")");
-                }
-                break;
-            case "sum":
-                if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
-                    String columnName = ((Variable) arguments.get(0)).getName();
-                    return Optional.of("SUM(" + distinctPrefix + "\"" + columnName + "\")");
-                }
-                break;
-            case "avg":
-                if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
-                    String columnName = ((Variable) arguments.get(0)).getName();
-                    return Optional.of("AVG(" + distinctPrefix + "\"" + columnName + "\")");
-                }
-                break;
-            case "min":
-                if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
-                    String columnName = ((Variable) arguments.get(0)).getName();
-                    return Optional.of("MIN(\"" + columnName + "\")");
-                }
-                break;
-            case "max":
-                if (arguments.size() == 1 && arguments.get(0) instanceof Variable) {
-                    String columnName = ((Variable) arguments.get(0)).getName();
-                    return Optional.of("MAX(\"" + columnName + "\")");
-                }
-                break;
-        }
-
-        // Unsupported aggregate function
-        log.debug("Unsupported aggregate function for pushdown: %s", aggregate);
-        return Optional.empty();
+        return "count".equalsIgnoreCase(aggregate.getFunctionName()) &&
+                aggregate.getArguments().isEmpty() &&
+                !aggregate.isDistinct();
     }
 
     @Override

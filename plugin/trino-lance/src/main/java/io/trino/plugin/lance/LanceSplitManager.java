@@ -50,9 +50,9 @@ public class LanceSplitManager
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
 
-        // For aggregate queries, return a single split that covers the whole dataset
-        // The aggregate SQL will be executed via Dataset.sql()
-        if (lanceTableHandle.getAggregateSql().isPresent()) {
+        // For COUNT(*) without filter, return a single empty split
+        // The count will be retrieved from ManifestSummary without scanning data
+        if (lanceTableHandle.isCountStar() && !lanceTableHandle.hasFilter()) {
             return new FixedSplitSource(List.of(new LanceSplit(Collections.emptyList())));
         }
 
@@ -60,6 +60,7 @@ public class LanceSplitManager
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
 
         // Get fragments from cache and create splits for parallel processing
+        // For COUNT(*) with filter, each split will count rows matching the filter
         List<Integer> fragmentIds = LanceDatasetCache.getFragments(lanceTableHandle.getTablePath(), storageOptions)
                 .stream().map(Fragment::getId).toList();
         return new FixedSplitSource(fragmentIds.stream().map(id -> new LanceSplit(Collections.singletonList(id))).toList());

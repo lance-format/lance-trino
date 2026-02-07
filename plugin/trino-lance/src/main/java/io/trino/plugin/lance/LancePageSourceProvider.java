@@ -58,9 +58,9 @@ public class LancePageSourceProvider
         // Use storage options from handle, refreshing if expired
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
 
-        // For aggregate queries, use the aggregate page source that executes SQL via DataFusion
-        if (lanceTableHandle.getAggregateSql().isPresent()) {
-            return new LanceAggregatePageSource(lanceTableHandle, lanceColumns, storageOptions);
+        // For COUNT(*) queries, use the count page source
+        if (lanceTableHandle.isCountStar()) {
+            return new LanceCountPageSource(lanceTableHandle, storageOptions, lanceSplit.getFragments());
         }
 
         // Each split contains exactly one fragment for parallel processing
