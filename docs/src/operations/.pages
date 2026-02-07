@@ -1,4 +1,6 @@
 title: Operations
 nav:
+  - data-types.md
   - ddl
+  - dml
   - dql
