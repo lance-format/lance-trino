@@ -11,17 +11,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.trino.plugin.lance.internal;
+package io.trino.plugin.lance;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.lance.ipc.LanceScanner;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 public interface ScannerFactory
 {
-    LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns, Map<String, String> storageOptions);
+    LanceScanner open(
+            String tablePath,
+            BufferAllocator allocator,
+            List<String> columns,
+            Map<String, String> storageOptions,
+            Optional<ByteBuffer> substraitFilter,
+            OptionalLong limit);
 
     void close();
 }

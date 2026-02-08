@@ -58,6 +58,11 @@ public class LancePageSourceProvider
         // Use storage options from handle, refreshing if expired
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
 
+        // For COUNT(*) queries, use the count page source
+        if (lanceTableHandle.isCountStar()) {
+            return new LanceCountPageSource(lanceTableHandle, storageOptions, lanceSplit.getFragments());
+        }
+
         // Each split contains exactly one fragment for parallel processing
         return new LanceFragmentPageSource(lanceTableHandle, lanceColumns, lanceSplit.getFragments(), storageOptions);
     }

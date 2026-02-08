@@ -36,12 +36,17 @@ import static io.trino.spi.type.RealType.REAL;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
 
-public record LanceColumnHandle(String name, Type trinoType, boolean isNullable)
+public record LanceColumnHandle(String name, Type trinoType, boolean isNullable, int fieldId)
         implements ColumnHandle
 {
     public LanceColumnHandle(String name, Type trinoType, FieldType fieldType)
     {
-        this(name, trinoType, fieldType.isNullable());
+        this(name, trinoType, fieldType.isNullable(), -1);
+    }
+
+    public LanceColumnHandle(String name, Type trinoType, boolean isNullable)
+    {
+        this(name, trinoType, isNullable, -1);
     }
 
     public LanceColumnHandle

@@ -13,8 +13,6 @@
  */
 package io.trino.plugin.lance;
 
-import io.trino.plugin.lance.internal.LanceArrowToPageScanner;
-import io.trino.plugin.lance.internal.ScannerFactory;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.connector.ConnectorPageSource;
@@ -50,8 +48,16 @@ public abstract class LanceBasePageSource
     {
         this.tableHandle = tableHandle;
         this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
+
         this.lanceArrowToPageScanner =
-                new LanceArrowToPageScanner(bufferAllocator, tableHandle.getTablePath(), columns, scannerFactory, storageOptions);
+                new LanceArrowToPageScanner(
+                        bufferAllocator,
+                        tableHandle.getTablePath(),
+                        columns,
+                        scannerFactory,
+                        storageOptions,
+                        tableHandle.getSubstraitFilterBuffer(),
+                        tableHandle.getLimit());
         this.pageBuilder =
                 new PageBuilder(columns.stream().map(LanceColumnHandle::trinoType).collect(toImmutableList()));
         this.isFinished.set(false);

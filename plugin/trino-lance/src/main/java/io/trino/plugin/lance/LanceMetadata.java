@@ -14,13 +14,16 @@
 package io.trino.plugin.lance;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
-import io.trino.plugin.lance.internal.LancePageToArrowConverter;
 import io.trino.spi.TrinoException;
+import io.trino.spi.connector.AggregateFunction;
+import io.trino.spi.connector.AggregationApplicationResult;
+import io.trino.spi.connector.Assignment;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
@@ -42,12 +45,18 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
+import io.trino.spi.expression.Variable;
+import io.trino.spi.predicate.Domain;
+import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.security.TrinoPrincipal;
 import io.trino.spi.statistics.ComputedStatistics;
+import io.trino.spi.statistics.Estimate;
+import io.trino.spi.statistics.TableStatistics;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Dataset;
 import org.lance.FragmentMetadata;
 import org.lance.FragmentOperation;
+import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
 import org.lance.Transaction;
 import org.lance.WriteParams;
@@ -74,6 +83,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
@@ -89,6 +99,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.plugin.lance.SubstraitExpressionBuilder.isDomainPushable;
+import static io.trino.plugin.lance.SubstraitExpressionBuilder.isSupportedType;
 import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
@@ -311,17 +323,248 @@ public class LanceMetadata
     }
 
     @Override
+    public TableStatistics getTableStatistics(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
+
+        try {
+            Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+            ManifestSummary summary = LanceDatasetCache.getManifestSummary(
+                    lanceTableHandle.getTablePath(), storageOptions);
+
+            log.debug("getTableStatistics: table=%s, totalRows=%d, totalFilesSize=%d, totalFragments=%d",
+                    lanceTableHandle.getTableName(),
+                    summary.getTotalRows(),
+                    summary.getTotalFilesSize(),
+                    summary.getTotalFragments());
+
+            // Note: TableStatistics is used for query planning/cost estimation only.
+            // For COUNT(*) optimization, we would need to implement applyAggregation().
+            return TableStatistics.builder()
+                    .setRowCount(Estimate.of(summary.getTotalRows()))
+                    .build();
+        }
+        catch (Exception e) {
+            log.warn(e, "Failed to get table statistics for %s", lanceTableHandle.getTableName());
+            return TableStatistics.empty();
+        }
+    }
+
+    @Override
     public Optional<LimitApplicationResult<ConnectorTableHandle>> applyLimit(ConnectorSession session,
             ConnectorTableHandle table, long limit)
     {
-        return Optional.empty();
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
+
+        if (lanceTableHandle.getLimit().isPresent() && lanceTableHandle.getLimit().getAsLong() <= limit) {
+            return Optional.empty();
+        }
+
+        LanceTableHandle newHandle = lanceTableHandle.withLimit(limit);
+        return Optional.of(new LimitApplicationResult<>(newHandle, false, false));
+    }
+
+    @Override
+    public Optional<AggregationApplicationResult<ConnectorTableHandle>> applyAggregation(
+            ConnectorSession session,
+            ConnectorTableHandle table,
+            List<AggregateFunction> aggregates,
+            Map<String, ColumnHandle> assignments,
+            List<List<ColumnHandle>> groupingSets)
+    {
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
+
+        // Don't push if already has aggregate
+        if (lanceTableHandle.isCountStar()) {
+            return Optional.empty();
+        }
+
+        // Don't push COUNT(*) if there's a filter - let Trino aggregate distributed counts
+        // We can only return a single row from aggregate pushdown, but with filter we need
+        // to count each fragment separately which would return multiple rows
+        if (lanceTableHandle.hasFilter()) {
+            log.debug("applyAggregation: not pushing COUNT(*) with filter");
+            return Optional.empty();
+        }
+
+        // Only support simple COUNT(*) without grouping
+        if (groupingSets.size() != 1 || !groupingSets.get(0).isEmpty()) {
+            return Optional.empty();
+        }
+
+        // Only support single COUNT(*) aggregate
+        if (aggregates.size() != 1) {
+            return Optional.empty();
+        }
+
+        AggregateFunction aggregate = aggregates.get(0);
+        if (!isCountStar(aggregate)) {
+            log.debug("applyAggregation: unsupported aggregate function: %s", aggregate.getFunctionName());
+            return Optional.empty();
+        }
+
+        log.debug("applyAggregation: pushing COUNT(*) for table %s (no filter)",
+                lanceTableHandle.getTableName());
+
+        LanceTableHandle newHandle = lanceTableHandle.withCountStar();
+
+        // Create synthetic column handle for COUNT(*) result
+        LanceColumnHandle countColumnHandle = new LanceColumnHandle("_count", aggregate.getOutputType(), false, -1);
+        Variable variable = new Variable("_count", aggregate.getOutputType());
+
+        return Optional.of(new AggregationApplicationResult<>(
+                newHandle,
+                ImmutableList.of(variable),
+                ImmutableList.of(new Assignment("_count", countColumnHandle, aggregate.getOutputType())),
+                ImmutableMap.of(),
+                false));
+    }
+
+    private boolean isCountStar(AggregateFunction aggregate)
+    {
+        return "count".equalsIgnoreCase(aggregate.getFunctionName()) &&
+                aggregate.getArguments().isEmpty() &&
+                !aggregate.isDistinct();
     }
 
     @Override
     public Optional<ConstraintApplicationResult<ConnectorTableHandle>> applyFilter(ConnectorSession session,
             ConnectorTableHandle table, Constraint constraint)
     {
-        return Optional.empty();
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
+
+        TupleDomain<ColumnHandle> summary = constraint.getSummary();
+        if (summary.isAll()) {
+            log.debug("applyFilter: constraint summary is ALL, returning empty");
+            return Optional.empty();
+        }
+
+        TupleDomain<LanceColumnHandle> newConstraint = summary.transformKeys(LanceColumnHandle.class::cast);
+        TupleDomain<LanceColumnHandle> supportedConstraint = filterToSupportedTypes(newConstraint);
+
+        log.debug("applyFilter: newConstraint=%s, supportedConstraint=%s", newConstraint, supportedConstraint);
+
+        if (supportedConstraint.isAll()) {
+            log.debug("applyFilter: supportedConstraint is ALL, returning empty");
+            return Optional.empty();
+        }
+
+        // Get all columns from the table for building the full schema
+        Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+        List<LanceColumnHandle> allColumns = LanceDatasetCache.getColumnHandleList(
+                lanceTableHandle.getTablePath(), storageOptions);
+
+        // Build field ID map from all column handles
+        Map<String, Integer> fieldIdMap = new HashMap<>();
+        for (LanceColumnHandle column : allColumns) {
+            fieldIdMap.put(column.name(), column.fieldId());
+        }
+
+        // Filter out columns without valid field IDs (e.g., synthetic COUNT columns)
+        Map<LanceColumnHandle, Domain> domains = supportedConstraint.getDomains().orElse(Map.of());
+        Map<LanceColumnHandle, Domain> validDomains = new HashMap<>();
+        for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
+            LanceColumnHandle column = entry.getKey();
+            if (column.fieldId() >= 0) {
+                validDomains.put(column, entry.getValue());
+            }
+            else {
+                log.debug("applyFilter: skipping synthetic column %s with invalid fieldId", column.name());
+            }
+        }
+
+        if (validDomains.isEmpty()) {
+            log.debug("applyFilter: no valid columns to filter on");
+            return Optional.empty();
+        }
+        supportedConstraint = TupleDomain.withColumnDomains(validDomains);
+
+        // Build Substrait filter with full schema
+        Optional<ByteBuffer> substraitFilter = SubstraitExpressionBuilder.tupleDomainToSubstrait(
+                supportedConstraint, allColumns, fieldIdMap);
+
+        if (substraitFilter.isEmpty()) {
+            log.debug("applyFilter: no substrait filter generated, returning empty");
+            return Optional.empty();
+        }
+
+        // Combine with existing filter if present
+        byte[] newFilterBytes = substraitFilter.get().array();
+        byte[] existingFilter = lanceTableHandle.getSubstraitFilter();
+
+        // If there's an existing filter, we can't easily combine Substrait expressions,
+        // so we just use the new one (this matches the previous behavior with TupleDomain.intersect)
+        // In practice, Trino calls applyFilter once with the full constraint
+        if (existingFilter != null && existingFilter.length > 0 &&
+                java.util.Arrays.equals(existingFilter, newFilterBytes)) {
+            log.debug("applyFilter: filter unchanged, returning empty");
+            return Optional.empty();
+        }
+
+        // Collect column names for display in EXPLAIN
+        List<String> filterColumnNames = validDomains.keySet().stream()
+                .map(LanceColumnHandle::name)
+                .toList();
+
+        LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes, filterColumnNames);
+        TupleDomain<LanceColumnHandle> remainingFilter = filterToUnsupportedTypes(newConstraint);
+
+        log.debug("applyFilter: pushing substrait filter (size=%d bytes), remaining=%s",
+                newFilterBytes.length, remainingFilter);
+
+        return Optional.of(new ConstraintApplicationResult<>(
+                newHandle,
+                remainingFilter.transformKeys(ColumnHandle.class::cast),
+                constraint.getExpression(),
+                false));
+    }
+
+    private TupleDomain<LanceColumnHandle> filterToSupportedTypes(TupleDomain<LanceColumnHandle> tupleDomain)
+    {
+        if (tupleDomain.isAll() || tupleDomain.isNone()) {
+            return tupleDomain;
+        }
+
+        Map<LanceColumnHandle, Domain> domains = tupleDomain.getDomains().orElse(Map.of());
+        Map<LanceColumnHandle, Domain> supportedDomains = new HashMap<>();
+
+        for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
+            LanceColumnHandle column = entry.getKey();
+            Domain domain = entry.getValue();
+            if (isSupportedType(column.trinoType()) && isDomainPushable(domain)) {
+                supportedDomains.put(column, domain);
+            }
+        }
+
+        if (supportedDomains.isEmpty()) {
+            return TupleDomain.all();
+        }
+
+        return TupleDomain.withColumnDomains(supportedDomains);
+    }
+
+    private TupleDomain<LanceColumnHandle> filterToUnsupportedTypes(TupleDomain<LanceColumnHandle> tupleDomain)
+    {
+        if (tupleDomain.isAll() || tupleDomain.isNone()) {
+            return TupleDomain.all();
+        }
+
+        Map<LanceColumnHandle, Domain> domains = tupleDomain.getDomains().orElse(Map.of());
+        Map<LanceColumnHandle, Domain> unsupportedDomains = new HashMap<>();
+
+        for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
+            LanceColumnHandle column = entry.getKey();
+            Domain domain = entry.getValue();
+            if (!isSupportedType(column.trinoType()) || !isDomainPushable(domain)) {
+                unsupportedDomains.put(column, domain);
+            }
+        }
+
+        if (unsupportedDomains.isEmpty()) {
+            return TupleDomain.all();
+        }
+
+        return TupleDomain.withColumnDomains(unsupportedDomains);
     }
 
     // ===== DROP TABLE =====

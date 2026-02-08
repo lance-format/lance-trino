@@ -233,6 +233,17 @@ public class TestLanceConnectorTest
 
     @Test
     @Override
+    public void testPredicateReflectedInExplain()
+    {
+        // Lance uses Substrait binary format for filter pushdown
+        // We show the filtered column names in the constraint field
+        assertExplain(
+                "EXPLAIN SELECT name FROM nation WHERE nationkey = 42",
+                "constraint.{0,10}(nationkey|NATIONKEY)");
+    }
+
+    @Test
+    @Override
     public void testCharVarcharComparison()
     {
         // Lance doesn't support CHAR type

@@ -29,6 +29,11 @@
         </dependency>
 
         <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>io.airlift</groupId>
             <artifactId>bootstrap</artifactId>
         </dependency>
@@ -46,6 +51,32 @@
         <dependency>
             <groupId>io.airlift</groupId>
             <artifactId>log</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.substrait</groupId>
+            <artifactId>core</artifactId>
+            <version>0.40.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.fasterxml.jackson.core</groupId>
+                    <artifactId>jackson-core</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.fasterxml.jackson.core</groupId>
+                    <artifactId>jackson-databind</artifactId>
+                </exclusion>
+                <!-- Avoid conflicts with Trino's jackson and snakeyaml versions -->
+                <exclusion>
+                    <groupId>com.fasterxml.jackson.dataformat</groupId>
+                    <artifactId>jackson-dataformat-yaml</artifactId>
+                </exclusion>
+                <!-- Use Trino's managed protobuf version -->
+                <exclusion>
+                    <groupId>com.google.protobuf</groupId>
+                    <artifactId>protobuf-java</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
@@ -137,6 +168,12 @@
             <groupId>org.openjdk.jol</groupId>
             <artifactId>jol-core</artifactId>
             <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <dependency>
@@ -345,6 +382,13 @@
                                 <exclude>org.apache.commons:commons-lang3</exclude>
                                 <exclude>com.google.guava:failureaccess</exclude>
                                 <exclude>org.apache.logging.log4j:log4j-api</exclude>
+                                <!-- arrow dependencies managed by trino but lance-core brings different versions -->
+                                <exclude>org.apache.arrow:arrow-dataset</exclude>
+                                <exclude>org.apache.arrow:arrow-memory-netty</exclude>
+                                <exclude>org.apache.arrow:arrow-vector</exclude>
+                                <exclude>org.apache.arrow:arrow-c-data</exclude>
+                                <!-- substrait-java jackson dependencies bring newer snakeyaml -->
+                                <exclude>org.yaml:snakeyaml</exclude>
                             </excludes>
                         </requireUpperBoundDeps>
                         <enforceBytecodeVersion>
@@ -365,6 +409,16 @@
                     <argLine>--add-opens=java.base/java.nio=ALL-UNNAMED</argLine>
                     <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
                     <useSystemClassLoader>false</useSystemClassLoader>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <configuration>
+                    <ignoredUnusedDeclaredDependencies combine.children="append">
+                        <!-- Required at compile time for substrait Expression class hierarchy -->
+                        <ignoredUnusedDeclaredDependency>com.google.protobuf:protobuf-java</ignoredUnusedDeclaredDependency>
+                    </ignoredUnusedDeclaredDependencies>
                 </configuration>
             </plugin>
             <plugin>
