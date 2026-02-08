@@ -501,7 +501,12 @@ public class LanceMetadata
             return Optional.empty();
         }
 
-        LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes);
+        // Collect column names for display in EXPLAIN
+        List<String> filterColumnNames = validDomains.keySet().stream()
+                .map(LanceColumnHandle::name)
+                .toList();
+
+        LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes, filterColumnNames);
         TupleDomain<LanceColumnHandle> remainingFilter = filterToUnsupportedTypes(newConstraint);
 
         log.debug("applyFilter: pushing substrait filter (size=%d bytes), remaining=%s",

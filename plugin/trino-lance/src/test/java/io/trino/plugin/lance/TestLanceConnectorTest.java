@@ -236,8 +236,10 @@ public class TestLanceConnectorTest
     public void testPredicateReflectedInExplain()
     {
         // Lance uses Substrait binary format for filter pushdown
-        // The predicate is pushed down correctly but not displayed in text format in EXPLAIN
-        abort("Lance uses Substrait binary format for predicates which are not displayed in EXPLAIN");
+        // We show the filtered column names in the constraint field
+        assertExplain(
+                "EXPLAIN SELECT name FROM nation WHERE nationkey = 42",
+                "constraint.{0,10}(nationkey|NATIONKEY)");
     }
 
     @Test

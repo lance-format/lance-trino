@@ -42,6 +42,7 @@ public class LanceTableHandle
     private final List<String> tableId;
     private final Map<String, String> storageOptions;
     private final byte[] substraitFilter;
+    private final List<String> filterColumns;  // Column names in the filter, for display purposes
     private final OptionalLong limit;
     private final boolean countStar;
 
@@ -52,7 +53,7 @@ public class LanceTableHandle
             List<String> tableId,
             Map<String, String> storageOptions)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, null, OptionalLong.empty(), false);
+        this(schemaName, tableName, tablePath, tableId, storageOptions, null, List.of(), OptionalLong.empty(), false);
     }
 
     @JsonCreator
@@ -63,10 +64,12 @@ public class LanceTableHandle
             @JsonProperty("tableId") List<String> tableId,
             @JsonProperty("storageOptions") Map<String, String> storageOptions,
             @JsonProperty("substraitFilter") byte[] substraitFilter,
+            @JsonProperty("filterColumns") List<String> filterColumns,
             @JsonProperty("limit") Long limit,
             @JsonProperty("countStar") Boolean countStar)
     {
         this(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter,
+                filterColumns != null ? filterColumns : List.of(),
                 limit != null ? OptionalLong.of(limit) : OptionalLong.empty(),
                 countStar != null && countStar);
     }
@@ -78,6 +81,7 @@ public class LanceTableHandle
             List<String> tableId,
             Map<String, String> storageOptions,
             byte[] substraitFilter,
+            List<String> filterColumns,
             OptionalLong limit,
             boolean countStar)
     {
@@ -87,6 +91,7 @@ public class LanceTableHandle
         this.tableId = requireNonNull(tableId, "tableId is null");
         this.storageOptions = storageOptions != null ? new HashMap<>(storageOptions) : new HashMap<>();
         this.substraitFilter = substraitFilter;
+        this.filterColumns = filterColumns != null ? List.copyOf(filterColumns) : List.of();
         this.limit = requireNonNull(limit, "limit is null");
         this.countStar = countStar;
     }
@@ -187,6 +192,15 @@ public class LanceTableHandle
     }
 
     /**
+     * Get the column names used in the filter (for display purposes).
+     */
+    @JsonProperty("filterColumns")
+    public List<String> getFilterColumns()
+    {
+        return filterColumns;
+    }
+
+    /**
      * Get the limit if set.
      */
     @JsonIgnore
@@ -218,15 +232,15 @@ public class LanceTableHandle
      */
     public LanceTableHandle withStorageOptions(Map<String, String> newStorageOptions)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, limit, countStar);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, filterColumns, limit, countStar);
     }
 
     /**
-     * Create a new handle with the given Substrait filter.
+     * Create a new handle with the given Substrait filter and column names.
      */
-    public LanceTableHandle withSubstraitFilter(byte[] newSubstraitFilter)
+    public LanceTableHandle withSubstraitFilter(byte[] newSubstraitFilter, List<String> newFilterColumns)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, limit, countStar);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, newFilterColumns, limit, countStar);
     }
 
     /**
@@ -234,7 +248,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withLimit(long newLimit)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, OptionalLong.of(newLimit), countStar);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, OptionalLong.of(newLimit), countStar);
     }
 
     /**
@@ -242,7 +256,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withCountStar()
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, limit, true);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, true);
     }
 
     @Override
@@ -260,13 +274,14 @@ public class LanceTableHandle
                 Objects.equals(tablePath, that.tablePath) &&
                 Objects.equals(tableId, that.tableId) &&
                 Arrays.equals(substraitFilter, that.substraitFilter) &&
+                Objects.equals(filterColumns, that.filterColumns) &&
                 Objects.equals(limit, that.limit);
     }
 
     @Override
     public int hashCode()
     {
-        int result = Objects.hash(tableName, tablePath, tableId, limit, countStar);
+        int result = Objects.hash(tableName, tablePath, tableId, filterColumns, limit, countStar);
         result = 31 * result + Arrays.hashCode(substraitFilter);
         return result;
     }
@@ -274,12 +289,21 @@ public class LanceTableHandle
     @Override
     public String toString()
     {
-        return toStringHelper(this)
+        var helper = toStringHelper(this)
                 .add("tableName", tableName)
                 .add("tablePath", tablePath)
                 .add("tableId", tableId)
-                .add("hasStorageOptions", !storageOptions.isEmpty())
-                .add("hasFilter", hasFilter())
+                .add("hasStorageOptions", !storageOptions.isEmpty());
+
+        // Show predicate columns if filter is present
+        if (hasFilter() && !filterColumns.isEmpty()) {
+            helper.add("constraint", filterColumns);
+        }
+        else {
+            helper.add("hasFilter", hasFilter());
+        }
+
+        return helper
                 .add("limit", limit)
                 .add("countStar", countStar)
                 .toString();
