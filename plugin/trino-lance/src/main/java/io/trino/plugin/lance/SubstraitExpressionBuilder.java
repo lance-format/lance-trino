@@ -21,6 +21,10 @@ import io.substrait.expression.proto.ExpressionProtoConverter;
 import io.substrait.extension.DefaultExtensionCatalog;
 import io.substrait.extension.ExtensionCollector;
 import io.substrait.extension.SimpleExtension;
+import io.substrait.proto.ExpressionReference;
+import io.substrait.proto.ExtendedExpression;
+import io.substrait.proto.NamedStruct;
+import io.substrait.proto.Type.Nullability;
 import io.substrait.relation.RelProtoConverter;
 import io.substrait.type.Type;
 import io.substrait.type.TypeCreator;
@@ -34,6 +38,7 @@ import io.trino.spi.type.VarcharType;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -68,18 +73,29 @@ public final class SubstraitExpressionBuilder
     private SubstraitExpressionBuilder() {}
 
     /**
-     * Converts a TupleDomain to a Substrait Expression serialized as a ByteBuffer.
+     * Converts a TupleDomain to a Substrait ExtendedExpression serialized as a ByteBuffer.
      *
      * @param tupleDomain the predicate to convert
-     * @param columnOrdinals map of column name to ordinal position in the schema
-     * @return Optional containing the serialized Substrait expression, or empty if no filter
+     * @param allColumns all columns from the table (for building the full schema)
+     * @param columnOrdinals map of column name to ordinal position in the schema (field ID)
+     * @return Optional containing the serialized Substrait ExtendedExpression, or empty if no filter
      */
     public static Optional<ByteBuffer> tupleDomainToSubstrait(
             TupleDomain<LanceColumnHandle> tupleDomain,
+            List<LanceColumnHandle> allColumns,
             Map<String, Integer> columnOrdinals)
     {
         Optional<Expression> expression = tupleDomainToExpression(tupleDomain, columnOrdinals);
-        return expression.map(SubstraitExpressionBuilder::serializeExpression);
+        if (expression.isEmpty()) {
+            return Optional.empty();
+        }
+
+        // Sort columns by field ID to match the schema order
+        List<LanceColumnHandle> sortedColumns = allColumns.stream()
+                .sorted(Comparator.comparingInt(LanceColumnHandle::fieldId))
+                .toList();
+
+        return Optional.of(serializeAsExtendedExpression(expression.get(), sortedColumns, columnOrdinals));
     }
 
     /**
@@ -456,16 +472,107 @@ public final class SubstraitExpressionBuilder
         throw new UnsupportedOperationException("Unsupported type for Substrait: " + trinoType);
     }
 
-    private static ByteBuffer serializeExpression(Expression expression)
+    /**
+     * Serializes an expression as a Substrait ExtendedExpression.
+     * Lance requires ExtendedExpression format, not raw Expression.
+     */
+    private static ByteBuffer serializeAsExtendedExpression(
+            Expression expression,
+            List<LanceColumnHandle> columns,
+            Map<String, Integer> columnOrdinals)
     {
         ExtensionCollector extensionCollector = new ExtensionCollector();
         RelProtoConverter relProtoConverter = new RelProtoConverter(extensionCollector);
         ExpressionProtoConverter converter = new ExpressionProtoConverter(extensionCollector, relProtoConverter);
 
-        // Use the visitor pattern to convert the expression
+        // Convert the expression to proto
         io.substrait.proto.Expression protoExpression = expression.accept(converter);
-        byte[] bytes = protoExpression.toByteArray();
+
+        // Build the schema (NamedStruct)
+        NamedStruct.Builder schemaBuilder = NamedStruct.newBuilder();
+        io.substrait.proto.Type.Struct.Builder structBuilder = io.substrait.proto.Type.Struct.newBuilder()
+                .setNullability(Nullability.NULLABILITY_REQUIRED);
+
+        for (LanceColumnHandle column : columns) {
+            schemaBuilder.addNames(column.name());
+            structBuilder.addTypes(trinoTypeToProtoType(column.trinoType()));
+        }
+        schemaBuilder.setStruct(structBuilder.build());
+
+        // Build the ExpressionReference
+        ExpressionReference exprRef = ExpressionReference.newBuilder()
+                .setExpression(protoExpression)
+                .addOutputNames("filter_mask")
+                .build();
+
+        // Build the ExtendedExpression with collected extensions
+        ExtendedExpression.Builder extendedExprBuilder = ExtendedExpression.newBuilder()
+                .setVersion(io.substrait.proto.Version.newBuilder()
+                        .setMajorNumber(0)
+                        .setMinorNumber(70)
+                        .setPatchNumber(0)
+                        .setProducer("trino-lance")
+                        .build())
+                .setBaseSchema(schemaBuilder.build())
+                .addReferredExpr(exprRef);
+
+        // Add extension URIs and declarations from collector
+        extensionCollector.addExtensionsToExtendedExpression(extendedExprBuilder);
+
+        byte[] bytes = extendedExprBuilder.build().toByteArray();
         return ByteBuffer.wrap(bytes);
+    }
+
+    /**
+     * Converts a Trino type to Substrait proto Type.
+     */
+    private static io.substrait.proto.Type trinoTypeToProtoType(io.trino.spi.type.Type trinoType)
+    {
+        io.substrait.proto.Type.Builder builder = io.substrait.proto.Type.newBuilder();
+
+        if (trinoType.equals(BOOLEAN)) {
+            return builder.setBool(io.substrait.proto.Type.Boolean.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType.equals(TINYINT)) {
+            return builder.setI8(io.substrait.proto.Type.I8.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType.equals(SMALLINT)) {
+            return builder.setI16(io.substrait.proto.Type.I16.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType.equals(INTEGER)) {
+            return builder.setI32(io.substrait.proto.Type.I32.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType.equals(BIGINT)) {
+            return builder.setI64(io.substrait.proto.Type.I64.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType.equals(REAL)) {
+            return builder.setFp32(io.substrait.proto.Type.FP32.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType.equals(DOUBLE)) {
+            return builder.setFp64(io.substrait.proto.Type.FP64.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType instanceof VarcharType) {
+            return builder.setString(io.substrait.proto.Type.String.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType instanceof DateType) {
+            return builder.setDate(io.substrait.proto.Type.Date.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType instanceof TimestampType timestampType) {
+            return builder.setPrecisionTimestamp(io.substrait.proto.Type.PrecisionTimestamp.newBuilder()
+                    .setPrecision(timestampType.getPrecision())
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+
+        throw new UnsupportedOperationException("Unsupported type for Substrait proto: " + trinoType);
     }
 
     /**

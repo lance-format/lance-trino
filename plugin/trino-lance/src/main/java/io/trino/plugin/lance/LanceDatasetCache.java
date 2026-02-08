@@ -166,6 +166,21 @@ public final class LanceDatasetCache
     }
 
     /**
+     * Get column handles as a list for a table with field IDs.
+     */
+    public static List<LanceColumnHandle> getColumnHandleList(String tablePath, Map<String, String> storageOptions)
+    {
+        LanceSchema lanceSchema = getLanceSchema(tablePath, storageOptions);
+        return lanceSchema.fields().stream()
+                .map(f -> new LanceColumnHandle(
+                        f.getName(),
+                        LanceColumnHandle.toTrinoType(f.getType()),
+                        f.isNullable(),
+                        f.getId()))
+                .collect(toImmutableList());
+    }
+
+    /**
      * Get the Lance schema with field IDs.
      */
     public static LanceSchema getLanceSchema(String tablePath, Map<String, String> storageOptions)

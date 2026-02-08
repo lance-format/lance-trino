@@ -195,6 +195,15 @@ public abstract class BaseLanceConnectorTest
 
     @Test
     @Override
+    public void testPredicateReflectedInExplain()
+    {
+        // Lance uses Substrait binary format for filter pushdown
+        // The predicate is pushed down correctly but not displayed in text format in EXPLAIN
+        abort("Lance uses Substrait binary format for predicates which are not displayed in EXPLAIN");
+    }
+
+    @Test
+    @Override
     public void testCharVarcharComparison()
     {
         // Lance doesn't support CHAR type

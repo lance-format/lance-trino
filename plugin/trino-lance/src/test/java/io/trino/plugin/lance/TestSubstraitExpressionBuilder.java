@@ -22,6 +22,7 @@ import io.trino.spi.predicate.ValueSet;
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -33,10 +34,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestSubstraitExpressionBuilder
 {
-    private static final LanceColumnHandle INT_COLUMN = new LanceColumnHandle("id", INTEGER, true);
-    private static final LanceColumnHandle BIGINT_COLUMN = new LanceColumnHandle("big_id", BIGINT, true);
-    private static final LanceColumnHandle VARCHAR_COLUMN = new LanceColumnHandle("name", VARCHAR, true);
-    private static final LanceColumnHandle BOOLEAN_COLUMN = new LanceColumnHandle("active", BOOLEAN, true);
+    private static final LanceColumnHandle INT_COLUMN = new LanceColumnHandle("id", INTEGER, true, 0);
+    private static final LanceColumnHandle BIGINT_COLUMN = new LanceColumnHandle("big_id", BIGINT, true, 1);
+    private static final LanceColumnHandle VARCHAR_COLUMN = new LanceColumnHandle("name", VARCHAR, true, 2);
+    private static final LanceColumnHandle BOOLEAN_COLUMN = new LanceColumnHandle("active", BOOLEAN, true, 3);
+
+    private static final List<LanceColumnHandle> ALL_COLUMNS = List.of(
+            INT_COLUMN, BIGINT_COLUMN, VARCHAR_COLUMN, BOOLEAN_COLUMN);
 
     private static final Map<String, Integer> COLUMN_ORDINALS = Map.of(
             "id", 0,
@@ -48,7 +52,7 @@ public class TestSubstraitExpressionBuilder
     public void testAllDomain()
     {
         TupleDomain<LanceColumnHandle> domain = TupleDomain.all();
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isEmpty();
     }
 
@@ -56,7 +60,7 @@ public class TestSubstraitExpressionBuilder
     public void testNoneDomain()
     {
         TupleDomain<LanceColumnHandle> domain = TupleDomain.none();
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         // The result should be a false literal
         assertThat(result.get().remaining()).isGreaterThan(0);
@@ -67,7 +71,7 @@ public class TestSubstraitExpressionBuilder
     {
         TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
                 Map.of(INT_COLUMN, Domain.singleValue(INTEGER, 42L)));
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
     }
@@ -77,7 +81,7 @@ public class TestSubstraitExpressionBuilder
     {
         TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
                 Map.of(VARCHAR_COLUMN, Domain.singleValue(VARCHAR, Slices.utf8Slice("test"))));
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
     }
@@ -87,7 +91,7 @@ public class TestSubstraitExpressionBuilder
     {
         TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
                 Map.of(BOOLEAN_COLUMN, Domain.singleValue(BOOLEAN, true)));
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
     }
@@ -97,7 +101,7 @@ public class TestSubstraitExpressionBuilder
     {
         TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
                 Map.of(INT_COLUMN, Domain.multipleValues(INTEGER, java.util.List.of(1L, 2L, 3L))));
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
     }
@@ -108,7 +112,7 @@ public class TestSubstraitExpressionBuilder
         TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
                 Map.of(INT_COLUMN, Domain.create(
                         ValueSet.ofRanges(Range.greaterThan(INTEGER, 10L)), false)));
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
     }
@@ -119,7 +123,7 @@ public class TestSubstraitExpressionBuilder
         TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
                 Map.of(INT_COLUMN, Domain.create(
                         ValueSet.ofRanges(Range.range(INTEGER, 10L, true, 100L, true)), false)));
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
     }
@@ -129,7 +133,7 @@ public class TestSubstraitExpressionBuilder
     {
         TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
                 Map.of(INT_COLUMN, Domain.onlyNull(INTEGER)));
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
     }
@@ -139,7 +143,7 @@ public class TestSubstraitExpressionBuilder
     {
         TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
                 Map.of(INT_COLUMN, Domain.notNull(INTEGER)));
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
     }
@@ -151,7 +155,7 @@ public class TestSubstraitExpressionBuilder
                 Map.of(
                         INT_COLUMN, Domain.singleValue(INTEGER, 42L),
                         VARCHAR_COLUMN, Domain.singleValue(VARCHAR, Slices.utf8Slice("test"))));
-        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, COLUMN_ORDINALS);
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
     }

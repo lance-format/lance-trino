@@ -379,6 +379,14 @@ public class LanceMetadata
             return Optional.empty();
         }
 
+        // Don't push COUNT(*) if there's a filter - let Trino aggregate distributed counts
+        // We can only return a single row from aggregate pushdown, but with filter we need
+        // to count each fragment separately which would return multiple rows
+        if (lanceTableHandle.hasFilter()) {
+            log.debug("applyAggregation: not pushing COUNT(*) with filter");
+            return Optional.empty();
+        }
+
         // Only support simple COUNT(*) without grouping
         if (groupingSets.size() != 1 || !groupingSets.get(0).isEmpty()) {
             return Optional.empty();
@@ -395,8 +403,8 @@ public class LanceMetadata
             return Optional.empty();
         }
 
-        log.debug("applyAggregation: pushing COUNT(*) for table %s, hasFilter=%s",
-                lanceTableHandle.getTableName(), lanceTableHandle.hasFilter());
+        log.debug("applyAggregation: pushing COUNT(*) for table %s (no filter)",
+                lanceTableHandle.getTableName());
 
         LanceTableHandle newHandle = lanceTableHandle.withCountStar();
 
@@ -441,21 +449,39 @@ public class LanceMetadata
             return Optional.empty();
         }
 
-        // Build field ID map from column handles
+        // Get all columns from the table for building the full schema
+        Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+        List<LanceColumnHandle> allColumns = LanceDatasetCache.getColumnHandleList(
+                lanceTableHandle.getTablePath(), storageOptions);
+
+        // Build field ID map from all column handles
         Map<String, Integer> fieldIdMap = new HashMap<>();
-        Map<LanceColumnHandle, Domain> domains = supportedConstraint.getDomains().orElse(Map.of());
-        for (LanceColumnHandle column : domains.keySet()) {
-            if (column.fieldId() < 0) {
-                throw new IllegalStateException(
-                        "Column " + column.name() + " has invalid field ID. " +
-                        "This is unexpected - all columns should have valid field IDs from Lance schema.");
-            }
+        for (LanceColumnHandle column : allColumns) {
             fieldIdMap.put(column.name(), column.fieldId());
         }
 
-        // Build Substrait filter using field IDs
+        // Filter out columns without valid field IDs (e.g., synthetic COUNT columns)
+        Map<LanceColumnHandle, Domain> domains = supportedConstraint.getDomains().orElse(Map.of());
+        Map<LanceColumnHandle, Domain> validDomains = new HashMap<>();
+        for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
+            LanceColumnHandle column = entry.getKey();
+            if (column.fieldId() >= 0) {
+                validDomains.put(column, entry.getValue());
+            }
+            else {
+                log.debug("applyFilter: skipping synthetic column %s with invalid fieldId", column.name());
+            }
+        }
+
+        if (validDomains.isEmpty()) {
+            log.debug("applyFilter: no valid columns to filter on");
+            return Optional.empty();
+        }
+        supportedConstraint = TupleDomain.withColumnDomains(validDomains);
+
+        // Build Substrait filter with full schema
         Optional<ByteBuffer> substraitFilter = SubstraitExpressionBuilder.tupleDomainToSubstrait(
-                supportedConstraint, fieldIdMap);
+                supportedConstraint, allColumns, fieldIdMap);
 
         if (substraitFilter.isEmpty()) {
             log.debug("applyFilter: no substrait filter generated, returning empty");
