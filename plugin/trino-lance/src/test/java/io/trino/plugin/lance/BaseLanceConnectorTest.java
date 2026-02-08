@@ -95,12 +95,14 @@ public abstract class BaseLanceConnectorTest
                     SUPPORTS_RENAME_COLUMN,
                     SUPPORTS_SET_COLUMN_TYPE -> false;
 
-            // Row-level modification operations - not supported
+            // Row-level modification operations - supported via merge-on-read
             case SUPPORTS_DELETE,
                     SUPPORTS_ROW_LEVEL_DELETE,
                     SUPPORTS_UPDATE,
-                    SUPPORTS_TRUNCATE,
-                    SUPPORTS_MERGE -> false;
+                    SUPPORTS_MERGE -> true;
+
+            // Truncate not yet supported
+            case SUPPORTS_TRUNCATE -> false;
 
             // View operations - not supported
             case SUPPORTS_CREATE_VIEW,
@@ -447,5 +449,12 @@ public abstract class BaseLanceConnectorTest
         finally {
             assertUpdate("DROP SCHEMA IF EXISTS " + schemaName);
         }
+    }
+
+    @Override
+    protected void verifyConcurrentUpdateFailurePermissible(Exception e)
+    {
+        // Lance throws TRANSACTION_CONFLICT when concurrent updates conflict
+        assertThat(e).hasMessageMatching(".*[Cc]oncurrent.*|.*commit conflict.*");
     }
 }

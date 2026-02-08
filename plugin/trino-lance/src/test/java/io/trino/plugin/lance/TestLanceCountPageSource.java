@@ -55,7 +55,8 @@ public class TestLanceCountPageSource
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
         LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
-        this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, commitTaskDataCodec);
+        JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
+        this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
         this.splitManager = new LanceSplitManager(namespaceHolder);
     }
 

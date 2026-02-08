@@ -34,6 +34,7 @@ import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.TimeMicroVector;
+import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -137,8 +138,15 @@ public class LanceArrowToPageScanner
             }
             else if (javaType == long.class) {
                 if (type.equals(BIGINT)) {
-                    writeVectorValues(output, vector,
-                            index -> type.writeLong(output, ((BigIntVector) vector).get(index)), offset, length);
+                    // Handle both signed (BigIntVector) and unsigned (UInt8Vector) 64-bit integers
+                    if (vector instanceof UInt8Vector uint8Vector) {
+                        writeVectorValues(output, vector,
+                                index -> type.writeLong(output, uint8Vector.get(index)), offset, length);
+                    }
+                    else {
+                        writeVectorValues(output, vector,
+                                index -> type.writeLong(output, ((BigIntVector) vector).get(index)), offset, length);
+                    }
                 }
                 else if (type.equals(INTEGER)) {
                     writeVectorValues(output, vector, index -> type.writeLong(output, ((IntVector) vector).get(index)),
