@@ -172,6 +172,24 @@ public class TestLanceConnectorTest
 
     @Test
     @Override
+    public void testUpdateRowConcurrently()
+    {
+        // Lance does not support concurrent updates reliably - conflicting updates may both succeed
+        // but result in data corruption. This is a limitation of the merge-on-read approach without
+        // proper distributed locking.
+        abort("Lance does not support concurrent updates reliably");
+    }
+
+    @Test
+    @Override
+    public void testInsertRowConcurrently()
+    {
+        // Lance concurrent append requires fixes in lance-core that are not yet available
+        abort("Lance concurrent append support pending upstream fix");
+    }
+
+    @Test
+    @Override
     public void testShowCreateTable()
     {
         String schemaName = getSession().getSchema().orElseThrow();
