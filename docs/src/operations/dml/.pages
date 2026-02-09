@@ -1,3 +1,6 @@
 title: DML
 nav:
   - insert.md
+  - update.md
+  - delete.md
+  - merge.md

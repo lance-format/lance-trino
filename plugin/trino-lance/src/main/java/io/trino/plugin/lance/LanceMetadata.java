@@ -27,6 +27,7 @@ import io.trino.spi.connector.Assignment;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
+import io.trino.spi.connector.ConnectorMergeTableHandle;
 import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorOutputMetadata;
 import io.trino.spi.connector.ConnectorOutputTableHandle;
@@ -40,6 +41,7 @@ import io.trino.spi.connector.ConstraintApplicationResult;
 import io.trino.spi.connector.LimitApplicationResult;
 import io.trino.spi.connector.ProjectionApplicationResult;
 import io.trino.spi.connector.RetryMode;
+import io.trino.spi.connector.RowChangeParadigm;
 import io.trino.spi.connector.SaveMode;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
@@ -77,6 +79,7 @@ import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.operation.Append;
 import org.lance.operation.Overwrite;
+import org.lance.operation.Update;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -99,11 +102,14 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.plugin.lance.RowAddress.LANCE_ROW_ADDRESS;
 import static io.trino.plugin.lance.SubstraitExpressionBuilder.isDomainPushable;
 import static io.trino.plugin.lance.SubstraitExpressionBuilder.isSupportedType;
 import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
+import static io.trino.spi.StandardErrorCode.TRANSACTION_CONFLICT;
+import static io.trino.spi.type.BigintType.BIGINT;
 import static java.util.Objects.requireNonNull;
 
 public class LanceMetadata
@@ -115,16 +121,19 @@ public class LanceMetadata
     private final LanceNamespaceHolder namespaceHolder;
     private final LanceConfig lanceConfig;
     private final JsonCodec<LanceCommitTaskData> commitTaskDataCodec;
+    private final JsonCodec<LanceMergeCommitData> mergeCommitDataCodec;
 
     @Inject
     public LanceMetadata(
             LanceNamespaceHolder namespaceHolder,
             LanceConfig lanceConfig,
-            JsonCodec<LanceCommitTaskData> commitTaskDataCodec)
+            JsonCodec<LanceCommitTaskData> commitTaskDataCodec,
+            JsonCodec<LanceMergeCommitData> mergeCommitDataCodec)
     {
         this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
         this.lanceConfig = requireNonNull(lanceConfig, "lanceConfig is null");
         this.commitTaskDataCodec = requireNonNull(commitTaskDataCodec, "commitTaskDataCodec is null");
+        this.mergeCommitDataCodec = requireNonNull(mergeCommitDataCodec, "mergeCommitDataCodec is null");
     }
 
     // ===== Schema/Namespace Operations =====
@@ -839,6 +848,160 @@ public class LanceMetadata
         }
     }
 
+    // ===== DELETE/UPDATE/MERGE Operations =====
+
+    @Override
+    public RowChangeParadigm getRowChangeParadigm(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        return RowChangeParadigm.DELETE_ROW_AND_INSERT_ROW;
+    }
+
+    @Override
+    public ColumnHandle getMergeRowIdColumnHandle(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        return new LanceColumnHandle(LANCE_ROW_ADDRESS, BIGINT, false, -1);
+    }
+
+    @Override
+    public Optional<ConnectorTableHandle> applyDelete(ConnectorSession session, ConnectorTableHandle handle)
+    {
+        // Return empty to use merge-on-read pattern for all deletes
+        return Optional.empty();
+    }
+
+    @Override
+    public ConnectorMergeTableHandle beginMerge(
+            ConnectorSession session,
+            ConnectorTableHandle tableHandle,
+            Map<Integer, Collection<ColumnHandle>> updateCaseColumns,
+            RetryMode retryMode)
+    {
+        LanceTableHandle table = (LanceTableHandle) tableHandle;
+        SchemaTableName tableName = new SchemaTableName(table.getSchemaName(), table.getTableName());
+
+        String tablePath = table.getTablePath();
+        List<String> tableId = table.getTableId();
+        Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
+
+        ReadOptions readOptions = new ReadOptions.Builder()
+                .setStorageOptions(storageOptions)
+                .build();
+
+        String transactionId = UUID.randomUUID().toString();
+        Dataset dataset = Dataset.open(tablePath, readOptions);
+        long readVersion = dataset.version();
+        transactionDatasets.put(transactionId, dataset);
+
+        List<LanceColumnHandle> columns = LanceDatasetCache.getColumnHandleList(tablePath, storageOptions);
+        Schema arrowSchema = LanceDatasetCache.getSchema(tablePath, storageOptions);
+        String schemaJson = arrowSchema.toJson();
+
+        log.debug("beginMerge: table=%s, path=%s, version=%d, transactionId=%s",
+                tableName, tablePath, readVersion, transactionId);
+
+        return new LanceMergeTableHandle(
+                table.withStorageOptions(storageOptions),
+                getMergeRowIdColumnHandle(session, tableHandle),
+                readVersion,
+                schemaJson,
+                columns,
+                transactionId);
+    }
+
+    @Override
+    public void finishMerge(
+            ConnectorSession session,
+            ConnectorMergeTableHandle mergeTableHandle,
+            List<ConnectorTableHandle> sourceTableHandles,
+            Collection<Slice> fragments,
+            Collection<ComputedStatistics> computedStatistics)
+    {
+        LanceMergeTableHandle handle = (LanceMergeTableHandle) mergeTableHandle;
+        String transactionId = handle.transactionId();
+
+        log.debug("finishMerge: table=%s, fragments=%d, transactionId=%s",
+                handle.tableHandle().getTableName(), fragments.size(), transactionId);
+
+        Dataset dataset = transactionDatasets.remove(transactionId);
+        if (dataset == null) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "No dataset found for transaction: " + transactionId);
+        }
+
+        try {
+            List<Long> removedFragmentIds = new ArrayList<>();
+            List<FragmentMetadata> updatedFragments = new ArrayList<>();
+            List<FragmentMetadata> newFragments = new ArrayList<>();
+
+            // First, collect all deletions per fragment from all workers
+            // We must merge deletions for the same fragment before calling deleteRows,
+            // otherwise only the last deletion vector would be applied
+            Map<Integer, List<Integer>> allDeletions = new HashMap<>();
+            for (Slice slice : fragments) {
+                LanceMergeCommitData commitData = mergeCommitDataCodec.fromJson(slice.getBytes());
+
+                for (FragmentDeletion deletion : commitData.deletions()) {
+                    allDeletions.computeIfAbsent(deletion.fragmentId(), k -> new ArrayList<>())
+                            .addAll(deletion.rowIndexes());
+                }
+
+                newFragments.addAll(deserializeFragments(commitData.newFragmentsJson()));
+            }
+
+            // Now process merged deletions per fragment
+            for (Map.Entry<Integer, List<Integer>> entry : allDeletions.entrySet()) {
+                int fragmentId = entry.getKey();
+                List<Integer> rowIndexes = entry.getValue();
+
+                log.debug("finishMerge: deleting %d rows from fragment %d, first few indices: %s",
+                        rowIndexes.size(),
+                        fragmentId,
+                        rowIndexes.stream().limit(5).toList());
+
+                FragmentMetadata updated = dataset.getFragment(fragmentId)
+                        .deleteRows(rowIndexes);
+                if (updated != null) {
+                    log.debug("finishMerge: fragment %d updated with deletion vector, deletionFile=%s",
+                            fragmentId, updated.getDeletionFile());
+                    updatedFragments.add(updated);
+                }
+                else {
+                    log.debug("finishMerge: fragment %d fully deleted", fragmentId);
+                    removedFragmentIds.add((long) fragmentId);
+                }
+            }
+
+            Map<String, String> storageOptions = handle.getStorageOptions();
+
+            if (!removedFragmentIds.isEmpty() || !updatedFragments.isEmpty() || !newFragments.isEmpty()) {
+                log.debug("finishMerge: committing update with %d removed fragments, %d updated fragments, %d new fragments",
+                        removedFragmentIds.size(), updatedFragments.size(), newFragments.size());
+                Update update = Update.builder()
+                        .removedFragmentIds(removedFragmentIds)
+                        .updatedFragments(updatedFragments)
+                        .newFragments(newFragments)
+                        .build();
+
+                Transaction transaction = dataset
+                        .newTransactionBuilder()
+                        .writeParams(storageOptions)
+                        .operation(update)
+                        .build();
+                transaction.commit().close();
+            }
+
+            LanceDatasetCache.invalidate(handle.getTablePath());
+        }
+        catch (RuntimeException e) {
+            if (isCommitConflict(e)) {
+                throw new TrinoException(TRANSACTION_CONFLICT, "Concurrent modification conflict", e);
+            }
+            throw e;
+        }
+        finally {
+            dataset.close();
+        }
+    }
+
     // ===== Helper Methods =====
 
     private LanceNamespace getNamespace()
@@ -1055,5 +1218,31 @@ public class LanceMetadata
     public LanceNamespaceHolder getNamespaceHolder()
     {
         return namespaceHolder;
+    }
+
+    /**
+     * Check if the exception is a Lance commit conflict or concurrent modification error.
+     */
+    private static boolean isCommitConflict(RuntimeException e)
+    {
+        // Check entire causal chain for conflict messages
+        Throwable current = e;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && (
+                    message.toLowerCase().contains("commit conflict") ||
+                    message.toLowerCase().contains("concurrent") ||
+                    message.toLowerCase().contains("version") ||
+                    message.toLowerCase().contains("conflict") ||
+                    message.toLowerCase().contains("not found"))) {
+                return true;
+            }
+            // NullPointerException in Fragment/Dataset operations is also a sign of concurrent modification
+            if (current instanceof NullPointerException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }

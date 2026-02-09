@@ -1,12 +1,14 @@
 # Trino Lance Connector
 
-The Trino Lance Connector allows [Trino](https://trino.io/) to efficiently query datasets stored in [Lance](https://lancedb.github.io/lance/) format.
+The Trino Lance Connector allows [Trino](https://trino.io/) to efficiently query and modify datasets stored in [Lance](https://lancedb.github.io/lance/) format.
 
 ## Features
 
 - Query Lance datasets directly from Trino using standard SQL
+- Full write support: INSERT, UPDATE, DELETE, and MERGE operations
 - Support for multiple namespace implementations (Directory, REST, Glue, Hive)
 - Efficient columnar data access leveraging Lance's format
+- Merge-on-read architecture for fast write operations
 
 ## Quick Start
 

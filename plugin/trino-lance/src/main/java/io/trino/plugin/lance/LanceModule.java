@@ -41,6 +41,8 @@ public class LanceModule
 
         // JSON codecs for serialization
         jsonCodecBinder(binder).bindJsonCodec(LanceCommitTaskData.class);
+        jsonCodecBinder(binder).bindJsonCodec(LanceMergeCommitData.class);
+        jsonCodecBinder(binder).bindJsonCodec(FragmentDeletion.class);
 
         // Connector
         binder.bind(LanceConnector.class).in(Scopes.SINGLETON);

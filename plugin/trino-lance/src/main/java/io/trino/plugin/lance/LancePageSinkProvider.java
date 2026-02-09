@@ -17,6 +17,8 @@ import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
+import io.trino.spi.connector.ConnectorMergeSink;
+import io.trino.spi.connector.ConnectorMergeTableHandle;
 import io.trino.spi.connector.ConnectorOutputTableHandle;
 import io.trino.spi.connector.ConnectorPageSink;
 import io.trino.spi.connector.ConnectorPageSinkId;
@@ -32,19 +34,24 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * Provider for creating LancePageSink instances.
- * Used for both CREATE TABLE AS SELECT and INSERT operations.
+ * Used for CREATE TABLE AS SELECT, INSERT, and MERGE operations.
  * Provides namespace-aware page sinks for credential vending support.
  */
 public class LancePageSinkProvider
         implements ConnectorPageSinkProvider
 {
     private final JsonCodec<LanceCommitTaskData> jsonCodec;
+    private final JsonCodec<LanceMergeCommitData> mergeCommitDataCodec;
     private final LanceNamespaceHolder namespaceHolder;
 
     @Inject
-    public LancePageSinkProvider(JsonCodec<LanceCommitTaskData> jsonCodec, LanceNamespaceHolder namespaceHolder)
+    public LancePageSinkProvider(
+            JsonCodec<LanceCommitTaskData> jsonCodec,
+            JsonCodec<LanceMergeCommitData> mergeCommitDataCodec,
+            LanceNamespaceHolder namespaceHolder)
     {
         this.jsonCodec = requireNonNull(jsonCodec, "jsonCodec is null");
+        this.mergeCommitDataCodec = requireNonNull(mergeCommitDataCodec, "mergeCommitDataCodec is null");
         this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
     }
 
@@ -68,6 +75,29 @@ public class LancePageSinkProvider
     {
         LanceWritableTableHandle handle = (LanceWritableTableHandle) insertTableHandle;
         return createPageSink(handle);
+    }
+
+    @Override
+    public ConnectorMergeSink createMergeSink(
+            ConnectorTransactionHandle transactionHandle,
+            ConnectorSession session,
+            ConnectorMergeTableHandle mergeHandle,
+            ConnectorPageSinkId pageSinkId)
+    {
+        LanceMergeTableHandle handle = (LanceMergeTableHandle) mergeHandle;
+        Schema arrowSchema;
+        try {
+            arrowSchema = Schema.fromJSON(handle.schemaJson());
+        }
+        catch (IOException e) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to parse Arrow schema", e);
+        }
+        return new LanceMergeSink(
+                handle,
+                arrowSchema,
+                jsonCodec,
+                mergeCommitDataCodec,
+                namespaceHolder);
     }
 
     private ConnectorPageSink createPageSink(LanceWritableTableHandle handle)

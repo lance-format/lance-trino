@@ -23,6 +23,8 @@ import org.lance.Dataset;
 import org.lance.Fragment;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
+import org.lance.ipc.LanceScanner;
+import org.lance.ipc.ScanOptions;
 import org.lance.schema.LanceField;
 import org.lance.schema.LanceSchema;
 
@@ -231,6 +233,31 @@ public final class LanceDatasetCache
         CacheKey key = new CacheKey(tablePath);
         FRAGMENT_CACHE.invalidate(key);
         SCHEMA_CACHE.invalidate(key);
+    }
+
+    /**
+     * Open a dataset and create a scanner for specific fragments.
+     * This scanner respects deletion vectors from the manifest.
+     *
+     * @return Object array: [0] = Dataset (must be closed after scanning), [1] = LanceScanner
+     */
+    public static Object[] openDatasetScanner(String tablePath, List<Integer> fragmentIds,
+            ScanOptions scanOptions, Map<String, String> storageOptions)
+    {
+        log.debug("Opening dataset scanner for fragments %s at table: %s", fragmentIds, tablePath);
+        ReadOptions.Builder optionsBuilder = new ReadOptions.Builder();
+        if (storageOptions != null && !storageOptions.isEmpty()) {
+            optionsBuilder.setStorageOptions(storageOptions);
+        }
+
+        Dataset dataset = Dataset.open(tablePath, optionsBuilder.build());
+
+        // Build scan options with fragment IDs
+        ScanOptions.Builder scanBuilder = new ScanOptions.Builder(scanOptions)
+                .fragmentIds(fragmentIds);
+
+        LanceScanner scanner = dataset.newScan(scanBuilder.build());
+        return new Object[] {dataset, scanner};
     }
 
     private static Map<Integer, Fragment> loadFragments(String tablePath, Map<String, String> storageOptions)

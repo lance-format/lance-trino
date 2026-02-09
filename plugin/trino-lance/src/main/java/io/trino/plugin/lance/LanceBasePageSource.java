@@ -15,6 +15,7 @@ package io.trino.plugin.lance;
 
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
+import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSource;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -28,6 +29,7 @@ import java.util.stream.Collectors;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.spi.StandardErrorCode.TRANSACTION_CONFLICT;
 
 public abstract class LanceBasePageSource
         implements ConnectorPageSource
@@ -49,18 +51,48 @@ public abstract class LanceBasePageSource
         this.tableHandle = tableHandle;
         this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
 
-        this.lanceArrowToPageScanner =
-                new LanceArrowToPageScanner(
-                        bufferAllocator,
-                        tableHandle.getTablePath(),
-                        columns,
-                        scannerFactory,
-                        storageOptions,
-                        tableHandle.getSubstraitFilterBuffer(),
-                        tableHandle.getLimit());
+        try {
+            this.lanceArrowToPageScanner =
+                    new LanceArrowToPageScanner(
+                            bufferAllocator,
+                            tableHandle.getTablePath(),
+                            columns,
+                            scannerFactory,
+                            storageOptions,
+                            tableHandle.getSubstraitFilterBuffer(),
+                            tableHandle.getLimit());
+        }
+        catch (RuntimeException e) {
+            // Handle concurrent modification errors (e.g., fragment not found due to concurrent update)
+            if (isConcurrentModificationError(e)) {
+                bufferAllocator.close();
+                throw new TrinoException(TRANSACTION_CONFLICT, "Concurrent modification detected", e);
+            }
+            bufferAllocator.close();
+            throw e;
+        }
         this.pageBuilder =
                 new PageBuilder(columns.stream().map(LanceColumnHandle::trinoType).collect(toImmutableList()));
         this.isFinished.set(false);
+    }
+
+    private static boolean isConcurrentModificationError(RuntimeException e)
+    {
+        Throwable current = e;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && (
+                    message.toLowerCase().contains("not found") ||
+                    message.toLowerCase().contains("concurrent") ||
+                    message.toLowerCase().contains("conflict"))) {
+                return true;
+            }
+            if (current instanceof NullPointerException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     @VisibleForTesting
