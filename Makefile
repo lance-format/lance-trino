@@ -61,4 +61,4 @@ check:
 
 # Serve documentation locally
 serve-docs:
-	cd docs && uv run --with-requirements requirements.txt mkdocs serve
+	cd docs && uv pip install --system -r requirements.txt && mkdocs serve
