@@ -32,3 +32,15 @@ first_value = "0"
 filename = "pom.xml"
 search = "<lance-trino.version>{current_version}</lance-trino.version>"
 replace = "<lance-trino.version>{new_version}</lance-trino.version>"
+
+# docs/src/install.md - bash example
+[[tool.bumpversion.files]]
+filename = "docs/src/install.md"
+search = 'VERSION="{current_version}"'
+replace = 'VERSION="{new_version}"'
+
+# docs/src/install.md - Dockerfile example
+[[tool.bumpversion.files]]
+filename = "docs/src/install.md"
+search = "ARG VERSION={current_version}"
+replace = "ARG VERSION={new_version}"

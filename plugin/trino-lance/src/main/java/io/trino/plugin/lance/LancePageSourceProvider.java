@@ -60,7 +60,7 @@ public class LancePageSourceProvider
 
         // For COUNT(*) queries, use the count page source
         if (lanceTableHandle.isCountStar()) {
-            return new LanceCountPageSource(lanceTableHandle, storageOptions, lanceSplit.getFragments());
+            return new LanceCountPageSource(lanceTableHandle, storageOptions);
         }
 
         // Each split contains exactly one fragment for parallel processing
