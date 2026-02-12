@@ -60,7 +60,6 @@ public class LanceSplitManager
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
 
         // Get fragments from cache and create splits for parallel processing
-        // For COUNT(*) with filter, each split will count rows matching the filter
         List<Integer> fragmentIds = LanceDatasetCache.getFragments(lanceTableHandle.getTablePath(), storageOptions)
                 .stream().map(Fragment::getId).toList();
         return new FixedSplitSource(fragmentIds.stream().map(id -> new LanceSplit(Collections.singletonList(id))).toList());

@@ -17,7 +17,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Resources;
 import io.airlift.json.JsonCodec;
 import io.trino.spi.Page;
-import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,7 +27,6 @@ import java.net.URL;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,7 +38,6 @@ public class TestLanceCountPageSource
     private static final SchemaTableName TEST_TABLE_1 = new SchemaTableName("default", "test_table1");
 
     private LanceMetadata metadata;
-    private LanceSplitManager splitManager;
 
     @BeforeEach
     public void setUp()
@@ -57,23 +54,21 @@ public class TestLanceCountPageSource
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
         this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
-        this.splitManager = new LanceSplitManager(namespaceHolder);
     }
 
     @Test
     public void testCountStarWithoutFilter()
     {
-        // Test COUNT(*) without filter - should use ManifestSummary
+        // Test COUNT(*) without filter - uses ManifestSummary for row count
         ConnectorTableHandle tableHandle = metadata.getTableHandle(null, TEST_TABLE_1, Optional.empty(), Optional.empty());
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
 
-        // Create a COUNT(*) table handle (no filter, no fragments)
+        // Create a COUNT(*) table handle
         LanceTableHandle countHandle = lanceTableHandle.withCountStar();
 
         try (LanceCountPageSource pageSource = new LanceCountPageSource(
                 countHandle,
-                Collections.emptyMap(),
-                Collections.emptyList())) {
+                Collections.emptyMap())) {
             assertThat(pageSource.isFinished()).isFalse();
 
             Page page = pageSource.getNextPage();
@@ -89,81 +84,5 @@ public class TestLanceCountPageSource
             assertThat(pageSource.getNextPage()).isNull();
             assertThat(pageSource.isFinished()).isTrue();
         }
-    }
-
-    @Test
-    public void testCountStarPerFragment()
-            throws ExecutionException, InterruptedException
-    {
-        // Test COUNT(*) per fragment - simulates distributed count
-        ConnectorTableHandle tableHandle = metadata.getTableHandle(null, TEST_TABLE_1, Optional.empty(), Optional.empty());
-        LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-
-        // Get splits (each split has one fragment)
-        ConnectorSplitSource splits = splitManager.getSplits(null, null, tableHandle, null, null);
-        ConnectorSplitSource.ConnectorSplitBatch batch = splits.getNextBatch(2).get();
-        assertThat(batch.getSplits().size()).isEqualTo(2);
-
-        // Create COUNT(*) handle
-        LanceTableHandle countHandle = lanceTableHandle.withCountStar();
-
-        // Count rows in first fragment
-        LanceSplit split0 = (LanceSplit) batch.getSplits().get(0);
-        try (LanceCountPageSource pageSource = new LanceCountPageSource(
-                countHandle,
-                Collections.emptyMap(),
-                split0.getFragments())) {
-            Page page = pageSource.getNextPage();
-            assertThat(page).isNotNull();
-            long count = BIGINT.getLong(page.getBlock(0), 0);
-            // Each fragment has 2 rows
-            assertThat(count).isEqualTo(2L);
-        }
-
-        // Count rows in second fragment
-        LanceSplit split1 = (LanceSplit) batch.getSplits().get(1);
-        try (LanceCountPageSource pageSource = new LanceCountPageSource(
-                countHandle,
-                Collections.emptyMap(),
-                split1.getFragments())) {
-            Page page = pageSource.getNextPage();
-            assertThat(page).isNotNull();
-            long count = BIGINT.getLong(page.getBlock(0), 0);
-            assertThat(count).isEqualTo(2L);
-        }
-    }
-
-    @Test
-    public void testCountStarDistributedSum()
-            throws ExecutionException, InterruptedException
-    {
-        // Test that distributed COUNT(*) across fragments sums to correct total
-        ConnectorTableHandle tableHandle = metadata.getTableHandle(null, TEST_TABLE_1, Optional.empty(), Optional.empty());
-        LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-
-        // Create COUNT(*) handle
-        LanceTableHandle countHandle = lanceTableHandle.withCountStar();
-
-        // Get splits
-        ConnectorSplitSource splits = splitManager.getSplits(null, null, tableHandle, null, null);
-        ConnectorSplitSource.ConnectorSplitBatch batch = splits.getNextBatch(10).get();
-        assertThat(batch.getSplits().size()).isGreaterThanOrEqualTo(2);
-
-        // Count rows across all fragments (simulates distributed execution)
-        long totalCount = 0;
-        for (var split : batch.getSplits()) {
-            LanceSplit lanceSplit = (LanceSplit) split;
-            try (LanceCountPageSource pageSource = new LanceCountPageSource(
-                    countHandle,
-                    Collections.emptyMap(),
-                    lanceSplit.getFragments())) {
-                Page page = pageSource.getNextPage();
-                assertThat(page).isNotNull();
-                totalCount += BIGINT.getLong(page.getBlock(0), 0);
-            }
-        }
-
-        // Total should equal manifest count (4 rows)
-        assertThat(totalCount).isEqualTo(4L);
     }
 }
