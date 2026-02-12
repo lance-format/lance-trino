@@ -1,0 +1,167 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Publish Trino Lance Plugin
+
+on:
+  release:
+    types: [published]
+  pull_request:
+    paths:
+      - .github/workflows/publish.yml
+    types:
+      - opened
+      - synchronize
+      - ready_for_review
+      - reopened
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Release mode'
+        required: true
+        type: choice
+        default: dry_run
+        options:
+          - dry_run
+          - release
+      ref:
+        description: 'The branch, tag or SHA to checkout'
+        required: false
+        type: string
+
+jobs:
+  build-and-publish:
+    name: Build and Publish Plugin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref }}
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: "maven"
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            # Extract version from tag (e.g., v0.0.1 -> 0.0.1)
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"
+          else
+            # Get version from bumpversion config
+            VERSION=$(grep 'current_version' .bumpversion.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Get Trino version
+        id: get_trino_version
+        run: |
+          TRINO_VERSION=$(grep -A1 '<artifactId>trino-root</artifactId>' pom.xml | grep '<version>' | sed 's/.*<version>\(.*\)<\/version>.*/\1/' | head -1)
+          echo "trino_version=$TRINO_VERSION" >> $GITHUB_OUTPUT
+          echo "Trino version: $TRINO_VERSION"
+
+      - name: Build plugin
+        run: |
+          ./mvnw clean package -Dair.check.skip-enforcer=true -DskipTests
+
+      - name: Prepare release artifacts
+        id: prepare_artifacts
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          TRINO_VERSION="${{ steps.get_trino_version.outputs.trino_version }}"
+
+          # The trino-plugin packaging creates a directory structure
+          PLUGIN_DIR="plugin/trino-lance/target/trino-lance-${TRINO_VERSION}"
+
+          if [ ! -d "$PLUGIN_DIR" ]; then
+            echo "Plugin directory not found at $PLUGIN_DIR"
+            echo "Looking for plugin directory..."
+            find plugin/trino-lance/target -type d -name "trino-lance*" | head -5
+            exit 1
+          fi
+
+          # Create a zip archive for easy distribution
+          ARTIFACT_NAME="trino-lance-${VERSION}-trino${TRINO_VERSION}"
+          cd plugin/trino-lance/target
+          zip -r "${ARTIFACT_NAME}.zip" "trino-lance-${TRINO_VERSION}"
+          tar -czvf "${ARTIFACT_NAME}.tar.gz" "trino-lance-${TRINO_VERSION}"
+          cd -
+
+          echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "plugin_dir=$PLUGIN_DIR" >> $GITHUB_OUTPUT
+
+          # List contents
+          echo "Plugin contents:"
+          ls -la "$PLUGIN_DIR"
+
+      - name: Upload artifacts (dry run / PR)
+        if: |
+          github.event_name == 'pull_request' ||
+          inputs.mode == 'dry_run'
+        uses: actions/upload-artifact@v4
+        with:
+          name: trino-lance-plugin
+          path: |
+            plugin/trino-lance/target/${{ steps.prepare_artifacts.outputs.artifact_name }}.zip
+            plugin/trino-lance/target/${{ steps.prepare_artifacts.outputs.artifact_name }}.tar.gz
+
+      - name: Upload release assets
+        if: |
+          github.event_name == 'release' ||
+          inputs.mode == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || format('v{0}', steps.get_version.outputs.version) }}
+          files: |
+            plugin/trino-lance/target/${{ steps.prepare_artifacts.outputs.artifact_name }}.zip
+            plugin/trino-lance/target/${{ steps.prepare_artifacts.outputs.artifact_name }}.tar.gz
+          token: ${{ secrets.LANCE_RELEASE_TOKEN }}
+
+      - name: Summary
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          TRINO_VERSION="${{ steps.get_trino_version.outputs.trino_version }}"
+          ARTIFACT_NAME="${{ steps.prepare_artifacts.outputs.artifact_name }}"
+
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Plugin Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trino Version:** ${TRINO_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifacts:**" >> $GITHUB_STEP_SUMMARY
+          echo "  - \`${ARTIFACT_NAME}.zip\`" >> $GITHUB_STEP_SUMMARY
+          echo "  - \`${ARTIFACT_NAME}.tar.gz\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ github.event_name }}" == "release" ] || [ "${{ inputs.mode }}" == "release" ]; then
+            echo "### Installation" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Download the plugin from the release assets and extract to your Trino plugins directory:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "# Download and extract" >> $GITHUB_STEP_SUMMARY
+            echo "wget https://github.com/\${{ github.repository }}/releases/download/v${VERSION}/${ARTIFACT_NAME}.tar.gz" >> $GITHUB_STEP_SUMMARY
+            echo "tar -xzf ${ARTIFACT_NAME}.tar.gz -C /usr/lib/trino/plugin/" >> $GITHUB_STEP_SUMMARY
+            echo "mv /usr/lib/trino/plugin/trino-lance-${TRINO_VERSION} /usr/lib/trino/plugin/lance" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Dry Run" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "This was a dry run. Artifacts are available as workflow artifacts for testing." >> $GITHUB_STEP_SUMMARY
+          fi

@@ -12,10 +12,6 @@ DESCRIBE <catalog>.<schema>.<table>
 DESC <catalog>.<schema>.<table>
 ```
 
-```sql
-SHOW COLUMNS FROM <catalog>.<schema>.<table>
-```
-
 ## Parameters
 
 | Parameter | Description |
@@ -24,9 +20,7 @@ SHOW COLUMNS FROM <catalog>.<schema>.<table>
 | `schema` | The schema name. |
 | `table` | The table name. |
 
-## Examples
-
-Describe a table:
+## Example
 
 ```sql
 DESCRIBE lance.default.users;
@@ -38,28 +32,13 @@ Using short form:
 DESC lance.default.orders;
 ```
 
-Using SHOW COLUMNS:
-
-```sql
-SHOW COLUMNS FROM lance.default.products;
-```
-
 ## Output
-
-Returns table column information:
 
 | Column | Type | Extra | Comment |
 |--------|------|-------|---------|
 | id | bigint | | |
 | name | varchar | | |
 | email | varchar | | |
-| created_at | date | | |
-
-## Related
-
-See also:
-
-- [SHOW CREATE TABLE](#show-create-table) - Display the CREATE TABLE statement
 
 ## SHOW CREATE TABLE
 

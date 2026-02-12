@@ -5,40 +5,34 @@
 - Java 23 or later
 - Trino 476 or compatible version
 
-## Building from Source
+## Download from GitHub Releases
 
-Clone the repository and build:
+Each release includes a `trino-lance-<version>-trino<trino_version>.tar.gz` archive containing all required JARs. Download from the [releases page](https://github.com/lancedb/lance-trino/releases).
 
-```bash
-git clone https://github.com/lancedb/lance-trino.git
-cd lance-trino
-make install
-```
+### Quick Installation
 
-## Installing the Plugin
-
-1. Build the connector using Maven:
-
+=== "Linux/macOS"
     ```bash
-    make install
+    # Set variables
+    VERSION="0.1.0"
+    TRINO_VERSION="476"
+    PLUGIN_DIR="/usr/lib/trino/plugin"
+
+    # Download and extract
+    wget "https://github.com/lancedb/lance-trino/releases/download/v${VERSION}/trino-lance-${VERSION}-trino${TRINO_VERSION}.tar.gz"
+    tar -xzf "trino-lance-${VERSION}-trino${TRINO_VERSION}.tar.gz" -C "${PLUGIN_DIR}/"
+    mv "${PLUGIN_DIR}/trino-lance-${TRINO_VERSION}" "${PLUGIN_DIR}/lance"
     ```
 
-2. Copy the generated plugin directory to your Trino plugins directory:
+=== "Docker"
+    ```dockerfile
+    FROM trinodb/trino:476
 
-    ```bash
-    cp -r plugin/trino-lance/target/trino-lance-<version>/ /usr/lib/trino/plugin/lance/
+    # Download and install Lance connector
+    ARG VERSION=0.1.0
+    ARG TRINO_VERSION=476
+
+    RUN curl -fsSL "https://github.com/lancedb/lance-trino/releases/download/v${VERSION}/trino-lance-${VERSION}-trino${TRINO_VERSION}.tar.gz" \
+        | tar -xz -C /usr/lib/trino/plugin/ \
+        && mv "/usr/lib/trino/plugin/trino-lance-${TRINO_VERSION}" /usr/lib/trino/plugin/lance
     ```
-
-3. [Configure](config.md) the connector in your Trino catalog properties
-
-4. Restart Trino
-
-## Development Server
-
-You can run a local Trino server for development:
-
-```bash
-make run
-```
-
-This starts a Trino server on port 8080 with the Lance connector configured.
