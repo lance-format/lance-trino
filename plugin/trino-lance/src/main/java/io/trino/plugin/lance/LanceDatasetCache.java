@@ -160,7 +160,7 @@ public final class LanceDatasetCache
                 LanceField::getName,
                 f -> new LanceColumnHandle(
                         f.getName(),
-                        LanceColumnHandle.toTrinoType(f.getType()),
+                        LanceColumnHandle.toTrinoType(f),
                         f.isNullable(),
                         f.getId()),
                 (v1, v2) -> v1,
@@ -176,7 +176,7 @@ public final class LanceDatasetCache
         return lanceSchema.fields().stream()
                 .map(f -> new LanceColumnHandle(
                         f.getName(),
-                        LanceColumnHandle.toTrinoType(f.getType()),
+                        LanceColumnHandle.toTrinoType(f),
                         f.isNullable(),
                         f.getId()))
                 .collect(toImmutableList());

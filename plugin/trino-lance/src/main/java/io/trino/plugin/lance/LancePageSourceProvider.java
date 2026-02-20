@@ -25,9 +25,12 @@ import io.trino.spi.connector.DynamicFilter;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
 
@@ -35,11 +38,13 @@ public class LancePageSourceProvider
         implements ConnectorPageSourceProvider
 {
     private final LanceNamespaceHolder namespaceHolder;
+    private final LanceConfig lanceConfig;
 
     @Inject
-    public LancePageSourceProvider(LanceNamespaceHolder namespaceHolder)
+    public LancePageSourceProvider(LanceNamespaceHolder namespaceHolder, LanceConfig lanceConfig)
     {
         this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
+        this.lanceConfig = requireNonNull(lanceConfig, "lanceConfig is null");
     }
 
     @Override
@@ -63,8 +68,51 @@ public class LancePageSourceProvider
             return new LanceCountPageSource(lanceTableHandle, storageOptions);
         }
 
-        // Each split contains exactly one fragment for parallel processing
-        return new LanceFragmentPageSource(lanceTableHandle, lanceColumns, lanceSplit.getFragments(), storageOptions);
+        // Get additional projection columns for filter pushdown (column names only, not for output conversion)
+        List<String> filterProjectionColumns = getFilterProjectionColumns(lanceTableHandle, lanceColumns);
+
+        // Create page source - split may contain one or more fragments
+        return new LanceFragmentPageSource(
+                lanceTableHandle,
+                lanceColumns,
+                filterProjectionColumns,
+                lanceSplit.getFragments(),
+                storageOptions,
+                lanceConfig.getReadBatchSize());
+    }
+
+    /**
+     * Get additional columns needed for filter evaluation that aren't in the output.
+     * These columns will be projected by Lance for filter pushdown but won't be converted to output.
+     *
+     * @return List of column names needed for filtering but not in output columns
+     */
+    private List<String> getFilterProjectionColumns(
+            LanceTableHandle tableHandle,
+            List<LanceColumnHandle> outputColumns)
+    {
+        List<String> filterColumns = tableHandle.getFilterColumns();
+        if (filterColumns.isEmpty()) {
+            return List.of();
+        }
+
+        // Get output column names
+        Set<String> outputColumnNames = new HashSet<>();
+        for (LanceColumnHandle col : outputColumns) {
+            outputColumnNames.add(col.name());
+        }
+
+        // Return filter columns that aren't already in output
+        List<String> result = new ArrayList<>();
+        Set<String> addedColumns = new HashSet<>();
+        for (String filterCol : filterColumns) {
+            if (!outputColumnNames.contains(filterCol) && !addedColumns.contains(filterCol)) {
+                result.add(filterCol);
+                addedColumns.add(filterCol);
+            }
+        }
+
+        return result;
     }
 
     /**

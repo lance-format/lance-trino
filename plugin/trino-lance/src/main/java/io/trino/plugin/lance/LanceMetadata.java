@@ -515,7 +515,16 @@ public class LanceMetadata
                 .map(LanceColumnHandle::name)
                 .toList();
 
-        LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes, filterColumnNames);
+        // Collect columns with equality predicates (single value domains)
+        // Only equality predicates can benefit from btree/bitmap index acceleration
+        List<String> equalityColumnNames = new ArrayList<>();
+        for (Map.Entry<LanceColumnHandle, Domain> entry : validDomains.entrySet()) {
+            if (entry.getValue().isSingleValue()) {
+                equalityColumnNames.add(entry.getKey().name());
+            }
+        }
+
+        LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes, filterColumnNames, equalityColumnNames);
         TupleDomain<LanceColumnHandle> remainingFilter = filterToUnsupportedTypes(newConstraint);
 
         log.debug("applyFilter: pushing substrait filter (size=%d bytes), remaining=%s",

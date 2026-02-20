@@ -21,6 +21,8 @@ import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.DateType;
 import io.trino.spi.type.RowType;
+import io.trino.spi.type.TimestampType;
+import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarbinaryType;
 import io.trino.spi.type.VarcharType;
@@ -32,6 +34,8 @@ import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.TimeStampMicroTZVector;
+import org.apache.arrow.vector.TimeStampMicroVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -39,6 +43,7 @@ import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.types.DateUnit;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
+import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
@@ -50,6 +55,7 @@ import java.util.List;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
+import static io.trino.spi.type.DateTimeEncoding.unpackMillisUtc;
 import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.IntegerType.INTEGER;
@@ -94,6 +100,12 @@ public final class LancePageToArrowConverter
         }
         else if (trinoType instanceof DateType) {
             return new ArrowType.Date(DateUnit.DAY);
+        }
+        else if (trinoType instanceof TimestampWithTimeZoneType) {
+            return new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC");
+        }
+        else if (trinoType instanceof TimestampType) {
+            return new ArrowType.Timestamp(TimeUnit.MICROSECOND, null);
         }
         else if (trinoType instanceof ArrayType arrayType) {
             // Arrow List type - the children field defines element type
@@ -214,6 +226,12 @@ public final class LancePageToArrowConverter
         else if (type instanceof DateType) {
             writeDateBlock(block, (DateDayVector) vector, rowCount, offset);
         }
+        else if (type instanceof TimestampWithTimeZoneType tstzType) {
+            writeTimestampTzBlock(block, (TimeStampMicroTZVector) vector, tstzType, rowCount, offset);
+        }
+        else if (type instanceof TimestampType tsType) {
+            writeTimestampBlock(block, (TimeStampMicroVector) vector, tsType, rowCount, offset);
+        }
         else if (type instanceof ArrayType arrayType) {
             writeArrayBlock(block, (ListVector) vector, arrayType, rowCount, offset);
         }
@@ -329,6 +347,51 @@ public final class LancePageToArrowConverter
             else {
                 // Trino DATE is days since epoch stored as int
                 vector.setSafe(offset + i, (int) DATE.getLong(block, i));
+            }
+        }
+        vector.setValueCount(offset + rowCount);
+    }
+
+    private static void writeTimestampTzBlock(Block block, TimeStampMicroTZVector vector, TimestampWithTimeZoneType type, int rowCount, int offset)
+    {
+        for (int i = 0; i < rowCount; i++) {
+            if (block.isNull(i)) {
+                vector.setNull(offset + i);
+            }
+            else {
+                // Trino TIMESTAMP WITH TIME ZONE is stored as packed long (millis + timezone key)
+                // Extract millis and convert to micros for Arrow
+                long packed = type.getLong(block, i);
+                long millis = unpackMillisUtc(packed);
+                long micros = millis * 1000;
+                vector.setSafe(offset + i, micros);
+            }
+        }
+        vector.setValueCount(offset + rowCount);
+    }
+
+    private static void writeTimestampBlock(Block block, TimeStampMicroVector vector, TimestampType type, int rowCount, int offset)
+    {
+        for (int i = 0; i < rowCount; i++) {
+            if (block.isNull(i)) {
+                vector.setNull(offset + i);
+            }
+            else {
+                // Trino TIMESTAMP stores micros (for TIMESTAMP(6)) or needs scaling
+                // For short precision (<=3), value is in millis; for higher precision, in micros
+                long value = type.getLong(block, i);
+                long micros;
+                if (type.getPrecision() <= 3) {
+                    // Short timestamp - stored as millis
+                    micros = value * 1000;
+                }
+                else {
+                    // Long timestamp - stored as micros (or higher precision scaled)
+                    // For precision 6, value is already micros
+                    // For precision > 6, we'd need to truncate, but Lance uses micros
+                    micros = value;
+                }
+                vector.setSafe(offset + i, micros);
             }
         }
         vector.setValueCount(offset + rowCount);

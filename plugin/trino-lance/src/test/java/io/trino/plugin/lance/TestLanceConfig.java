@@ -29,11 +29,14 @@ public class TestLanceConfig
     {
         assertRecordedDefaults(recordDefaults(LanceConfig.class)
                 .setImpl("dir")
+                .setReadBatchSize(8192)
                 .setMaxRowsPerFile(1_000_000)
                 .setMaxRowsPerGroup(100_000)
                 .setWriteBatchSize(10_000)
                 .setSingleLevelNs(false)
-                .setParent(null));
+                .setParent(null)
+                .setBtreeIndexedRowsPerSplit(100_000_000L)
+                .setBitmapIndexedRowsPerSplit(10_000_000L));
     }
 
     @Test
@@ -43,20 +46,26 @@ public class TestLanceConfig
         // All values must be different from defaults
         Map<String, String> properties = ImmutableMap.<String, String>builder()
                 .put("lance.impl", "rest")
+                .put("lance.read_batch_size", "4096")
                 .put("lance.max_rows_per_file", "500000")
                 .put("lance.max_rows_per_group", "50000")
                 .put("lance.write_batch_size", "5000")
                 .put("lance.single_level_ns", "true")
                 .put("lance.parent", "p1$p2")
+                .put("lance.btree_indexed_rows_per_split", "50000000")
+                .put("lance.bitmap_indexed_rows_per_split", "5000000")
                 .buildOrThrow();
 
         LanceConfig expected = new LanceConfig()
                 .setImpl("rest")
+                .setReadBatchSize(4096)
                 .setMaxRowsPerFile(500_000)
                 .setMaxRowsPerGroup(50_000)
                 .setWriteBatchSize(5_000)
                 .setSingleLevelNs(true)
-                .setParent("p1$p2");
+                .setParent("p1$p2")
+                .setBtreeIndexedRowsPerSplit(50_000_000L)
+                .setBitmapIndexedRowsPerSplit(5_000_000L);
 
         assertFullMapping(properties, expected);
     }

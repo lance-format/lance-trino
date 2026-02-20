@@ -48,6 +48,11 @@ public abstract class LanceBasePageSource
 
     public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions)
     {
+        this(tableHandle, columns, List.of(), scannerFactory, storageOptions);
+    }
+
+    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions)
+    {
         this.tableHandle = tableHandle;
         this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
 
@@ -57,6 +62,7 @@ public abstract class LanceBasePageSource
                             bufferAllocator,
                             tableHandle.getTablePath(),
                             columns,
+                            filterProjectionColumns,
                             scannerFactory,
                             storageOptions,
                             tableHandle.getSubstraitFilterBuffer(),
@@ -128,6 +134,8 @@ public abstract class LanceBasePageSource
             isFinished.set(true);
             return null;
         }
+        // Track bytes read from Arrow buffers
+        readBytes.addAndGet(lanceArrowToPageScanner.getLastBatchBytes());
         lanceArrowToPageScanner.convert(pageBuilder);
         Page page = pageBuilder.build();
         pageBuilder.reset();

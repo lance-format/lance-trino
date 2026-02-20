@@ -32,8 +32,10 @@ import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.predicate.ValueSet;
+import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.DateType;
 import io.trino.spi.type.TimestampType;
+import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.VarcharType;
 
 import java.nio.ByteBuffer;
@@ -432,6 +434,13 @@ public final class SubstraitExpressionBuilder
             // Substrait uses microsecond precision timestamps
             return ExpressionCreator.precisionTimestamp(false, epochMicros, 6);
         }
+        else if (trinoType instanceof TimestampWithTimeZoneType) {
+            // Trino stores timestamp with timezone as packed long (millis + zone key)
+            // Extract milliseconds and convert to microseconds
+            long packedValue = (Long) value;
+            long epochMillis = io.trino.spi.type.DateTimeEncoding.unpackMillisUtc(packedValue);
+            return ExpressionCreator.precisionTimestampTZ(false, epochMillis * 1000, 6);
+        }
 
         throw new UnsupportedOperationException("Unsupported type for Substrait literal: " + trinoType);
     }
@@ -467,6 +476,9 @@ public final class SubstraitExpressionBuilder
         }
         else if (trinoType instanceof TimestampType timestampType) {
             return R.precisionTimestamp(timestampType.getPrecision());
+        }
+        else if (trinoType instanceof TimestampWithTimeZoneType tzType) {
+            return R.precisionTimestampTZ(tzType.getPrecision());
         }
 
         throw new UnsupportedOperationException("Unsupported type for Substrait: " + trinoType);
@@ -571,6 +583,17 @@ public final class SubstraitExpressionBuilder
                     .setPrecision(timestampType.getPrecision())
                     .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
         }
+        else if (trinoType instanceof TimestampWithTimeZoneType tzType) {
+            return builder.setPrecisionTimestampTz(io.substrait.proto.Type.PrecisionTimestampTZ.newBuilder()
+                    .setPrecision(tzType.getPrecision())
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType instanceof ArrayType arrayType) {
+            io.trino.spi.type.Type elementType = arrayType.getElementType();
+            return builder.setList(io.substrait.proto.Type.List.newBuilder()
+                    .setType(trinoTypeToProtoType(elementType))
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
 
         throw new UnsupportedOperationException("Unsupported type for Substrait proto: " + trinoType);
     }
@@ -589,7 +612,8 @@ public final class SubstraitExpressionBuilder
                 type.equals(DOUBLE) ||
                 type instanceof VarcharType ||
                 type instanceof DateType ||
-                type instanceof TimestampType;
+                type instanceof TimestampType ||
+                type instanceof TimestampWithTimeZoneType;
     }
 
     /**
