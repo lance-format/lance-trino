@@ -14,7 +14,7 @@ Each release includes a `trino-lance-<version>-trino<trino_version>.tar.gz` arch
 === "Linux/macOS"
     ```bash
     # Set variables
-    VERSION="0.1.0-beta.1"
+    VERSION="0.1.0-beta.2"
     TRINO_VERSION="476"
     PLUGIN_DIR="/usr/lib/trino/plugin"
 
@@ -29,7 +29,7 @@ Each release includes a `trino-lance-<version>-trino<trino_version>.tar.gz` arch
     FROM trinodb/trino:476
 
     # Download and install Lance connector
-    ARG VERSION=0.1.0-beta.1
+    ARG VERSION=0.1.0-beta.2
     ARG TRINO_VERSION=476
 
     RUN curl -fsSL "https://github.com/lancedb/lance-trino/releases/download/v${VERSION}/trino-lance-${VERSION}-trino${TRINO_VERSION}.tar.gz" \

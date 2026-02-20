@@ -39,7 +39,7 @@
     </scm>
 
     <properties>
-        <lance-trino.version>0.1.0-beta.1</lance-trino.version>
+        <lance-trino.version>0.1.0-beta.2</lance-trino.version>
 
         <project.build.targetJdk>23</project.build.targetJdk>
         <!-- for reproducible build support, updated by release plugin -->
