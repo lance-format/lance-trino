@@ -28,6 +28,7 @@ import org.apache.arrow.vector.types.DateUnit;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.lance.schema.LanceField;
 
@@ -39,26 +40,52 @@ import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.RealType.REAL;
 import static io.trino.spi.type.TimestampType.TIMESTAMP_MICROS;
 import static io.trino.spi.type.TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS;
+import static io.trino.spi.type.VarbinaryType.VARBINARY;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
 
-public record LanceColumnHandle(String name, Type trinoType, boolean isNullable, int fieldId)
+public record LanceColumnHandle(
+        String name,
+        Type trinoType,
+        boolean isNullable,
+        int fieldId,
+        boolean isBlob,
+        BlobUtils.BlobVirtualColumnType blobVirtualColumnType,
+        String baseBlobColumnName)
         implements ColumnHandle
 {
     public LanceColumnHandle(String name, Type trinoType, FieldType fieldType)
     {
-        this(name, trinoType, fieldType.isNullable(), -1);
+        this(name, trinoType, fieldType.isNullable(), -1, false, BlobUtils.BlobVirtualColumnType.NONE, null);
     }
 
     public LanceColumnHandle(String name, Type trinoType, boolean isNullable)
     {
-        this(name, trinoType, isNullable, -1);
+        this(name, trinoType, isNullable, -1, false, BlobUtils.BlobVirtualColumnType.NONE, null);
+    }
+
+    public LanceColumnHandle(String name, Type trinoType, boolean isNullable, int fieldId)
+    {
+        this(name, trinoType, isNullable, fieldId, false, BlobUtils.BlobVirtualColumnType.NONE, null);
+    }
+
+    public LanceColumnHandle(String name, Type trinoType, boolean isNullable, int fieldId, boolean isBlob)
+    {
+        this(name, trinoType, isNullable, fieldId, isBlob, BlobUtils.BlobVirtualColumnType.NONE, null);
     }
 
     public LanceColumnHandle
     {
         requireNonNull(name, "name is null");
         requireNonNull(trinoType, "trinoType is null");
+        if (blobVirtualColumnType == null) {
+            blobVirtualColumnType = BlobUtils.BlobVirtualColumnType.NONE;
+        }
+    }
+
+    public boolean isBlobVirtualColumn()
+    {
+        return blobVirtualColumnType != BlobUtils.BlobVirtualColumnType.NONE;
     }
 
     /**
@@ -139,6 +166,12 @@ public record LanceColumnHandle(String name, Type trinoType, boolean isNullable,
         else if (type instanceof ArrowType.LargeUtf8) {
             return VARCHAR;
         }
+        else if (type instanceof ArrowType.Binary) {
+            return VARBINARY;
+        }
+        else if (type instanceof ArrowType.LargeBinary) {
+            return VARBINARY;
+        }
         else if (type instanceof ArrowType.Date) {
             return DATE;
         }
@@ -161,6 +194,32 @@ public record LanceColumnHandle(String name, Type trinoType, boolean isNullable,
             return new ArrayType(REAL); // Default to REAL for embeddings
         }
         throw new UnsupportedOperationException("Unsupported arrow type: " + type);
+    }
+
+    public static Type toTrinoType(Field field)
+    {
+        ArrowType type = field.getType();
+        if (BlobUtils.isBlobArrowField(field)) {
+            // Blob columns: LargeBinary with blob metadata or struct with position/size
+            if (type instanceof ArrowType.LargeBinary) {
+                return VARBINARY;
+            }
+            else if (type instanceof ArrowType.Struct) {
+                // Lance returns blob data as struct with position and size
+                // For reading we expose VARBINARY to match schema but data is not materialized
+                return VARBINARY;
+            }
+        }
+        // For structs that are blob fields, return VARBINARY
+        if (type instanceof ArrowType.Struct && BlobUtils.isBlobArrowField(field)) {
+            return VARBINARY;
+        }
+        return toTrinoType(type);
+    }
+
+    public static boolean isBlobField(Field field)
+    {
+        return BlobUtils.isBlobArrowField(field);
     }
 
     /**
@@ -211,6 +270,11 @@ public record LanceColumnHandle(String name, Type trinoType, boolean isNullable,
     @JsonIgnore
     public ColumnMetadata getColumnMetadata()
     {
-        return ColumnMetadata.builder().setName(name).setType(trinoType).setNullable(isNullable).build();
+        return ColumnMetadata.builder()
+                .setName(name)
+                .setType(trinoType)
+                .setNullable(isNullable)
+                .setHidden(isBlobVirtualColumn())
+                .build();
     }
 }
