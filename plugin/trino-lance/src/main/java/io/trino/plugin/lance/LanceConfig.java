@@ -106,6 +106,23 @@ public class LanceConfig
         return this;
     }
 
+    // ===== Read Configuration =====
+
+    private int readBatchSize = 8192;
+
+    public int getReadBatchSize()
+    {
+        return readBatchSize;
+    }
+
+    @Config("lance.read_batch_size")
+    @ConfigDescription("Number of rows per batch during vectorized reads (default 8192 for optimal OLAP performance)")
+    public LanceConfig setReadBatchSize(int readBatchSize)
+    {
+        this.readBatchSize = readBatchSize;
+        return this;
+    }
+
     // ===== Write Configuration =====
 
     private int maxRowsPerFile = 1_000_000;
@@ -148,6 +165,37 @@ public class LanceConfig
     public LanceConfig setWriteBatchSize(int writeBatchSize)
     {
         this.writeBatchSize = writeBatchSize;
+        return this;
+    }
+
+    // ===== Index-Aware Split Planning Configuration =====
+
+    private long btreeIndexedRowsPerSplit = 100_000_000L;  // 100M rows
+    private long bitmapIndexedRowsPerSplit = 10_000_000L;  // 10M rows
+
+    public long getBtreeIndexedRowsPerSplit()
+    {
+        return btreeIndexedRowsPerSplit;
+    }
+
+    @Config("lance.btree_indexed_rows_per_split")
+    @ConfigDescription("Row count threshold for grouping btree-indexed fragments per split (default 100M)")
+    public LanceConfig setBtreeIndexedRowsPerSplit(long btreeIndexedRowsPerSplit)
+    {
+        this.btreeIndexedRowsPerSplit = btreeIndexedRowsPerSplit;
+        return this;
+    }
+
+    public long getBitmapIndexedRowsPerSplit()
+    {
+        return bitmapIndexedRowsPerSplit;
+    }
+
+    @Config("lance.bitmap_indexed_rows_per_split")
+    @ConfigDescription("Row count threshold for grouping bitmap-indexed fragments per split (default 10M)")
+    public LanceConfig setBitmapIndexedRowsPerSplit(long bitmapIndexedRowsPerSplit)
+    {
+        this.bitmapIndexedRowsPerSplit = bitmapIndexedRowsPerSplit;
         return this;
     }
 }

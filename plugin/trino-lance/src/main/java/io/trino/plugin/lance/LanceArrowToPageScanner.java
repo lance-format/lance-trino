@@ -21,6 +21,8 @@ import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.RowBlockBuilder;
 import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.RowType;
+import io.trino.spi.type.TimestampType;
+import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarbinaryType;
 import io.trino.spi.type.VarcharType;
@@ -34,10 +36,13 @@ import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.TimeMicroVector;
+import org.apache.arrow.vector.TimeStampMicroTZVector;
+import org.apache.arrow.vector.TimeStampMicroVector;
 import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.complex.FixedSizeListVector;
 import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.ipc.ArrowReader;
@@ -56,10 +61,12 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.airlift.slice.Slices.wrappedBuffer;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.type.BigintType.BIGINT;
+import static io.trino.spi.type.DateTimeEncoding.packDateTimeWithZone;
 import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.RealType.REAL;
 import static io.trino.spi.type.TimeType.TIME_MICROS;
+import static io.trino.spi.type.TimeZoneKey.UTC_KEY;
 import static io.trino.spi.type.Timestamps.PICOSECONDS_PER_MICROSECOND;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -86,30 +93,98 @@ public class LanceArrowToPageScanner
             Optional<ByteBuffer> substraitFilter,
             OptionalLong limit)
     {
+        this(allocator, path, columns, List.of(), scannerFactory, storageOptions, substraitFilter, limit);
+    }
+
+    public LanceArrowToPageScanner(
+            BufferAllocator allocator,
+            String path,
+            List<LanceColumnHandle> columns,
+            List<String> filterProjectionColumns,
+            ScannerFactory scannerFactory,
+            Map<String, String> storageOptions,
+            Optional<ByteBuffer> substraitFilter,
+            OptionalLong limit)
+    {
         this.allocator = requireNonNull(allocator, "allocator is null");
         requireNonNull(columns, "columns is null");
+        // Output columns - these will be converted to Trino format
         this.columnTypes = columns.stream().map(LanceColumnHandle::trinoType)
                 .collect(toImmutableList());
         this.columnNames = columns.stream().map(LanceColumnHandle::name).collect(toImmutableList());
         this.scannerFactory = scannerFactory;
+
+        // Combine output columns and filter-only projection columns for the scan
+        // Filter projection columns are needed for predicate pushdown but won't be converted
+        List<String> projectionColumns;
+        if (filterProjectionColumns.isEmpty()) {
+            projectionColumns = columnNames;
+        }
+        else {
+            projectionColumns = new java.util.ArrayList<>(columnNames);
+            projectionColumns.addAll(filterProjectionColumns);
+        }
+
+        lanceScanner = scannerFactory.open(path, allocator, projectionColumns, storageOptions, substraitFilter, limit);
+        this.arrowReader = lanceScanner.scanBatches();
         try {
-            lanceScanner = scannerFactory.open(path, allocator, columnNames, storageOptions, substraitFilter, limit);
-            this.arrowReader = lanceScanner.scanBatches();
             this.vectorSchemaRoot = arrowReader.getVectorSchemaRoot();
         }
         catch (IOException e) {
-            throw new RuntimeException("Unable to initialize Lance connection", e);
+            throw new RuntimeException("Unable to get vector schema root", e);
         }
     }
+
+    private long lastBatchBytes;
 
     public boolean read()
     {
         try {
-            return arrowReader.loadNextBatch();
+            boolean hasNext = arrowReader.loadNextBatch();
+            if (hasNext) {
+                // Calculate bytes read from Arrow buffers
+                lastBatchBytes = 0;
+                for (FieldVector vector : vectorSchemaRoot.getFieldVectors()) {
+                    lastBatchBytes += getVectorBytes(vector);
+                }
+            }
+            else {
+                lastBatchBytes = 0;
+            }
+            return hasNext;
         }
         catch (IOException e) {
             throw new RuntimeException("Error loading next batch!", e);
         }
+    }
+
+    /**
+     * Get the bytes used by this batch (after read() returns true).
+     */
+    public long getLastBatchBytes()
+    {
+        return lastBatchBytes;
+    }
+
+    private long getVectorBytes(FieldVector vector)
+    {
+        long bytes = 0;
+        for (var buffer : vector.getBuffers(false)) {
+            bytes += buffer.capacity();
+        }
+        // Handle nested vectors (list, struct)
+        if (vector instanceof ListVector listVector) {
+            bytes += getVectorBytes(listVector.getDataVector());
+        }
+        else if (vector instanceof FixedSizeListVector fslVector) {
+            bytes += getVectorBytes(fslVector.getDataVector());
+        }
+        else if (vector instanceof StructVector structVector) {
+            for (FieldVector child : structVector.getChildrenFromFields()) {
+                bytes += getVectorBytes(child);
+            }
+        }
+        return bytes;
     }
 
     public void convert(PageBuilder pageBuilder)
@@ -165,6 +240,45 @@ public class LanceArrowToPageScanner
                     writeVectorValues(output, vector, index -> type.writeLong(output,
                             Float.floatToIntBits(((Float4Vector) vector).get(index))), offset, length);
                 }
+                else if (type instanceof TimestampWithTimeZoneType) {
+                    // Timestamp with timezone - stored as microseconds in Arrow
+                    // Convert to milliseconds and pack with UTC timezone for TIMESTAMP_TZ_MILLIS
+                    if (vector instanceof TimeStampMicroTZVector tsVector) {
+                        writeVectorValues(output, vector, index -> {
+                            long micros = tsVector.get(index);
+                            long millis = micros / 1000;
+                            type.writeLong(output, packDateTimeWithZone(millis, UTC_KEY));
+                        }, offset, length);
+                    }
+                    else if (vector instanceof TimeStampMicroVector tsVector) {
+                        // Handle case where Arrow has no TZ but we map to TZ type
+                        writeVectorValues(output, vector, index -> {
+                            long micros = tsVector.get(index);
+                            long millis = micros / 1000;
+                            type.writeLong(output, packDateTimeWithZone(millis, UTC_KEY));
+                        }, offset, length);
+                    }
+                    else {
+                        throw new TrinoException(GENERIC_INTERNAL_ERROR,
+                                format("Expected TimeStampMicroTZVector but got: %s", vector.getClass().getSimpleName()));
+                    }
+                }
+                else if (type instanceof TimestampType) {
+                    // Timestamp without timezone - stored as microseconds in Arrow
+                    if (vector instanceof TimeStampMicroVector tsVector) {
+                        writeVectorValues(output, vector, index -> type.writeLong(output, tsVector.get(index)),
+                                offset, length);
+                    }
+                    else if (vector instanceof TimeStampMicroTZVector tsVector) {
+                        // Handle case where Arrow has TZ but Trino doesn't need it
+                        writeVectorValues(output, vector, index -> type.writeLong(output, tsVector.get(index)),
+                                offset, length);
+                    }
+                    else {
+                        throw new TrinoException(GENERIC_INTERNAL_ERROR,
+                                format("Expected TimeStampMicroVector but got: %s", vector.getClass().getSimpleName()));
+                    }
+                }
                 else {
                     throw new TrinoException(GENERIC_INTERNAL_ERROR,
                             format("Unhandled type for %s: %s", javaType.getSimpleName(), type));
@@ -178,8 +292,15 @@ public class LanceArrowToPageScanner
                 writeVectorValues(output, vector, index -> writeSlice(output, type, vector, index), offset, length);
             }
             else if (type instanceof ArrayType arrayType) {
-                writeVectorValues(output, vector, index -> writeArrayBlock(output, arrayType, vector, index), offset,
-                        length);
+                // Handle both ListVector and FixedSizeListVector
+                if (vector instanceof FixedSizeListVector) {
+                    writeVectorValues(output, vector, index -> writeFixedSizeArrayBlock(output, arrayType, vector, index), offset,
+                            length);
+                }
+                else {
+                    writeVectorValues(output, vector, index -> writeArrayBlock(output, arrayType, vector, index), offset,
+                            length);
+                }
             }
             else if (type instanceof RowType rowType) {
                 writeVectorValues(output, vector, index -> writeRowBlock(output, rowType, vector, index), offset,
@@ -237,6 +358,24 @@ public class LanceArrowToPageScanner
 
             TransferPair transferPair = innerVector.getTransferPair(allocator);
             transferPair.splitAndTransfer(start, end - start);
+            try (FieldVector sliced = (FieldVector) transferPair.getTo()) {
+                convertType(elementBuilder, elementType, sliced, 0, sliced.getValueCount());
+            }
+        });
+    }
+
+    private void writeFixedSizeArrayBlock(BlockBuilder output, ArrayType arrayType, FieldVector vector, int index)
+    {
+        Type elementType = arrayType.getElementType();
+        FixedSizeListVector fslVector = (FixedSizeListVector) vector;
+        int listSize = fslVector.getListSize();
+
+        ((ArrayBlockBuilder) output).buildEntry(elementBuilder -> {
+            FieldVector innerVector = fslVector.getDataVector();
+            int start = index * listSize;
+
+            TransferPair transferPair = innerVector.getTransferPair(allocator);
+            transferPair.splitAndTransfer(start, listSize);
             try (FieldVector sliced = (FieldVector) transferPair.getTo()) {
                 convertType(elementBuilder, elementType, sliced, 0, sliced.getValueCount());
             }

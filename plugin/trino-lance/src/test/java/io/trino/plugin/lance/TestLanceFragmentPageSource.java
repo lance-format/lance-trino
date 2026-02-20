@@ -60,7 +60,7 @@ public class TestLanceFragmentPageSource
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
         this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
-        this.splitManager = new LanceSplitManager(namespaceHolder);
+        this.splitManager = new LanceSplitManager(namespaceHolder, lanceConfig);
     }
 
     @Test
@@ -75,7 +75,7 @@ public class TestLanceFragmentPageSource
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
         List<LanceColumnHandle> columns = LanceBasePageSource.toColumnHandles(lanceTableHandle, Collections.emptyMap());
         // testing split 0 is enough
-        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap())) {
+        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap(), 8192)) {
             Page page = pageSource.getNextPage();
             // assert row/column count
             assertThat(page.getChannelCount()).isEqualTo(4);
@@ -118,7 +118,8 @@ public class TestLanceFragmentPageSource
                 lanceTableHandle,
                 projectedColumns,
                 lanceSplit.getFragments(),
-                Collections.emptyMap())) {
+                Collections.emptyMap(),
+                8192)) {
             Page page = pageSource.getNextPage();
 
             assertThat(page.getChannelCount()).isEqualTo(2);
@@ -159,7 +160,8 @@ public class TestLanceFragmentPageSource
                 lanceTableHandle,
                 projectedColumns,
                 lanceSplit.getFragments(),
-                Collections.emptyMap())) {
+                Collections.emptyMap(),
+                8192)) {
             Page page = pageSource.getNextPage();
 
             // assert only 2 columns returned
