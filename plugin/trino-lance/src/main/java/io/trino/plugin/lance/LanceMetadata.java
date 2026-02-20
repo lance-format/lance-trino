@@ -614,6 +614,12 @@ public class LanceMetadata
             throw new TrinoException(NOT_SUPPORTED, "Schema " + tableName.getSchemaName() + " not found");
         }
 
+        // Get blob and vector columns from table properties
+        Set<String> blobColumns = LanceTableProperties.getBlobColumns(tableMetadata.getProperties());
+        Map<String, Integer> vectorColumns = LanceTableProperties.getVectorColumns(tableMetadata.getProperties());
+        LancePageToArrowConverter.validateBlobColumns(tableMetadata.getColumns(), blobColumns);
+        LancePageToArrowConverter.validateVectorColumns(tableMetadata.getColumns(), vectorColumns);
+
         List<String> tableId = namespaceHolder.getTableId(tableName.getSchemaName(), tableName.getTableName());
         String existingPath = getTablePath(session, tableName);
 
@@ -626,7 +632,7 @@ public class LanceMetadata
             }
             // For REPLACE, overwrite with empty dataset
             Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
-            Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns());
+            Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
             ReadOptions readOptions = new ReadOptions.Builder()
                     .setStorageOptions(storageOptions)
                     .build();
@@ -645,7 +651,7 @@ public class LanceMetadata
         String tablePath = createResponse.getLocation();
 
         Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
-        Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns());
+        Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
 
         WriteParams params = buildWriteParams(storageOptions);
         createEmptyDataset(tablePath, arrowSchema, params);
@@ -667,6 +673,12 @@ public class LanceMetadata
             throw new TrinoException(NOT_SUPPORTED, "Schema " + tableName.getSchemaName() + " not found");
         }
 
+        // Get blob and vector columns from table properties
+        Set<String> blobColumns = LanceTableProperties.getBlobColumns(tableMetadata.getProperties());
+        Map<String, Integer> vectorColumns = LanceTableProperties.getVectorColumns(tableMetadata.getProperties());
+        LancePageToArrowConverter.validateBlobColumns(tableMetadata.getColumns(), blobColumns);
+        LancePageToArrowConverter.validateVectorColumns(tableMetadata.getColumns(), vectorColumns);
+
         List<String> tableId = namespaceHolder.getTableId(tableName.getSchemaName(), tableName.getTableName());
         String existingPath = getTablePath(session, tableName);
         String tablePath;
@@ -687,10 +699,11 @@ public class LanceMetadata
         }
 
         List<LanceColumnHandle> columns = tableMetadata.getColumns().stream()
-                .map(col -> new LanceColumnHandle(col.getName(), col.getType(), col.isNullable()))
+                .map(col -> new LanceColumnHandle(col.getName(), col.getType(), col.isNullable(),
+                        -1, blobColumns.contains(col.getName())))
                 .collect(toImmutableList());
 
-        Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns());
+        Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
         String schemaJson = arrowSchema.toJson();
 
         Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
@@ -705,8 +718,8 @@ public class LanceMetadata
             transactionDatasets.put(transactionId, dataset);
         }
 
-        log.debug("beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s, transactionId=%s",
-                tableName, tablePath, replace, tableExisted, transactionId);
+        log.debug("beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s, transactionId=%s, blobColumns=%s",
+                tableName, tablePath, replace, tableExisted, transactionId, blobColumns);
 
         return new LanceWritableTableHandle(
                 tableName,

@@ -207,3 +207,55 @@ SELECT c.name, h.total
 FROM high_value_orders h
 JOIN lance.default.customers c ON h.customer_id = c.id;
 ```
+
+## Blob Virtual Columns
+
+Tables with blob-encoded columns automatically expose virtual columns for accessing blob metadata. These columns are hidden from `DESCRIBE TABLE` but can be selected in queries.
+
+### Virtual Column Naming
+
+For each blob column, two virtual columns are available:
+
+| Virtual Column | Type | Description |
+|----------------|------|-------------|
+| `<column>__blob_pos` | BIGINT | Byte offset of the blob data in the blob file |
+| `<column>__blob_size` | BIGINT | Size of the blob data in bytes |
+
+### Querying Blob Metadata
+
+```sql
+-- Get blob position and size
+SELECT id, content__blob_pos, content__blob_size
+FROM lance.default.documents;
+
+-- Filter by blob size
+SELECT id, title
+FROM lance.default.documents
+WHERE content__blob_size > 1000000;  -- Blobs larger than 1MB
+
+-- Aggregate blob statistics
+SELECT
+    COUNT(*) as total_blobs,
+    SUM(image__blob_size) as total_bytes,
+    AVG(image__blob_size) as avg_size,
+    MAX(image__blob_size) as largest_blob
+FROM lance.default.media;
+```
+
+### Multiple Blob Columns
+
+When a table has multiple blob columns, each has its own virtual columns:
+
+```sql
+-- Table created with: blob_columns = 'image, video'
+SELECT
+    id,
+    image__blob_pos,
+    image__blob_size,
+    video__blob_pos,
+    video__blob_size
+FROM lance.default.media;
+```
+
+!!! note
+    Blob virtual columns return metadata about where the blob is stored, not the blob content itself. The actual blob data is stored out-of-line and not materialized during queries.

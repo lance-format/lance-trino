@@ -18,6 +18,7 @@ import io.airlift.log.Logger;
 import io.trino.cache.EvictableCacheBuilder;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
+import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Dataset;
 import org.lance.Fragment;
@@ -28,15 +29,18 @@ import org.lance.ipc.ScanOptions;
 import org.lance.schema.LanceField;
 import org.lance.schema.LanceSchema;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.spi.type.BigintType.BIGINT;
 
 /**
  * Cache for Lance dataset metadata (fragments and schemas).
@@ -152,34 +156,108 @@ public final class LanceDatasetCache
 
     /**
      * Get column handles for a table with field IDs.
+     * Includes virtual columns (__blob_pos, __blob_size) for blob columns.
      */
     public static Map<String, ColumnHandle> getColumnHandles(String tablePath, Map<String, String> storageOptions)
     {
         LanceSchema lanceSchema = getLanceSchema(tablePath, storageOptions);
-        return lanceSchema.fields().stream().collect(Collectors.toMap(
-                LanceField::getName,
-                f -> new LanceColumnHandle(
-                        f.getName(),
-                        LanceColumnHandle.toTrinoType(f),
-                        f.isNullable(),
-                        f.getId()),
-                (v1, v2) -> v1,
-                LinkedHashMap::new));
+        Schema arrowSchema = getSchema(tablePath, storageOptions);
+        Set<String> blobColumns = getBlobColumnsFromSchema(arrowSchema);
+
+        Map<String, ColumnHandle> result = new LinkedHashMap<>();
+
+        for (LanceField f : lanceSchema.fields()) {
+            boolean isBlob = blobColumns.contains(f.getName());
+            result.put(f.getName(), new LanceColumnHandle(
+                    f.getName(),
+                    LanceColumnHandle.toTrinoType(f),
+                    f.isNullable(),
+                    f.getId(),
+                    isBlob));
+
+            // Add virtual columns for blob columns
+            if (isBlob) {
+                String posColumnName = BlobUtils.getBlobPositionColumnName(f.getName());
+                String sizeColumnName = BlobUtils.getBlobSizeColumnName(f.getName());
+
+                result.put(posColumnName, new LanceColumnHandle(
+                        posColumnName,
+                        BIGINT,
+                        true,
+                        -1,
+                        false,
+                        BlobUtils.BlobVirtualColumnType.POSITION,
+                        f.getName()));
+
+                result.put(sizeColumnName, new LanceColumnHandle(
+                        sizeColumnName,
+                        BIGINT,
+                        true,
+                        -1,
+                        false,
+                        BlobUtils.BlobVirtualColumnType.SIZE,
+                        f.getName()));
+            }
+        }
+
+        return result;
     }
 
     /**
      * Get column handles as a list for a table with field IDs.
+     * Includes virtual columns (__blob_pos, __blob_size) for blob columns.
      */
     public static List<LanceColumnHandle> getColumnHandleList(String tablePath, Map<String, String> storageOptions)
     {
         LanceSchema lanceSchema = getLanceSchema(tablePath, storageOptions);
-        return lanceSchema.fields().stream()
-                .map(f -> new LanceColumnHandle(
-                        f.getName(),
-                        LanceColumnHandle.toTrinoType(f),
-                        f.isNullable(),
-                        f.getId()))
-                .collect(toImmutableList());
+        Schema arrowSchema = getSchema(tablePath, storageOptions);
+        Set<String> blobColumns = getBlobColumnsFromSchema(arrowSchema);
+
+        List<LanceColumnHandle> result = new ArrayList<>();
+
+        for (LanceField f : lanceSchema.fields()) {
+            boolean isBlob = blobColumns.contains(f.getName());
+            result.add(new LanceColumnHandle(
+                    f.getName(),
+                    LanceColumnHandle.toTrinoType(f),
+                    f.isNullable(),
+                    f.getId(),
+                    isBlob));
+
+            // Add virtual columns for blob columns
+            if (isBlob) {
+                result.add(new LanceColumnHandle(
+                        BlobUtils.getBlobPositionColumnName(f.getName()),
+                        BIGINT,
+                        true,
+                        -1,
+                        false,
+                        BlobUtils.BlobVirtualColumnType.POSITION,
+                        f.getName()));
+
+                result.add(new LanceColumnHandle(
+                        BlobUtils.getBlobSizeColumnName(f.getName()),
+                        BIGINT,
+                        true,
+                        -1,
+                        false,
+                        BlobUtils.BlobVirtualColumnType.SIZE,
+                        f.getName()));
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Get names of blob columns from an Arrow schema by checking field metadata.
+     */
+    private static Set<String> getBlobColumnsFromSchema(Schema schema)
+    {
+        return schema.getFields().stream()
+                .filter(BlobUtils::isBlobArrowField)
+                .map(Field::getName)
+                .collect(Collectors.toSet());
     }
 
     /**
@@ -199,6 +277,7 @@ public final class LanceDatasetCache
 
     /**
      * Get column metadata for a table.
+     * Virtual columns (__blob_pos, __blob_size) are included but marked as hidden.
      */
     public static List<ColumnMetadata> getColumnMetadata(String tablePath, Map<String, String> storageOptions)
     {
