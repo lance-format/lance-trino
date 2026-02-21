@@ -28,7 +28,8 @@ public class LanceModule
     {
         configBinder(binder).bindConfig(LanceConfig.class);
 
-        // Core components - LanceNamespaceHolder holds the LanceNamespace instance
+        // Core components
+        binder.bind(LanceDatasetCache.class).in(Scopes.SINGLETON);
         binder.bind(LanceNamespaceHolder.class).in(Scopes.SINGLETON);
         binder.bind(LanceMetadata.class).in(Scopes.SINGLETON);
 

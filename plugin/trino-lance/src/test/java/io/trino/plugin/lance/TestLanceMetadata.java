@@ -63,9 +63,10 @@ public class TestLanceMetadata
                 .setSingleLevelNs(true);  // example_db is flat (tables at root)
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
         LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(lanceConfig, catalogProperties);
+        LanceDatasetCache datasetCache = new LanceDatasetCache(lanceConfig);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-        metadata = new LanceMetadata(namespaceHolder, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
+        metadata = new LanceMetadata(namespaceHolder, lanceConfig, datasetCache, commitTaskDataCodec, mergeCommitDataCodec);
     }
 
     @Test
@@ -77,8 +78,19 @@ public class TestLanceMetadata
     @Test
     public void testGetTableHandle()
     {
-        assertThat(metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table1"), Optional.empty(), Optional.empty())).isEqualTo(TEST_TABLE_1_HANDLE);
-        assertThat(metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table2"), Optional.empty(), Optional.empty())).isEqualTo(TEST_TABLE_2_HANDLE);
+        // Compare relevant fields rather than exact equality since datasetVersion is now dynamically captured
+        LanceTableHandle table1Handle = metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table1"), Optional.empty(), Optional.empty());
+        assertThat(table1Handle.getTableName()).isEqualTo(TEST_TABLE_1_HANDLE.getTableName());
+        assertThat(table1Handle.getTablePath()).isEqualTo(TEST_TABLE_1_HANDLE.getTablePath());
+        assertThat(table1Handle.getTableId()).isEqualTo(TEST_TABLE_1_HANDLE.getTableId());
+        assertThat(table1Handle.getDatasetVersion()).isNotNull();  // Version should be captured
+
+        LanceTableHandle table2Handle = metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table2"), Optional.empty(), Optional.empty());
+        assertThat(table2Handle.getTableName()).isEqualTo(TEST_TABLE_2_HANDLE.getTableName());
+        assertThat(table2Handle.getTablePath()).isEqualTo(TEST_TABLE_2_HANDLE.getTablePath());
+        assertThat(table2Handle.getTableId()).isEqualTo(TEST_TABLE_2_HANDLE.getTableId());
+        assertThat(table2Handle.getDatasetVersion()).isNotNull();
+
         assertThat(metadata.getTableHandle(SESSION, new SchemaTableName("other_schema", "test_table3"), Optional.empty(), Optional.empty())).isNull();
         assertThat(metadata.getTableHandle(SESSION, new SchemaTableName("unknown", "unknown"), Optional.empty(), Optional.empty())).isNull();
     }

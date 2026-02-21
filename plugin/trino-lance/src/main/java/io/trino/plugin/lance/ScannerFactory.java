@@ -30,7 +30,9 @@ public interface ScannerFactory
             List<String> columns,
             Map<String, String> storageOptions,
             Optional<ByteBuffer> substraitFilter,
-            OptionalLong limit);
+            OptionalLong limit,
+            String userIdentity,
+            Long datasetVersion);
 
     void close();
 }

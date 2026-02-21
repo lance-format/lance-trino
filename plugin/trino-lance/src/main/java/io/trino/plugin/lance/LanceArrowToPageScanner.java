@@ -94,9 +94,11 @@ public class LanceArrowToPageScanner
             ScannerFactory scannerFactory,
             Map<String, String> storageOptions,
             Optional<ByteBuffer> substraitFilter,
-            OptionalLong limit)
+            OptionalLong limit,
+            String userIdentity,
+            Long datasetVersion)
     {
-        this(allocator, path, columns, List.of(), scannerFactory, storageOptions, substraitFilter, limit);
+        this(allocator, path, columns, List.of(), scannerFactory, storageOptions, substraitFilter, limit, userIdentity, datasetVersion);
     }
 
     public LanceArrowToPageScanner(
@@ -107,7 +109,9 @@ public class LanceArrowToPageScanner
             ScannerFactory scannerFactory,
             Map<String, String> storageOptions,
             Optional<ByteBuffer> substraitFilter,
-            OptionalLong limit)
+            OptionalLong limit,
+            String userIdentity,
+            Long datasetVersion)
     {
         this.allocator = requireNonNull(allocator, "allocator is null");
         requireNonNull(columns, "columns is null");
@@ -148,7 +152,7 @@ public class LanceArrowToPageScanner
             }
         }
 
-        lanceScanner = scannerFactory.open(path, allocator, projectionColumns, storageOptions, substraitFilter, limit);
+        lanceScanner = scannerFactory.open(path, allocator, projectionColumns, storageOptions, substraitFilter, limit, userIdentity, datasetVersion);
         this.arrowReader = lanceScanner.scanBatches();
         try {
             this.vectorSchemaRoot = arrowReader.getVectorSchemaRoot();
