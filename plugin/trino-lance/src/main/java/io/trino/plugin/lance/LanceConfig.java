@@ -178,7 +178,7 @@ public class LanceConfig
         return btreeIndexedRowsPerSplit;
     }
 
-    @Config("lance.btree_indexed_rows_per_split")
+    @Config("lance.index.btree.rows_per_split")
     @ConfigDescription("Row count threshold for grouping btree-indexed fragments per split (default 100M)")
     public LanceConfig setBtreeIndexedRowsPerSplit(long btreeIndexedRowsPerSplit)
     {
@@ -191,7 +191,7 @@ public class LanceConfig
         return bitmapIndexedRowsPerSplit;
     }
 
-    @Config("lance.bitmap_indexed_rows_per_split")
+    @Config("lance.index.bitmap.rows_per_split")
     @ConfigDescription("Row count threshold for grouping bitmap-indexed fragments per split (default 10M)")
     public LanceConfig setBitmapIndexedRowsPerSplit(long bitmapIndexedRowsPerSplit)
     {
