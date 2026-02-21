@@ -108,7 +108,7 @@
         <dependency>
             <groupId>org.lance</groupId>
             <artifactId>lance-core</artifactId>
-            <version>2.0.0</version>
+            <version>3.0.0-beta.4</version>
             <exclusions>
                 <exclusion>
                     <groupId>org.junit.jupiter</groupId>
@@ -418,7 +418,15 @@
                     <ignoredUnusedDeclaredDependencies combine.children="append">
                         <!-- Required at compile time for substrait Expression class hierarchy -->
                         <ignoredUnusedDeclaredDependency>com.google.protobuf:protobuf-java</ignoredUnusedDeclaredDependency>
+                        <!-- Currently unused but kept for potential future use -->
+                        <ignoredUnusedDeclaredDependency>io.trino:trino-cache</ignoredUnusedDeclaredDependency>
+                        <!-- Used for @SuppressModernizer annotation -->
+                        <ignoredUnusedDeclaredDependency>org.gaul:modernizer-maven-annotations</ignoredUnusedDeclaredDependency>
                     </ignoredUnusedDeclaredDependencies>
+                    <ignoredUsedUndeclaredDependencies>
+                        <!-- Provided transitively by the parent pom -->
+                        <ignoredUsedUndeclaredDependency>org.gaul:modernizer-maven-annotations</ignoredUsedUndeclaredDependency>
+                    </ignoredUsedUndeclaredDependencies>
                 </configuration>
             </plugin>
             <plugin>

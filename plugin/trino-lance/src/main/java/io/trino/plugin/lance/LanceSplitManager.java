@@ -26,7 +26,6 @@ import io.trino.spi.connector.DynamicFilter;
 import io.trino.spi.connector.FixedSplitSource;
 import org.lance.Dataset;
 import org.lance.Fragment;
-import org.lance.ReadOptions;
 import org.lance.index.Index;
 import org.lance.index.IndexType;
 import org.lance.namespace.model.DescribeTableRequest;
@@ -81,16 +80,21 @@ public class LanceSplitManager
 
         // Use storage options from handle, refreshing if expired
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+        String userIdentity = session.getUser();
 
         // Get all fragments (need full Fragment objects for row counts)
-        List<Fragment> allFragments = LanceDatasetCache.getFragments(lanceTableHandle.getTablePath(), storageOptions);
+        // Use the version captured in the table handle for snapshot isolation
+        List<Fragment> allFragments = LanceDatasetCache.getFragments(
+                userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
         List<Integer> allFragmentIds = allFragments.stream().map(Fragment::getId).toList();
 
         // Check if we can use index-aware split planning
         // Only equality predicates can benefit from btree/bitmap index acceleration
         if (lanceTableHandle.hasFilter() && !lanceTableHandle.getEqualityFilterColumns().isEmpty()) {
             Optional<IndexAwareSplits> indexSplits = createIndexAwareSplits(
+                    userIdentity,
                     lanceTableHandle.getTablePath(),
+                    lanceTableHandle.getDatasetVersion(),
                     storageOptions,
                     lanceTableHandle.getEqualityFilterColumns(),
                     allFragments);
@@ -118,17 +122,16 @@ public class LanceSplitManager
      * Groups indexed fragments by row count threshold based on index type.
      */
     private Optional<IndexAwareSplits> createIndexAwareSplits(
+            String userIdentity,
             String tablePath,
+            Long version,
             Map<String, String> storageOptions,
             List<String> equalityFilterColumns,
             List<Fragment> allFragments)
     {
-        ReadOptions.Builder optionsBuilder = new ReadOptions.Builder();
-        if (storageOptions != null && !storageOptions.isEmpty()) {
-            optionsBuilder.setStorageOptions(storageOptions);
-        }
-
-        try (Dataset dataset = Dataset.open(tablePath, optionsBuilder.build())) {
+        // Use cached dataset for index checking (read-only operation)
+        try {
+            Dataset dataset = LanceDatasetCache.getDataset(userIdentity, tablePath, version, storageOptions);
             // Build field ID to name mapping
             LanceSchema schema = dataset.getLanceSchema();
             Map<Integer, String> fieldIdToName = new HashMap<>();
@@ -184,6 +187,7 @@ public class LanceSplitManager
                     }
                 }
             }
+            // Don't close the cached dataset - it will be managed by the cache
         }
         catch (Exception e) {
             log.warn("Failed to check indexes for table %s: %s", tablePath, e.getMessage());

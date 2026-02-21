@@ -233,7 +233,12 @@ public class LanceMetadata
         if (tablePath != null) {
             List<String> tableId = namespaceHolder.getTableId(name.getSchemaName(), name.getTableName());
             Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
-            return new LanceTableHandle(name.getSchemaName(), name.getTableName(), tablePath, tableId, storageOptions);
+
+            // Capture dataset version for snapshot isolation
+            String userIdentity = session.getUser();
+            Long datasetVersion = LanceDatasetCache.getLatestVersion(userIdentity, tablePath, storageOptions);
+
+            return new LanceTableHandle(name.getSchemaName(), name.getTableName(), tablePath, tableId, storageOptions, datasetVersion);
         }
         return null;
     }
@@ -244,8 +249,9 @@ public class LanceMetadata
         LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+            String userIdentity = session.getUser();
             List<ColumnMetadata> columnsMetadata = LanceDatasetCache.getColumnMetadata(
-                    lanceTableHandle.getTablePath(), storageOptions);
+                    userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
             SchemaTableName schemaTableName =
                     new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName());
             return new ConnectorTableMetadata(schemaTableName, columnsMetadata);
@@ -285,7 +291,9 @@ public class LanceMetadata
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
-            return LanceDatasetCache.getColumnHandles(lanceTableHandle.getTablePath(), storageOptions);
+            String userIdentity = session.getUser();
+            return LanceDatasetCache.getColumnHandles(userIdentity, lanceTableHandle.getTablePath(),
+                    lanceTableHandle.getDatasetVersion(), storageOptions);
         }
         catch (Exception e) {
             throw new TableNotFoundException(new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName()));
@@ -300,13 +308,15 @@ public class LanceMetadata
         ImmutableMap.Builder<SchemaTableName, List<ColumnMetadata>> columns = ImmutableMap.builder();
 
         String schemaName = prefix.getSchema().orElse(LanceNamespaceHolder.DEFAULT_SCHEMA);
+        String userIdentity = session.getUser();
         for (SchemaTableName tableName : listTables(session, Optional.of(schemaName))) {
             try {
                 String tablePath = getTablePath(session, tableName);
                 if (tablePath != null) {
                     List<String> tableId = namespaceHolder.getTableId(tableName.getSchemaName(), tableName.getTableName());
                     Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
-                    List<ColumnMetadata> columnsMetadata = LanceDatasetCache.getColumnMetadata(tablePath, storageOptions);
+                    // Use null version for listing (always get latest)
+                    List<ColumnMetadata> columnsMetadata = LanceDatasetCache.getColumnMetadata(userIdentity, tablePath, null, storageOptions);
                     columns.put(tableName, columnsMetadata);
                 }
             }
@@ -338,8 +348,9 @@ public class LanceMetadata
 
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+            String userIdentity = session.getUser();
             ManifestSummary summary = LanceDatasetCache.getManifestSummary(
-                    lanceTableHandle.getTablePath(), storageOptions);
+                    userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
             log.debug("getTableStatistics: table=%s, totalRows=%d, totalFilesSize=%d, totalFragments=%d",
                     lanceTableHandle.getTableName(),
@@ -460,8 +471,9 @@ public class LanceMetadata
 
         // Get all columns from the table for building the full schema
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
+        String userIdentity = session.getUser();
         List<LanceColumnHandle> allColumns = LanceDatasetCache.getColumnHandleList(
-                lanceTableHandle.getTablePath(), storageOptions);
+                userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
         // Build field ID map from all column handles
         Map<String, Integer> fieldIdMap = new HashMap<>();
@@ -600,7 +612,8 @@ public class LanceMetadata
                 .id(tableId);
         getNamespace().dropTable(dropRequest);
 
-        LanceDatasetCache.invalidate(tablePath);
+        String userIdentity = session.getUser();
+        LanceDatasetCache.invalidate(userIdentity, tablePath);
     }
 
     // ===== CREATE TABLE =====
@@ -633,13 +646,12 @@ public class LanceMetadata
             // For REPLACE, overwrite with empty dataset
             Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
             Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
-            ReadOptions readOptions = new ReadOptions.Builder()
-                    .setStorageOptions(storageOptions)
-                    .build();
-            try (Dataset dataset = Dataset.open(existingPath, readOptions)) {
+            String userIdentity = session.getUser();
+            // For write operations, open dataset directly (not cached)
+            try (Dataset dataset = LanceDatasetCache.openDatasetDirect(userIdentity, existingPath, null, storageOptions)) {
                 commitOverwrite(dataset, List.of(), arrowSchema, storageOptions);
             }
-            LanceDatasetCache.invalidate(existingPath);
+            LanceDatasetCache.invalidate(userIdentity, existingPath);
             log.debug("createTable: replaced table %s at %s", tableName, existingPath);
             return;
         }
@@ -786,7 +798,8 @@ public class LanceMetadata
             }
         }
 
-        LanceDatasetCache.invalidate(handle.tablePath());
+        String userIdentity = session.getUser();
+        LanceDatasetCache.invalidate(userIdentity, handle.tablePath());
         return Optional.empty();
     }
 
@@ -810,14 +823,14 @@ public class LanceMetadata
                 .collect(toImmutableList());
 
         Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
-        Schema arrowSchema = LanceDatasetCache.getSchema(tablePath, storageOptions);
+        String userIdentity = session.getUser();
+        // For write operations, get schema but open dataset directly (not cached)
+        Schema arrowSchema = LanceDatasetCache.getSchema(userIdentity, tablePath, null, storageOptions);
         String schemaJson = arrowSchema.toJson();
 
         String transactionId = UUID.randomUUID().toString();
-        ReadOptions readOptions = new ReadOptions.Builder()
-                .setStorageOptions(storageOptions)
-                .build();
-        Dataset dataset = Dataset.open(tablePath, readOptions);
+        // For write operations, open dataset directly (not cached)
+        Dataset dataset = LanceDatasetCache.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
         transactionDatasets.put(transactionId, dataset);
 
         log.debug("beginInsert: table=%s, path=%s, columns=%d, transactionId=%s", tableName, tablePath, columns.size(), transactionId);
@@ -862,7 +875,8 @@ public class LanceMetadata
             Map<String, String> storageOptions = handle.storageOptions();
             commitAppend(dataset, allFragmentsJson, storageOptions);
 
-            LanceDatasetCache.invalidate(handle.tablePath());
+            String userIdentity = session.getUser();
+            LanceDatasetCache.invalidate(userIdentity, handle.tablePath());
             return Optional.empty();
         }
         finally {
@@ -905,17 +919,15 @@ public class LanceMetadata
         List<String> tableId = table.getTableId();
         Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
 
-        ReadOptions readOptions = new ReadOptions.Builder()
-                .setStorageOptions(storageOptions)
-                .build();
-
         String transactionId = UUID.randomUUID().toString();
-        Dataset dataset = Dataset.open(tablePath, readOptions);
+        String userIdentity = session.getUser();
+        // For write operations, open dataset directly (not cached)
+        Dataset dataset = LanceDatasetCache.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
         long readVersion = dataset.version();
         transactionDatasets.put(transactionId, dataset);
 
-        List<LanceColumnHandle> columns = LanceDatasetCache.getColumnHandleList(tablePath, storageOptions);
-        Schema arrowSchema = LanceDatasetCache.getSchema(tablePath, storageOptions);
+        List<LanceColumnHandle> columns = LanceDatasetCache.getColumnHandleList(userIdentity, tablePath, null, storageOptions);
+        Schema arrowSchema = LanceDatasetCache.getSchema(userIdentity, tablePath, null, storageOptions);
         String schemaJson = arrowSchema.toJson();
 
         log.debug("beginMerge: table=%s, path=%s, version=%d, transactionId=%s",
@@ -1011,7 +1023,8 @@ public class LanceMetadata
                 transaction.commit().close();
             }
 
-            LanceDatasetCache.invalidate(handle.getTablePath());
+            String userIdentity = session.getUser();
+            LanceDatasetCache.invalidate(userIdentity, handle.getTablePath());
         }
         catch (RuntimeException e) {
             if (isCommitConflict(e)) {

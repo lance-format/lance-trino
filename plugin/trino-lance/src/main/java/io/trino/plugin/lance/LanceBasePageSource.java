@@ -46,12 +46,12 @@ public abstract class LanceBasePageSource
     protected final BufferAllocator bufferAllocator;
     protected final PageBuilder pageBuilder;
 
-    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions)
+    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity)
     {
-        this(tableHandle, columns, List.of(), scannerFactory, storageOptions);
+        this(tableHandle, columns, List.of(), scannerFactory, storageOptions, userIdentity);
     }
 
-    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions)
+    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity)
     {
         this.tableHandle = tableHandle;
         this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
@@ -66,7 +66,9 @@ public abstract class LanceBasePageSource
                             scannerFactory,
                             storageOptions,
                             tableHandle.getSubstraitFilterBuffer(),
-                            tableHandle.getLimit());
+                            tableHandle.getLimit(),
+                            userIdentity,
+                            tableHandle.getDatasetVersion());
         }
         catch (RuntimeException e) {
             // Handle concurrent modification errors (e.g., fragment not found due to concurrent update)

@@ -34,15 +34,20 @@ public class LanceCountPageSource
     private static final Logger log = Logger.get(LanceCountPageSource.class);
 
     private final String tablePath;
+    private final Long datasetVersion;
     private final Map<String, String> storageOptions;
+    private final String userIdentity;
     private final AtomicBoolean finished = new AtomicBoolean(false);
 
     public LanceCountPageSource(
             LanceTableHandle tableHandle,
-            Map<String, String> storageOptions)
+            Map<String, String> storageOptions,
+            String userIdentity)
     {
         this.tablePath = tableHandle.getTablePath();
+        this.datasetVersion = tableHandle.getDatasetVersion();
         this.storageOptions = storageOptions;
+        this.userIdentity = userIdentity;
     }
 
     @Override
@@ -81,7 +86,7 @@ public class LanceCountPageSource
 
     private long computeCount()
     {
-        ManifestSummary summary = LanceDatasetCache.getManifestSummary(tablePath, storageOptions);
+        ManifestSummary summary = LanceDatasetCache.getManifestSummary(userIdentity, tablePath, datasetVersion, storageOptions);
         log.debug("COUNT(*) returning manifest count %d", summary.getTotalRows());
         return summary.getTotalRows();
     }

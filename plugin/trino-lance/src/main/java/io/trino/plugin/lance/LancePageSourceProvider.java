@@ -63,9 +63,11 @@ public class LancePageSourceProvider
         // Use storage options from handle, refreshing if expired
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
 
+        String userIdentity = session.getUser();
+
         // For COUNT(*) queries, use the count page source
         if (lanceTableHandle.isCountStar()) {
-            return new LanceCountPageSource(lanceTableHandle, storageOptions);
+            return new LanceCountPageSource(lanceTableHandle, storageOptions, userIdentity);
         }
 
         // Get additional projection columns for filter pushdown (column names only, not for output conversion)
@@ -78,7 +80,8 @@ public class LancePageSourceProvider
                 filterProjectionColumns,
                 lanceSplit.getFragments(),
                 storageOptions,
-                lanceConfig.getReadBatchSize());
+                lanceConfig.getReadBatchSize(),
+                userIdentity);
     }
 
     /**
