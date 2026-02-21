@@ -55,13 +55,15 @@ public class LanceSplitManager
             IndexType.BITMAP);
 
     private final LanceNamespaceHolder namespaceHolder;
+    private final LanceDatasetCache datasetCache;
     private final long btreeRowsPerSplit;
     private final long bitmapRowsPerSplit;
 
     @Inject
-    public LanceSplitManager(LanceNamespaceHolder namespaceHolder, LanceConfig config)
+    public LanceSplitManager(LanceNamespaceHolder namespaceHolder, LanceDatasetCache datasetCache, LanceConfig config)
     {
         this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
+        this.datasetCache = requireNonNull(datasetCache, "datasetCache is null");
         this.btreeRowsPerSplit = config.getBtreeIndexedRowsPerSplit();
         this.bitmapRowsPerSplit = config.getBitmapIndexedRowsPerSplit();
     }
@@ -84,7 +86,7 @@ public class LanceSplitManager
 
         // Get all fragments (need full Fragment objects for row counts)
         // Use the version captured in the table handle for snapshot isolation
-        List<Fragment> allFragments = LanceDatasetCache.getFragments(
+        List<Fragment> allFragments = datasetCache.getFragments(
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
         List<Integer> allFragmentIds = allFragments.stream().map(Fragment::getId).toList();
 
@@ -131,7 +133,7 @@ public class LanceSplitManager
     {
         // Use cached dataset for index checking (read-only operation)
         try {
-            Dataset dataset = LanceDatasetCache.getDataset(userIdentity, tablePath, version, storageOptions);
+            Dataset dataset = datasetCache.getDataset(userIdentity, tablePath, version, storageOptions);
             // Build field ID to name mapping
             LanceSchema schema = dataset.getLanceSchema();
             Map<Integer, String> fieldIdToName = new HashMap<>();

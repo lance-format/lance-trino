@@ -36,7 +36,13 @@ public class TestLanceConfig
                 .setSingleLevelNs(false)
                 .setParent(null)
                 .setBtreeIndexedRowsPerSplit(100_000_000L)
-                .setBitmapIndexedRowsPerSplit(10_000_000L));
+                .setBitmapIndexedRowsPerSplit(10_000_000L)
+                .setCacheMaxSessions(100)
+                .setCacheMaxDatasets(100)
+                .setCacheSessionTtlMinutes(60)
+                .setCacheDatasetTtlMinutes(30)
+                .setSessionIndexCacheSizeBytes(null)
+                .setSessionMetadataCacheSizeBytes(null));
     }
 
     @Test
@@ -54,6 +60,12 @@ public class TestLanceConfig
                 .put("lance.parent", "p1$p2")
                 .put("lance.btree_indexed_rows_per_split", "50000000")
                 .put("lance.bitmap_indexed_rows_per_split", "5000000")
+                .put("lance.cache.max_sessions", "200")
+                .put("lance.cache.max_datasets", "200")
+                .put("lance.cache.session_ttl_minutes", "120")
+                .put("lance.cache.dataset_ttl_minutes", "60")
+                .put("lance.session.index_cache_size_bytes", "268435456")
+                .put("lance.session.metadata_cache_size_bytes", "268435456")
                 .buildOrThrow();
 
         LanceConfig expected = new LanceConfig()
@@ -65,7 +77,13 @@ public class TestLanceConfig
                 .setSingleLevelNs(true)
                 .setParent("p1$p2")
                 .setBtreeIndexedRowsPerSplit(50_000_000L)
-                .setBitmapIndexedRowsPerSplit(5_000_000L);
+                .setBitmapIndexedRowsPerSplit(5_000_000L)
+                .setCacheMaxSessions(200)
+                .setCacheMaxDatasets(200)
+                .setCacheSessionTtlMinutes(120)
+                .setCacheDatasetTtlMinutes(60)
+                .setSessionIndexCacheSizeBytes(268435456L)
+                .setSessionMetadataCacheSizeBytes(268435456L);
 
         assertFullMapping(properties, expected);
     }

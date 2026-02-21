@@ -39,12 +39,14 @@ public class LancePageSourceProvider
 {
     private final LanceNamespaceHolder namespaceHolder;
     private final LanceConfig lanceConfig;
+    private final LanceDatasetCache datasetCache;
 
     @Inject
-    public LancePageSourceProvider(LanceNamespaceHolder namespaceHolder, LanceConfig lanceConfig)
+    public LancePageSourceProvider(LanceNamespaceHolder namespaceHolder, LanceConfig lanceConfig, LanceDatasetCache datasetCache)
     {
         this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
         this.lanceConfig = requireNonNull(lanceConfig, "lanceConfig is null");
+        this.datasetCache = requireNonNull(datasetCache, "datasetCache is null");
     }
 
     @Override
@@ -67,7 +69,7 @@ public class LancePageSourceProvider
 
         // For COUNT(*) queries, use the count page source
         if (lanceTableHandle.isCountStar()) {
-            return new LanceCountPageSource(lanceTableHandle, storageOptions, userIdentity);
+            return new LanceCountPageSource(lanceTableHandle, storageOptions, userIdentity, datasetCache);
         }
 
         // Get additional projection columns for filter pushdown (column names only, not for output conversion)
@@ -81,7 +83,8 @@ public class LancePageSourceProvider
                 lanceSplit.getFragments(),
                 storageOptions,
                 lanceConfig.getReadBatchSize(),
-                userIdentity);
+                userIdentity,
+                datasetCache);
     }
 
     /**

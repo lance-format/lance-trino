@@ -19,13 +19,11 @@ import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSource;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.util.VisibleForTesting;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -101,13 +99,6 @@ public abstract class LanceBasePageSource
             current = current.getCause();
         }
         return false;
-    }
-
-    @VisibleForTesting
-    public static List<LanceColumnHandle> toColumnHandles(LanceTableHandle tableHandle, Map<String, String> storageOptions)
-    {
-        return LanceDatasetCache.getColumnHandles(tableHandle.getTablePath(), storageOptions).values().stream()
-                .map(c -> (LanceColumnHandle) c).collect(Collectors.toList());
     }
 
     @Override

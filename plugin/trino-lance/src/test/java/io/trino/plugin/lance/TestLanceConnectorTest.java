@@ -508,10 +508,11 @@ public class TestLanceConnectorTest
             LanceConfig config = new LanceConfig().setSingleLevelNs(true);
             Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
             LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(config, catalogProperties);
+            LanceDatasetCache datasetCache = new LanceDatasetCache(config);
 
             // Get column handles using the table path
             String tablePath = datasetPath;
-            Map<String, ColumnHandle> columnHandles = LanceDatasetCache.getColumnHandles(tablePath, null);
+            Map<String, ColumnHandle> columnHandles = datasetCache.getColumnHandles(null, tablePath, null, Map.of());
             assertThat(columnHandles).hasSize(2);
 
             // Verify the large_text column is mapped to VARCHAR
@@ -525,7 +526,7 @@ public class TestLanceConnectorTest
             assertThat(idHandle.trinoType()).isEqualTo(INTEGER);
 
             // Step 3: Verify table metadata using the table path
-            List<ColumnMetadata> columnsMetadata = LanceDatasetCache.getColumnMetadata(tablePath, null);
+            List<ColumnMetadata> columnsMetadata = datasetCache.getColumnMetadata(null, tablePath, null, Map.of());
             assertThat(columnsMetadata).hasSize(2);
 
             // Find the large_text column metadata
@@ -568,9 +569,10 @@ public class TestLanceConnectorTest
             LanceConfig config = new LanceConfig().setSingleLevelNs(true);
             Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
             LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(config, catalogProperties);
+            LanceDatasetCache datasetCache = new LanceDatasetCache(config);
             JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
             JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-            LanceMetadata metadata = new LanceMetadata(namespaceHolder, config, commitTaskDataCodec, mergeCommitDataCodec);
+            LanceMetadata metadata = new LanceMetadata(namespaceHolder, config, datasetCache, commitTaskDataCodec, mergeCommitDataCodec);
 
             // Get table handle - this should NOT return null anymore
             LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
