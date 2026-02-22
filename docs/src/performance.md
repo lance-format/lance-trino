@@ -132,24 +132,3 @@ lance.index.bitmap.rows_per_split=10000000
 |----------|-------------|---------|
 | `lance.index.btree.rows_per_split` | Row count threshold for btree-indexed splits | `100000000` (100M) |
 | `lance.index.bitmap.rows_per_split` | Row count threshold for bitmap-indexed splits | `10000000` (10M) |
-
-## Read and Write Batch Sizes
-
-Control batch sizes for vectorized operations:
-
-```properties
-# Read batch size (rows per batch during scans)
-lance.read_batch_size=8192
-
-# Write settings
-lance.write_batch_size=10000      # Rows to batch before writing to Arrow
-lance.max_rows_per_file=1000000   # Maximum rows per Lance file
-lance.max_rows_per_group=100000   # Maximum rows per row group
-```
-
-| Property | Description | Default |
-|----------|-------------|---------|
-| `lance.read_batch_size` | Rows per batch during vectorized reads | `8192` |
-| `lance.write_batch_size` | Rows to batch before writing to Arrow | `10000` |
-| `lance.max_rows_per_file` | Maximum rows per Lance file | `1000000` |
-| `lance.max_rows_per_group` | Maximum rows per row group | `100000` |
