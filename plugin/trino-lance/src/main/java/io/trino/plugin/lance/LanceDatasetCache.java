@@ -78,10 +78,10 @@ public class LanceDatasetCache
     @Inject
     public LanceDatasetCache(LanceConfig config)
     {
-        this.sessionIndexCacheSizeBytes = config.getSessionIndexCacheSizeBytes();
-        this.sessionMetadataCacheSizeBytes = config.getSessionMetadataCacheSizeBytes();
+        this.sessionIndexCacheSizeBytes = config.getCacheSessionIndexCacheSizeBytes();
+        this.sessionMetadataCacheSizeBytes = config.getCacheSessionMetadataCacheSizeBytes();
         this.sessionCache = CacheBuilder.newBuilder()
-                .maximumSize(config.getCacheMaxSessions())
+                .maximumSize(config.getCacheSessionMaxEntries())
                 .expireAfterAccess(config.getCacheSessionTtlMinutes(), TimeUnit.MINUTES)
                 .removalListener((RemovalListener<String, Session>) notification -> {
                     Session session = notification.getValue();
@@ -93,7 +93,7 @@ public class LanceDatasetCache
                 .build();
 
         this.datasetCache = CacheBuilder.newBuilder()
-                .maximumSize(config.getCacheMaxDatasets())
+                .maximumSize(config.getCacheDatasetMaxEntries())
                 .expireAfterAccess(config.getCacheDatasetTtlMinutes(), TimeUnit.MINUTES)
                 .removalListener((RemovalListener<DatasetCacheKey, Dataset>) notification -> {
                     Dataset dataset = notification.getValue();
@@ -109,7 +109,7 @@ public class LanceDatasetCache
                 .build();
 
         log.info("LanceDatasetCache initialized: maxSessions=%d, maxDatasets=%d, sessionTtl=%dm, datasetTtl=%dm",
-                config.getCacheMaxSessions(), config.getCacheMaxDatasets(),
+                config.getCacheSessionMaxEntries(), config.getCacheDatasetMaxEntries(),
                 config.getCacheSessionTtlMinutes(), config.getCacheDatasetTtlMinutes());
     }
 

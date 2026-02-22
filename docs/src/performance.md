@@ -35,35 +35,24 @@ Configure caching behavior via connector properties in your catalog file:
 
 ```properties
 # Session cache settings
-lance.cache.max_sessions=100          # Maximum cached sessions (default: 100)
-lance.cache.session_ttl_minutes=60    # Session cache TTL in minutes (default: 60)
+lance.cache.session.max_entries=100                       # Maximum cached sessions (default: 100)
+lance.cache.session.ttl_minutes=60                        # Session cache TTL in minutes (default: 60)
+lance.cache.session.index_cache_size_bytes=6442450944     # Index cache size: 6GB
+lance.cache.session.metadata_cache_size_bytes=1073741824  # Metadata cache size: 1GB
 
 # Dataset cache settings
-lance.cache.max_datasets=100          # Maximum cached datasets (default: 100)
-lance.cache.dataset_ttl_minutes=30    # Dataset cache TTL in minutes (default: 30)
+lance.cache.dataset.max_entries=100          # Maximum cached datasets (default: 100)
+lance.cache.dataset.ttl_minutes=30           # Dataset cache TTL in minutes (default: 30)
 ```
 
 | Property | Description | Default |
 |----------|-------------|---------|
-| `lance.cache.max_sessions` | Maximum number of cached sessions | `100` |
-| `lance.cache.max_datasets` | Maximum number of cached datasets | `100` |
-| `lance.cache.session_ttl_minutes` | Session cache TTL in minutes | `60` |
-| `lance.cache.dataset_ttl_minutes` | Dataset cache TTL in minutes | `30` |
-
-### Session-Level Cache Size
-
-Control the size of Lance's internal index and metadata caches via connector properties:
-
-```properties
-# Session-level cache sizes (in bytes)
-lance.session.index_cache_size_bytes=6442450944      # 6GB
-lance.session.metadata_cache_size_bytes=1073741824   # 1GB
-```
-
-| Property | Description | Default |
-|----------|-------------|---------|
-| `lance.session.index_cache_size_bytes` | Index cache size in bytes | Lance default (6GB) |
-| `lance.session.metadata_cache_size_bytes` | Metadata cache size in bytes | Lance default (1GB) |
+| `lance.cache.session.max_entries` | Maximum number of cached sessions | `100` |
+| `lance.cache.session.ttl_minutes` | Session cache TTL in minutes | `60` |
+| `lance.cache.session.index_cache_size_bytes` | Index cache size in bytes | Lance default (6GB) |
+| `lance.cache.session.metadata_cache_size_bytes` | Metadata cache size in bytes | Lance default (1GB) |
+| `lance.cache.dataset.max_entries` | Maximum number of cached datasets | `100` |
+| `lance.cache.dataset.ttl_minutes` | Dataset cache TTL in minutes | `30` |
 
 The index cache stores vector indices which can be large but provide significant speedup for vector search queries.
 Increase this if you frequently query tables with vector indices.

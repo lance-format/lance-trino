@@ -201,36 +201,23 @@ public class LanceConfig
 
     // ===== Cache Configuration =====
 
-    private int cacheMaxSessions = 100;
-    private int cacheMaxDatasets = 100;
+    private int cacheSessionMaxEntries = 100;
     private int cacheSessionTtlMinutes = 60;
+    private Long cacheSessionIndexCacheSizeBytes;  // null = use Lance default
+    private Long cacheSessionMetadataCacheSizeBytes;  // null = use Lance default
+    private int cacheDatasetMaxEntries = 100;
     private int cacheDatasetTtlMinutes = 30;
-    private Long sessionIndexCacheSizeBytes;  // null = use Lance default
-    private Long sessionMetadataCacheSizeBytes;  // null = use Lance default
 
-    public int getCacheMaxSessions()
+    public int getCacheSessionMaxEntries()
     {
-        return cacheMaxSessions;
+        return cacheSessionMaxEntries;
     }
 
-    @Config("lance.cache.max_sessions")
-    @ConfigDescription("Maximum number of cached sessions per user (default 100)")
-    public LanceConfig setCacheMaxSessions(int cacheMaxSessions)
+    @Config("lance.cache.session.max_entries")
+    @ConfigDescription("Maximum number of cached sessions (default 100)")
+    public LanceConfig setCacheSessionMaxEntries(int cacheSessionMaxEntries)
     {
-        this.cacheMaxSessions = cacheMaxSessions;
-        return this;
-    }
-
-    public int getCacheMaxDatasets()
-    {
-        return cacheMaxDatasets;
-    }
-
-    @Config("lance.cache.max_datasets")
-    @ConfigDescription("Maximum number of cached datasets (default 100)")
-    public LanceConfig setCacheMaxDatasets(int cacheMaxDatasets)
-    {
-        this.cacheMaxDatasets = cacheMaxDatasets;
+        this.cacheSessionMaxEntries = cacheSessionMaxEntries;
         return this;
     }
 
@@ -239,11 +226,50 @@ public class LanceConfig
         return cacheSessionTtlMinutes;
     }
 
-    @Config("lance.cache.session_ttl_minutes")
+    @Config("lance.cache.session.ttl_minutes")
     @ConfigDescription("Session cache TTL in minutes (default 60)")
     public LanceConfig setCacheSessionTtlMinutes(int cacheSessionTtlMinutes)
     {
         this.cacheSessionTtlMinutes = cacheSessionTtlMinutes;
+        return this;
+    }
+
+    public Long getCacheSessionIndexCacheSizeBytes()
+    {
+        return cacheSessionIndexCacheSizeBytes;
+    }
+
+    @Config("lance.cache.session.index_cache_size_bytes")
+    @ConfigDescription("Lance session index cache size in bytes (default: Lance default)")
+    public LanceConfig setCacheSessionIndexCacheSizeBytes(Long cacheSessionIndexCacheSizeBytes)
+    {
+        this.cacheSessionIndexCacheSizeBytes = cacheSessionIndexCacheSizeBytes;
+        return this;
+    }
+
+    public Long getCacheSessionMetadataCacheSizeBytes()
+    {
+        return cacheSessionMetadataCacheSizeBytes;
+    }
+
+    @Config("lance.cache.session.metadata_cache_size_bytes")
+    @ConfigDescription("Lance session metadata cache size in bytes (default: Lance default)")
+    public LanceConfig setCacheSessionMetadataCacheSizeBytes(Long cacheSessionMetadataCacheSizeBytes)
+    {
+        this.cacheSessionMetadataCacheSizeBytes = cacheSessionMetadataCacheSizeBytes;
+        return this;
+    }
+
+    public int getCacheDatasetMaxEntries()
+    {
+        return cacheDatasetMaxEntries;
+    }
+
+    @Config("lance.cache.dataset.max_entries")
+    @ConfigDescription("Maximum number of cached datasets (default 100)")
+    public LanceConfig setCacheDatasetMaxEntries(int cacheDatasetMaxEntries)
+    {
+        this.cacheDatasetMaxEntries = cacheDatasetMaxEntries;
         return this;
     }
 
@@ -252,37 +278,11 @@ public class LanceConfig
         return cacheDatasetTtlMinutes;
     }
 
-    @Config("lance.cache.dataset_ttl_minutes")
+    @Config("lance.cache.dataset.ttl_minutes")
     @ConfigDescription("Dataset cache TTL in minutes (default 30)")
     public LanceConfig setCacheDatasetTtlMinutes(int cacheDatasetTtlMinutes)
     {
         this.cacheDatasetTtlMinutes = cacheDatasetTtlMinutes;
-        return this;
-    }
-
-    public Long getSessionIndexCacheSizeBytes()
-    {
-        return sessionIndexCacheSizeBytes;
-    }
-
-    @Config("lance.session.index_cache_size_bytes")
-    @ConfigDescription("Lance session index cache size in bytes (default: Lance default)")
-    public LanceConfig setSessionIndexCacheSizeBytes(Long sessionIndexCacheSizeBytes)
-    {
-        this.sessionIndexCacheSizeBytes = sessionIndexCacheSizeBytes;
-        return this;
-    }
-
-    public Long getSessionMetadataCacheSizeBytes()
-    {
-        return sessionMetadataCacheSizeBytes;
-    }
-
-    @Config("lance.session.metadata_cache_size_bytes")
-    @ConfigDescription("Lance session metadata cache size in bytes (default: Lance default)")
-    public LanceConfig setSessionMetadataCacheSizeBytes(Long sessionMetadataCacheSizeBytes)
-    {
-        this.sessionMetadataCacheSizeBytes = sessionMetadataCacheSizeBytes;
         return this;
     }
 }
