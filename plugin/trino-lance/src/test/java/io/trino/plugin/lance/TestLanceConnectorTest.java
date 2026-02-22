@@ -170,6 +170,19 @@ public class TestLanceConnectorTest
         assertThat(e).hasMessageMatching(".*[Cc]oncurrent.*|.*commit conflict.*");
     }
 
+    @Override
+    protected void verifyVersionedQueryFailurePermissible(Exception e)
+    {
+        // Lance supports time travel, so we expect specific error messages instead of "not supported"
+        assertThat(e).hasMessageMatching(
+                "Lance connector does not support start version for time travel|" +
+                "Lance version number must be positive: .*|" +
+                "Lance version does not exist: .*|" +
+                "Unsupported type for Lance version: .*\\..*|" +
+                "Unsupported type for Lance temporal version: .*|" +
+                "No Lance version found at or before timestamp: .*");
+    }
+
     @Test
     @Override
     public void testUpdateRowConcurrently()

@@ -208,6 +208,90 @@ FROM high_value_orders h
 JOIN lance.default.customers c ON h.customer_id = c.id;
 ```
 
+## Time Travel
+
+Lance supports time travel queries, allowing you to query historical versions of your data. This is useful for auditing, debugging, or recovering data from a specific point in time.
+
+### Query by Version Number
+
+Use `FOR VERSION AS OF` to query a specific version:
+
+```sql
+-- Query version 1 of a table
+SELECT * FROM lance.default.orders FOR VERSION AS OF 1;
+
+-- Query version 5 of a table
+SELECT * FROM lance.default.orders FOR VERSION AS OF 5;
+
+-- Compare data between versions
+SELECT 'current' AS version, COUNT(*) FROM lance.default.orders
+UNION ALL
+SELECT 'v1' AS version, COUNT(*) FROM lance.default.orders FOR VERSION AS OF 1;
+```
+
+Supported version types:
+
+- `TINYINT`
+- `SMALLINT`
+- `INTEGER`
+- `BIGINT`
+
+### Query by Timestamp
+
+Use `FOR TIMESTAMP AS OF` to query data as of a specific timestamp:
+
+```sql
+-- Query data as of a specific date
+SELECT * FROM lance.default.orders
+FOR TIMESTAMP AS OF DATE '2024-01-15';
+
+-- Query data as of a specific timestamp
+SELECT * FROM lance.default.orders
+FOR TIMESTAMP AS OF TIMESTAMP '2024-06-01 12:00:00';
+
+-- Query data with timezone
+SELECT * FROM lance.default.orders
+FOR TIMESTAMP AS OF TIMESTAMP '2024-06-01 12:00:00 America/New_York';
+```
+
+Supported timestamp types:
+
+- `DATE` - Resolves to start of day in session timezone
+- `TIMESTAMP` - Uses session timezone
+- `TIMESTAMP WITH TIME ZONE` - Uses specified timezone
+
+### How It Works
+
+Lance stores data in immutable fragments. Each write operation (INSERT, UPDATE, DELETE) creates a new version of the table. Time travel queries read from the version that was current at the specified version number or timestamp.
+
+When querying by timestamp, Lance finds the latest version whose creation timestamp is at or before the requested timestamp.
+
+### Limitations
+
+- Only `FOR ... AS OF` is supported (end version). Start version (`FOR ... BETWEEN`) is not supported.
+- Version numbers must be positive integers.
+- Timestamps must be in the past.
+- Versions may be cleaned up by compaction operations, making old versions unavailable.
+
+### Examples
+
+```sql
+-- Track changes over time
+WITH current_data AS (
+    SELECT COUNT(*) as cnt FROM lance.default.metrics
+),
+historical_data AS (
+    SELECT COUNT(*) as cnt FROM lance.default.metrics FOR VERSION AS OF 1
+)
+SELECT
+    (SELECT cnt FROM current_data) - (SELECT cnt FROM historical_data) as new_rows;
+
+-- Restore accidentally deleted data
+INSERT INTO lance.default.orders
+SELECT * FROM lance.default.orders FOR VERSION AS OF 10
+WHERE id NOT IN (SELECT id FROM lance.default.orders);
+```
+
 ## Blob Virtual Columns
 
 Tables with blob-encoded columns automatically expose virtual columns for accessing blob metadata. These columns are hidden from `DESCRIBE TABLE` but can be selected in queries.
