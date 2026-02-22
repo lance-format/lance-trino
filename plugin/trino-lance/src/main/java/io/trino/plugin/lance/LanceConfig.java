@@ -178,7 +178,7 @@ public class LanceConfig
         return btreeIndexedRowsPerSplit;
     }
 
-    @Config("lance.btree_indexed_rows_per_split")
+    @Config("lance.index.btree.rows_per_split")
     @ConfigDescription("Row count threshold for grouping btree-indexed fragments per split (default 100M)")
     public LanceConfig setBtreeIndexedRowsPerSplit(long btreeIndexedRowsPerSplit)
     {
@@ -191,11 +191,98 @@ public class LanceConfig
         return bitmapIndexedRowsPerSplit;
     }
 
-    @Config("lance.bitmap_indexed_rows_per_split")
+    @Config("lance.index.bitmap.rows_per_split")
     @ConfigDescription("Row count threshold for grouping bitmap-indexed fragments per split (default 10M)")
     public LanceConfig setBitmapIndexedRowsPerSplit(long bitmapIndexedRowsPerSplit)
     {
         this.bitmapIndexedRowsPerSplit = bitmapIndexedRowsPerSplit;
+        return this;
+    }
+
+    // ===== Cache Configuration =====
+
+    private int cacheSessionMaxEntries = 100;
+    private int cacheSessionTtlMinutes = 60;
+    private Long cacheSessionIndexCacheSizeBytes;  // null = use Lance default
+    private Long cacheSessionMetadataCacheSizeBytes;  // null = use Lance default
+    private int cacheDatasetMaxEntries = 100;
+    private int cacheDatasetTtlMinutes = 30;
+
+    public int getCacheSessionMaxEntries()
+    {
+        return cacheSessionMaxEntries;
+    }
+
+    @Config("lance.cache.session.max_entries")
+    @ConfigDescription("Maximum number of cached sessions (default 100)")
+    public LanceConfig setCacheSessionMaxEntries(int cacheSessionMaxEntries)
+    {
+        this.cacheSessionMaxEntries = cacheSessionMaxEntries;
+        return this;
+    }
+
+    public int getCacheSessionTtlMinutes()
+    {
+        return cacheSessionTtlMinutes;
+    }
+
+    @Config("lance.cache.session.ttl_minutes")
+    @ConfigDescription("Session cache TTL in minutes (default 60)")
+    public LanceConfig setCacheSessionTtlMinutes(int cacheSessionTtlMinutes)
+    {
+        this.cacheSessionTtlMinutes = cacheSessionTtlMinutes;
+        return this;
+    }
+
+    public Long getCacheSessionIndexCacheSizeBytes()
+    {
+        return cacheSessionIndexCacheSizeBytes;
+    }
+
+    @Config("lance.cache.session.index_cache_size_bytes")
+    @ConfigDescription("Lance session index cache size in bytes (default: Lance default)")
+    public LanceConfig setCacheSessionIndexCacheSizeBytes(Long cacheSessionIndexCacheSizeBytes)
+    {
+        this.cacheSessionIndexCacheSizeBytes = cacheSessionIndexCacheSizeBytes;
+        return this;
+    }
+
+    public Long getCacheSessionMetadataCacheSizeBytes()
+    {
+        return cacheSessionMetadataCacheSizeBytes;
+    }
+
+    @Config("lance.cache.session.metadata_cache_size_bytes")
+    @ConfigDescription("Lance session metadata cache size in bytes (default: Lance default)")
+    public LanceConfig setCacheSessionMetadataCacheSizeBytes(Long cacheSessionMetadataCacheSizeBytes)
+    {
+        this.cacheSessionMetadataCacheSizeBytes = cacheSessionMetadataCacheSizeBytes;
+        return this;
+    }
+
+    public int getCacheDatasetMaxEntries()
+    {
+        return cacheDatasetMaxEntries;
+    }
+
+    @Config("lance.cache.dataset.max_entries")
+    @ConfigDescription("Maximum number of cached datasets (default 100)")
+    public LanceConfig setCacheDatasetMaxEntries(int cacheDatasetMaxEntries)
+    {
+        this.cacheDatasetMaxEntries = cacheDatasetMaxEntries;
+        return this;
+    }
+
+    public int getCacheDatasetTtlMinutes()
+    {
+        return cacheDatasetTtlMinutes;
+    }
+
+    @Config("lance.cache.dataset.ttl_minutes")
+    @ConfigDescription("Dataset cache TTL in minutes (default 30)")
+    public LanceConfig setCacheDatasetTtlMinutes(int cacheDatasetTtlMinutes)
+    {
+        this.cacheDatasetTtlMinutes = cacheDatasetTtlMinutes;
         return this;
     }
 }

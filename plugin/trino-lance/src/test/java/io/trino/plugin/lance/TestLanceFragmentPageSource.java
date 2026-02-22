@@ -21,6 +21,7 @@ import io.trino.spi.block.Block;
 import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
+import io.trino.testing.TestingConnectorSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -44,6 +45,7 @@ public class TestLanceFragmentPageSource
     private LanceMetadata metadata;
     private LanceSplitManager splitManager;
     private LanceNamespaceHolder namespaceHolder;
+    private LanceDatasetCache datasetCache;
 
     @BeforeEach
     public void setUp()
@@ -57,25 +59,26 @@ public class TestLanceFragmentPageSource
                 .setSingleLevelNs(true);  // example_db is flat (tables at root)
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
         namespaceHolder = new LanceNamespaceHolder(lanceConfig, catalogProperties);
+        datasetCache = new LanceDatasetCache(lanceConfig);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-        this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
-        this.splitManager = new LanceSplitManager(namespaceHolder, lanceConfig);
+        this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, datasetCache, commitTaskDataCodec, mergeCommitDataCodec);
+        this.splitManager = new LanceSplitManager(namespaceHolder, datasetCache, lanceConfig);
     }
 
     @Test
     public void testFragmentScan()
             throws ExecutionException, InterruptedException
     {
-        ConnectorTableHandle tableHandle = metadata.getTableHandle(null, TEST_TABLE_1, Optional.empty(), Optional.empty());
-        ConnectorSplitSource splits = splitManager.getSplits(null, null, tableHandle, null, null);
+        ConnectorTableHandle tableHandle = metadata.getTableHandle(TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
+        ConnectorSplitSource splits = splitManager.getSplits(null, TestingConnectorSession.SESSION, tableHandle, null, null);
         ConnectorSplitSource.ConnectorSplitBatch batch = splits.getNextBatch(2).get();
         assertThat(batch.getSplits().size()).isEqualTo(2);
         LanceSplit lanceSplit = (LanceSplit) batch.getSplits().get(0);
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-        List<LanceColumnHandle> columns = LanceBasePageSource.toColumnHandles(lanceTableHandle, Collections.emptyMap());
+        List<LanceColumnHandle> columns = datasetCache.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
         // testing split 0 is enough
-        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap(), 8192)) {
+        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap(), 8192, null, datasetCache)) {
             Page page = pageSource.getNextPage();
             // assert row/column count
             assertThat(page.getChannelCount()).isEqualTo(4);
@@ -100,14 +103,14 @@ public class TestLanceFragmentPageSource
         // Test that columns are returned in the requested projection order
         // Dataset schema order is: [x, y, b, c]
         // Dataset values in fragment 0: x=[0,1], y=[0,2], b=[0,3], c=[0,-1]
-        ConnectorTableHandle tableHandle = metadata.getTableHandle(null, TEST_TABLE_1, Optional.empty(), Optional.empty());
-        ConnectorSplitSource splits = splitManager.getSplits(null, null, tableHandle, null, null);
+        ConnectorTableHandle tableHandle = metadata.getTableHandle(TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
+        ConnectorSplitSource splits = splitManager.getSplits(null, TestingConnectorSession.SESSION, tableHandle, null, null);
         ConnectorSplitSource.ConnectorSplitBatch batch = splits.getNextBatch(2).get();
         LanceSplit lanceSplit = (LanceSplit) batch.getSplits().get(0);
 
         // Get column handles
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-        List<LanceColumnHandle> allColumns = LanceBasePageSource.toColumnHandles(lanceTableHandle, Collections.emptyMap());
+        List<LanceColumnHandle> allColumns = datasetCache.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
         LanceColumnHandle colB = allColumns.stream().filter(c -> c.name().equals("b")).findFirst().orElseThrow();
         LanceColumnHandle colX = allColumns.stream().filter(c -> c.name().equals("x")).findFirst().orElseThrow();
 
@@ -119,7 +122,9 @@ public class TestLanceFragmentPageSource
                 projectedColumns,
                 lanceSplit.getFragments(),
                 Collections.emptyMap(),
-                8192)) {
+                8192,
+                null,
+                datasetCache)) {
             Page page = pageSource.getNextPage();
 
             assertThat(page.getChannelCount()).isEqualTo(2);
@@ -143,13 +148,13 @@ public class TestLanceFragmentPageSource
     {
         // Test selecting only a subset of columns in a specific order
         // Dataset values in fragment 0: x=[0,1], y=[0,2], b=[0,3], c=[0,-1]
-        ConnectorTableHandle tableHandle = metadata.getTableHandle(null, TEST_TABLE_1, Optional.empty(), Optional.empty());
-        ConnectorSplitSource splits = splitManager.getSplits(null, null, tableHandle, null, null);
+        ConnectorTableHandle tableHandle = metadata.getTableHandle(TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
+        ConnectorSplitSource splits = splitManager.getSplits(null, TestingConnectorSession.SESSION, tableHandle, null, null);
         ConnectorSplitSource.ConnectorSplitBatch batch = splits.getNextBatch(2).get();
         LanceSplit lanceSplit = (LanceSplit) batch.getSplits().get(0);
 
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-        List<LanceColumnHandle> allColumns = LanceBasePageSource.toColumnHandles(lanceTableHandle, Collections.emptyMap());
+        List<LanceColumnHandle> allColumns = datasetCache.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
         LanceColumnHandle colX = allColumns.stream().filter(c -> c.name().equals("x")).findFirst().orElseThrow();
         LanceColumnHandle colC = allColumns.stream().filter(c -> c.name().equals("c")).findFirst().orElseThrow();
 
@@ -161,7 +166,9 @@ public class TestLanceFragmentPageSource
                 projectedColumns,
                 lanceSplit.getFragments(),
                 Collections.emptyMap(),
-                8192)) {
+                8192,
+                null,
+                datasetCache)) {
             Page page = pageSource.getNextPage();
 
             // assert only 2 columns returned

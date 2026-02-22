@@ -36,7 +36,13 @@ public class TestLanceConfig
                 .setSingleLevelNs(false)
                 .setParent(null)
                 .setBtreeIndexedRowsPerSplit(100_000_000L)
-                .setBitmapIndexedRowsPerSplit(10_000_000L));
+                .setBitmapIndexedRowsPerSplit(10_000_000L)
+                .setCacheSessionMaxEntries(100)
+                .setCacheSessionTtlMinutes(60)
+                .setCacheSessionIndexCacheSizeBytes(null)
+                .setCacheSessionMetadataCacheSizeBytes(null)
+                .setCacheDatasetMaxEntries(100)
+                .setCacheDatasetTtlMinutes(30));
     }
 
     @Test
@@ -52,8 +58,14 @@ public class TestLanceConfig
                 .put("lance.write_batch_size", "5000")
                 .put("lance.single_level_ns", "true")
                 .put("lance.parent", "p1$p2")
-                .put("lance.btree_indexed_rows_per_split", "50000000")
-                .put("lance.bitmap_indexed_rows_per_split", "5000000")
+                .put("lance.index.btree.rows_per_split", "50000000")
+                .put("lance.index.bitmap.rows_per_split", "5000000")
+                .put("lance.cache.session.max_entries", "200")
+                .put("lance.cache.session.ttl_minutes", "120")
+                .put("lance.cache.session.index_cache_size_bytes", "268435456")
+                .put("lance.cache.session.metadata_cache_size_bytes", "268435456")
+                .put("lance.cache.dataset.max_entries", "200")
+                .put("lance.cache.dataset.ttl_minutes", "60")
                 .buildOrThrow();
 
         LanceConfig expected = new LanceConfig()
@@ -65,7 +77,13 @@ public class TestLanceConfig
                 .setSingleLevelNs(true)
                 .setParent("p1$p2")
                 .setBtreeIndexedRowsPerSplit(50_000_000L)
-                .setBitmapIndexedRowsPerSplit(5_000_000L);
+                .setBitmapIndexedRowsPerSplit(5_000_000L)
+                .setCacheSessionMaxEntries(200)
+                .setCacheSessionTtlMinutes(120)
+                .setCacheSessionIndexCacheSizeBytes(268435456L)
+                .setCacheSessionMetadataCacheSizeBytes(268435456L)
+                .setCacheDatasetMaxEntries(200)
+                .setCacheDatasetTtlMinutes(60);
 
         assertFullMapping(properties, expected);
     }

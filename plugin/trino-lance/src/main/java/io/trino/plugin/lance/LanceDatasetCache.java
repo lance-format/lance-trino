@@ -14,21 +14,26 @@
 package io.trino.plugin.lance;
 
 import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.RemovalListener;
+import com.google.inject.Inject;
 import io.airlift.log.Logger;
-import io.trino.cache.EvictableCacheBuilder;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
+import org.gaul.modernizer_maven_annotations.SuppressModernizer;
 import org.lance.Dataset;
 import org.lance.Fragment;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
+import org.lance.Session;
 import org.lance.ipc.LanceScanner;
 import org.lance.ipc.ScanOptions;
 import org.lance.schema.LanceField;
 import org.lance.schema.LanceSchema;
 
+import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,125 +48,197 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.spi.type.BigintType.BIGINT;
 
 /**
- * Cache for Lance dataset metadata (fragments and schemas).
- * Shared across all connector instances per worker JVM.
+ * Cache for Lance sessions and datasets.
+ *
+ * <p>Key design principles:
+ * <ul>
+ *   <li>Session sharing: Different datasets opened by the same user share the same session,
+ *       improving cache hit rates for index and metadata caches.</li>
+ *   <li>User isolation: Different users get different sessions, ensuring cache isolation.</li>
+ *   <li>Version-aware: Datasets are cached by (user, path, version) to support snapshot isolation.
+ *       All workers access the same version during a query.</li>
+ * </ul>
+ *
+ * <p>Schema and fragment data are accessed directly from the cached Dataset object,
+ * as the manifest is already loaded when the Dataset is opened.
  */
-public final class LanceDatasetCache
+@SuppressModernizer // Uses CacheBuilder for expireAfterAccess and removalListener
+public class LanceDatasetCache
+        implements Closeable
 {
     private static final Logger log = Logger.get(LanceDatasetCache.class);
 
-    // Cache for dataset fragments - shared across all instances per worker JVM
-    private static final Cache<CacheKey, Map<Integer, Fragment>> FRAGMENT_CACHE =
-            EvictableCacheBuilder.newBuilder()
-                    .maximumSize(100)
-                    .expireAfterWrite(1, TimeUnit.HOURS)
-                    .shareNothingWhenDisabled()
-                    .build();
+    private static final String ANONYMOUS_USER = "__anonymous__";
 
-    // Cache for schema metadata - shared across all instances per worker JVM
-    private static final Cache<CacheKey, Schema> SCHEMA_CACHE =
-            EvictableCacheBuilder.newBuilder()
-                    .maximumSize(100)
-                    .expireAfterWrite(1, TimeUnit.HOURS)
-                    .shareNothingWhenDisabled()
-                    .build();
+    private final Cache<String, Session> sessionCache;
+    private final Cache<DatasetCacheKey, Dataset> datasetCache;
+    private final Long sessionIndexCacheSizeBytes;
+    private final Long sessionMetadataCacheSizeBytes;
 
-    private LanceDatasetCache()
+    @Inject
+    public LanceDatasetCache(LanceConfig config)
     {
-        // Utility class - prevent instantiation
-    }
-
-    /**
-     * Get fragments for a table from cache or load them.
-     */
-    public static List<Fragment> getFragments(String tablePath, Map<String, String> storageOptions)
-    {
-        if (storageOptions == null || storageOptions.isEmpty()) {
-            // Use cached version for local paths
-            try {
-                CacheKey key = new CacheKey(tablePath);
-                Map<Integer, Fragment> fragmentMap = FRAGMENT_CACHE.get(key, () -> loadFragments(tablePath, null));
-                return List.copyOf(fragmentMap.values());
-            }
-            catch (ExecutionException e) {
-                throw new RuntimeException("Failed to get fragments from cache for table: " + tablePath, e);
-            }
-        }
-
-        // For S3 with credentials, load directly (don't cache since credentials may expire)
-        log.debug("Loading fragments with storage options for table: %s", tablePath);
-        ReadOptions readOptions = new ReadOptions.Builder()
-                .setStorageOptions(storageOptions)
+        this.sessionIndexCacheSizeBytes = config.getCacheSessionIndexCacheSizeBytes();
+        this.sessionMetadataCacheSizeBytes = config.getCacheSessionMetadataCacheSizeBytes();
+        this.sessionCache = CacheBuilder.newBuilder()
+                .maximumSize(config.getCacheSessionMaxEntries())
+                .expireAfterAccess(config.getCacheSessionTtlMinutes(), TimeUnit.MINUTES)
+                .removalListener((RemovalListener<String, Session>) notification -> {
+                    Session session = notification.getValue();
+                    if (session != null && !session.isClosed()) {
+                        log.debug("Closing expired session for user: %s", notification.getKey());
+                        session.close();
+                    }
+                })
                 .build();
-        Dataset dataset = Dataset.open(tablePath, readOptions);
-        return List.copyOf(dataset.getFragments());
-    }
 
-    /**
-     * Get a specific fragment by ID.
-     */
-    public static Fragment getFragment(String tablePath, int fragmentId, Map<String, String> storageOptions)
-    {
-        if (storageOptions == null || storageOptions.isEmpty()) {
-            // Use cached version for local paths
-            try {
-                CacheKey key = new CacheKey(tablePath);
-                Map<Integer, Fragment> fragments = FRAGMENT_CACHE.get(key, () -> loadFragments(tablePath, null));
-                return fragments.get(fragmentId);
-            }
-            catch (ExecutionException e) {
-                throw new RuntimeException("Failed to get fragment from cache for table: " + tablePath, e);
-            }
-        }
-
-        // For S3 with credentials, load directly
-        log.debug("Loading fragment %d with storage options for table: %s", fragmentId, tablePath);
-        ReadOptions readOptions = new ReadOptions.Builder()
-                .setStorageOptions(storageOptions)
+        this.datasetCache = CacheBuilder.newBuilder()
+                .maximumSize(config.getCacheDatasetMaxEntries())
+                .expireAfterAccess(config.getCacheDatasetTtlMinutes(), TimeUnit.MINUTES)
+                .removalListener((RemovalListener<DatasetCacheKey, Dataset>) notification -> {
+                    Dataset dataset = notification.getValue();
+                    if (dataset != null) {
+                        try {
+                            dataset.close();
+                        }
+                        catch (Exception e) {
+                            log.warn(e, "Failed to close cached dataset");
+                        }
+                    }
+                })
                 .build();
-        Dataset dataset = Dataset.open(tablePath, readOptions);
-        List<Fragment> fragments = dataset.getFragments();
-        for (Fragment fragment : fragments) {
-            if (fragment.getId() == fragmentId) {
-                return fragment;
-            }
-        }
-        return null;
+
+        log.info("LanceDatasetCache initialized: maxSessions=%d, maxDatasets=%d, sessionTtl=%dm, datasetTtl=%dm",
+                config.getCacheSessionMaxEntries(), config.getCacheDatasetMaxEntries(),
+                config.getCacheSessionTtlMinutes(), config.getCacheDatasetTtlMinutes());
     }
 
-    /**
-     * Get the Arrow schema for a table.
-     */
-    public static Schema getSchema(String tablePath, Map<String, String> storageOptions)
-    {
-        if (storageOptions == null || storageOptions.isEmpty()) {
-            try {
-                CacheKey key = new CacheKey(tablePath);
-                return SCHEMA_CACHE.get(key, () -> loadSchema(tablePath, null));
-            }
-            catch (ExecutionException e) {
-                throw new RuntimeException("Failed to get schema from cache for table: " + tablePath, e);
-            }
-        }
+    // ================== Session Management ==================
 
-        // For S3 with credentials, load directly
-        log.debug("Loading schema with storage options for table: %s", tablePath);
-        ReadOptions readOptions = new ReadOptions.Builder()
-                .setStorageOptions(storageOptions)
-                .build();
-        try (Dataset dataset = Dataset.open(tablePath, readOptions)) {
-            return dataset.getSchema();
+    private Session getOrCreateSession(String userIdentity)
+    {
+        String key = normalizeUserIdentity(userIdentity);
+
+        try {
+            return sessionCache.get(key, () -> {
+                log.debug("Creating new session for user: %s", key);
+                Session.Builder builder = Session.builder();
+                if (sessionIndexCacheSizeBytes != null) {
+                    builder.indexCacheSizeBytes(sessionIndexCacheSizeBytes);
+                }
+                if (sessionMetadataCacheSizeBytes != null) {
+                    builder.metadataCacheSizeBytes(sessionMetadataCacheSizeBytes);
+                }
+                return builder.build();
+            });
+        }
+        catch (ExecutionException e) {
+            log.error(e, "Failed to create session for user: %s", key);
+            throw new RuntimeException("Failed to create Lance session", e);
         }
     }
 
-    /**
-     * Get column handles for a table with field IDs.
-     * Includes virtual columns (__blob_pos, __blob_size) for blob columns.
-     */
-    public static Map<String, ColumnHandle> getColumnHandles(String tablePath, Map<String, String> storageOptions)
+    public long getActiveSessionCount()
     {
-        LanceSchema lanceSchema = getLanceSchema(tablePath, storageOptions);
-        Schema arrowSchema = getSchema(tablePath, storageOptions);
+        return sessionCache.size();
+    }
+
+    public long getCachedDatasetCount()
+    {
+        return datasetCache.size();
+    }
+
+    private static String normalizeUserIdentity(String userIdentity)
+    {
+        return (userIdentity == null || userIdentity.isEmpty()) ? ANONYMOUS_USER : userIdentity;
+    }
+
+    // ================== Dataset Access ==================
+
+    public Dataset getDataset(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
+    {
+        DatasetCacheKey key = new DatasetCacheKey(userIdentity, tablePath, version);
+
+        try {
+            return datasetCache.get(key, () -> openDataset(userIdentity, tablePath, version, storageOptions));
+        }
+        catch (ExecutionException e) {
+            throw new RuntimeException("Failed to open dataset: " + tablePath, e);
+        }
+    }
+
+    public Dataset openDatasetDirect(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
+    {
+        return openDataset(userIdentity, tablePath, version, storageOptions);
+    }
+
+    private Dataset openDataset(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
+    {
+        log.debug("Opening dataset: path=%s, version=%s, user=%s", tablePath, version, userIdentity);
+
+        Session session = getOrCreateSession(userIdentity);
+
+        ReadOptions.Builder optionsBuilder = new ReadOptions.Builder()
+                .setSession(session);
+
+        if (version != null) {
+            optionsBuilder.setVersion(version);
+        }
+
+        if (storageOptions != null && !storageOptions.isEmpty()) {
+            optionsBuilder.setStorageOptions(storageOptions);
+        }
+
+        return Dataset.open(tablePath, optionsBuilder.build());
+    }
+
+    public long getLatestVersion(String userIdentity, String tablePath, Map<String, String> storageOptions)
+    {
+        try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
+            return dataset.version();
+        }
+    }
+
+    // ================== Fragment Access ==================
+
+    public List<Fragment> getFragments(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
+    {
+        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
+        return dataset.getFragments();
+    }
+
+    public Fragment getFragment(String userIdentity, String tablePath, Long version,
+            int fragmentId, Map<String, String> storageOptions)
+    {
+        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
+        return dataset.getFragment(fragmentId);
+    }
+
+    // ================== Schema Access ==================
+
+    public Schema getSchema(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
+    {
+        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
+        return dataset.getSchema();
+    }
+
+    public LanceSchema getLanceSchema(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
+    {
+        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
+        return dataset.getLanceSchema();
+    }
+
+    public Map<String, ColumnHandle> getColumnHandles(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
+    {
+        LanceSchema lanceSchema = getLanceSchema(userIdentity, tablePath, version, storageOptions);
+        Schema arrowSchema = getSchema(userIdentity, tablePath, version, storageOptions);
         Set<String> blobColumns = getBlobColumnsFromSchema(arrowSchema);
 
         Map<String, ColumnHandle> result = new LinkedHashMap<>();
@@ -175,7 +252,6 @@ public final class LanceDatasetCache
                     f.getId(),
                     isBlob));
 
-            // Add virtual columns for blob columns
             if (isBlob) {
                 String posColumnName = BlobUtils.getBlobPositionColumnName(f.getName());
                 String sizeColumnName = BlobUtils.getBlobSizeColumnName(f.getName());
@@ -203,14 +279,11 @@ public final class LanceDatasetCache
         return result;
     }
 
-    /**
-     * Get column handles as a list for a table with field IDs.
-     * Includes virtual columns (__blob_pos, __blob_size) for blob columns.
-     */
-    public static List<LanceColumnHandle> getColumnHandleList(String tablePath, Map<String, String> storageOptions)
+    public List<LanceColumnHandle> getColumnHandleList(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
     {
-        LanceSchema lanceSchema = getLanceSchema(tablePath, storageOptions);
-        Schema arrowSchema = getSchema(tablePath, storageOptions);
+        LanceSchema lanceSchema = getLanceSchema(userIdentity, tablePath, version, storageOptions);
+        Schema arrowSchema = getSchema(userIdentity, tablePath, version, storageOptions);
         Set<String> blobColumns = getBlobColumnsFromSchema(arrowSchema);
 
         List<LanceColumnHandle> result = new ArrayList<>();
@@ -224,7 +297,6 @@ public final class LanceDatasetCache
                     f.getId(),
                     isBlob));
 
-            // Add virtual columns for blob columns
             if (isBlob) {
                 result.add(new LanceColumnHandle(
                         BlobUtils.getBlobPositionColumnName(f.getName()),
@@ -249,9 +321,6 @@ public final class LanceDatasetCache
         return result;
     }
 
-    /**
-     * Get names of blob columns from an Arrow schema by checking field metadata.
-     */
     private static Set<String> getBlobColumnsFromSchema(Schema schema)
     {
         return schema.getFields().stream()
@@ -260,127 +329,88 @@ public final class LanceDatasetCache
                 .collect(Collectors.toSet());
     }
 
-    /**
-     * Get the Lance schema with field IDs.
-     */
-    public static LanceSchema getLanceSchema(String tablePath, Map<String, String> storageOptions)
+    public List<ColumnMetadata> getColumnMetadata(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
     {
-        log.debug("Loading Lance schema for table: %s", tablePath);
-        ReadOptions.Builder optionsBuilder = new ReadOptions.Builder();
-        if (storageOptions != null && !storageOptions.isEmpty()) {
-            optionsBuilder.setStorageOptions(storageOptions);
-        }
-        try (Dataset dataset = Dataset.open(tablePath, optionsBuilder.build())) {
-            return dataset.getLanceSchema();
-        }
-    }
-
-    /**
-     * Get column metadata for a table.
-     * Virtual columns (__blob_pos, __blob_size) are included but marked as hidden.
-     */
-    public static List<ColumnMetadata> getColumnMetadata(String tablePath, Map<String, String> storageOptions)
-    {
-        Map<String, ColumnHandle> columnHandles = getColumnHandles(tablePath, storageOptions);
+        Map<String, ColumnHandle> columnHandles = getColumnHandles(userIdentity, tablePath, version, storageOptions);
         return columnHandles.values().stream()
                 .map(c -> ((LanceColumnHandle) c).getColumnMetadata())
                 .collect(toImmutableList());
     }
 
-    /**
-     * Get the manifest summary for a table. This provides table-level statistics
-     * directly from the manifest without scanning data.
-     */
-    public static ManifestSummary getManifestSummary(String tablePath, Map<String, String> storageOptions)
+    public ManifestSummary getManifestSummary(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions)
     {
-        log.debug("Getting manifest summary for table: %s", tablePath);
-        ReadOptions.Builder optionsBuilder = new ReadOptions.Builder();
-        if (storageOptions != null && !storageOptions.isEmpty()) {
-            optionsBuilder.setStorageOptions(storageOptions);
-        }
-        try (Dataset dataset = Dataset.open(tablePath, optionsBuilder.build())) {
-            return dataset.getVersion().getManifestSummary();
-        }
+        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
+        return dataset.getVersion().getManifestSummary();
     }
 
-    /**
-     * Invalidate cache entries for a table path.
-     */
-    public static void invalidate(String tablePath)
+    // ================== Cache Invalidation ==================
+
+    public void invalidate(String userIdentity, String tablePath)
     {
-        log.debug("Invalidating cache for table: %s", tablePath);
-        CacheKey key = new CacheKey(tablePath);
-        FRAGMENT_CACHE.invalidate(key);
-        SCHEMA_CACHE.invalidate(key);
+        log.debug("Invalidating cache for user=%s, table=%s", userIdentity, tablePath);
+
+        String normalizedUser = normalizeUserIdentity(userIdentity);
+
+        datasetCache.asMap().keySet().removeIf(key ->
+                Objects.equals(key.userIdentity, normalizedUser) &&
+                        Objects.equals(key.tablePath, tablePath));
     }
 
-    /**
-     * Open a dataset and create a scanner for specific fragments.
-     * This scanner respects deletion vectors from the manifest.
-     *
-     * @return Object array: [0] = Dataset (must be closed after scanning), [1] = LanceScanner
-     */
-    public static Object[] openDatasetScanner(String tablePath, List<Integer> fragmentIds,
-            ScanOptions scanOptions, Map<String, String> storageOptions)
+    // ================== Scanner Operations ==================
+
+    public LanceScanner openDatasetScanner(String userIdentity, String tablePath, Long version,
+            List<Integer> fragmentIds, ScanOptions scanOptions, Map<String, String> storageOptions)
     {
-        log.debug("Opening dataset scanner for fragments %s at table: %s", fragmentIds, tablePath);
-        ReadOptions.Builder optionsBuilder = new ReadOptions.Builder();
-        if (storageOptions != null && !storageOptions.isEmpty()) {
-            optionsBuilder.setStorageOptions(storageOptions);
-        }
+        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
 
-        Dataset dataset = Dataset.open(tablePath, optionsBuilder.build());
-
-        // Build scan options with fragment IDs
         ScanOptions.Builder scanBuilder = new ScanOptions.Builder(scanOptions)
                 .fragmentIds(fragmentIds);
 
-        LanceScanner scanner = dataset.newScan(scanBuilder.build());
-        return new Object[] {dataset, scanner};
+        return dataset.newScan(scanBuilder.build());
     }
 
-    private static Map<Integer, Fragment> loadFragments(String tablePath, Map<String, String> storageOptions)
-    {
-        log.debug("Loading fragments for table: %s", tablePath);
-        if (storageOptions != null && !storageOptions.isEmpty()) {
-            ReadOptions readOptions = new ReadOptions.Builder()
-                    .setStorageOptions(storageOptions)
-                    .build();
-            Dataset dataset = Dataset.open(tablePath, readOptions);
-            return dataset.getFragments().stream()
-                    .collect(Collectors.toMap(Fragment::getId, f -> f));
-        }
-        Dataset dataset = Dataset.open(tablePath, LanceNamespaceHolder.getAllocator());
-        return dataset.getFragments().stream()
-                .collect(Collectors.toMap(Fragment::getId, f -> f));
-    }
+    // ================== Lifecycle ==================
 
-    private static Schema loadSchema(String tablePath, Map<String, String> storageOptions)
+    @Override
+    public void close()
     {
-        log.debug("Loading schema for table: %s", tablePath);
-        if (storageOptions != null && !storageOptions.isEmpty()) {
-            ReadOptions readOptions = new ReadOptions.Builder()
-                    .setStorageOptions(storageOptions)
-                    .build();
-            try (Dataset dataset = Dataset.open(tablePath, readOptions)) {
-                return dataset.getSchema();
+        log.info("Closing LanceDatasetCache: %d sessions, %d datasets", sessionCache.size(), datasetCache.size());
+
+        datasetCache.asMap().forEach((key, dataset) -> {
+            if (dataset != null) {
+                try {
+                    dataset.close();
+                }
+                catch (Exception e) {
+                    log.warn(e, "Failed to close dataset during shutdown");
+                }
             }
-        }
-        try (Dataset dataset = Dataset.open(tablePath, LanceNamespaceHolder.getAllocator())) {
-            return dataset.getSchema();
-        }
+        });
+        datasetCache.invalidateAll();
+
+        sessionCache.asMap().forEach((key, session) -> {
+            if (session != null && !session.isClosed()) {
+                session.close();
+            }
+        });
+        sessionCache.invalidateAll();
     }
 
-    /**
-     * Cache key for dataset metadata caching.
-     */
-    private static class CacheKey
-    {
-        private final String tablePath;
+    // ================== Cache Key ==================
 
-        CacheKey(String tablePath)
+    private static class DatasetCacheKey
+    {
+        private final String userIdentity;
+        private final String tablePath;
+        private final Long version;
+
+        DatasetCacheKey(String userIdentity, String tablePath, Long version)
         {
+            this.userIdentity = normalizeUserIdentity(userIdentity);
             this.tablePath = tablePath;
+            this.version = version;
         }
 
         @Override
@@ -389,14 +419,16 @@ public final class LanceDatasetCache
             if (o == null || getClass() != o.getClass()) {
                 return false;
             }
-            CacheKey cacheKey = (CacheKey) o;
-            return Objects.equals(tablePath, cacheKey.tablePath);
+            DatasetCacheKey that = (DatasetCacheKey) o;
+            return Objects.equals(userIdentity, that.userIdentity) &&
+                    Objects.equals(tablePath, that.tablePath) &&
+                    Objects.equals(version, that.version);
         }
 
         @Override
         public int hashCode()
         {
-            return Objects.hash(tablePath);
+            return Objects.hash(userIdentity, tablePath, version);
         }
     }
 }

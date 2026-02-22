@@ -19,6 +19,7 @@ import io.airlift.json.JsonCodec;
 import io.trino.spi.Page;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
+import io.trino.testing.TestingConnectorSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -38,6 +39,7 @@ public class TestLanceCountPageSource
     private static final SchemaTableName TEST_TABLE_1 = new SchemaTableName("default", "test_table1");
 
     private LanceMetadata metadata;
+    private LanceDatasetCache datasetCache;
 
     @BeforeEach
     public void setUp()
@@ -51,16 +53,17 @@ public class TestLanceCountPageSource
                 .setSingleLevelNs(true);
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
         LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(lanceConfig, catalogProperties);
+        this.datasetCache = new LanceDatasetCache(lanceConfig);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-        this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
+        this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, datasetCache, commitTaskDataCodec, mergeCommitDataCodec);
     }
 
     @Test
     public void testCountStarWithoutFilter()
     {
         // Test COUNT(*) without filter - uses ManifestSummary for row count
-        ConnectorTableHandle tableHandle = metadata.getTableHandle(null, TEST_TABLE_1, Optional.empty(), Optional.empty());
+        ConnectorTableHandle tableHandle = metadata.getTableHandle(TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
 
         // Create a COUNT(*) table handle
@@ -68,7 +71,9 @@ public class TestLanceCountPageSource
 
         try (LanceCountPageSource pageSource = new LanceCountPageSource(
                 countHandle,
-                Collections.emptyMap())) {
+                Collections.emptyMap(),
+                null,
+                datasetCache)) {
             assertThat(pageSource.isFinished()).isFalse();
 
             Page page = pageSource.getNextPage();

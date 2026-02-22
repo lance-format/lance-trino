@@ -35,14 +35,14 @@ public class LanceFragmentPageSource
     private static final Logger log = Logger.get(LanceFragmentPageSource.class);
     private static final String LANCE_INTERNAL_ROW_ADDRESS = "_rowaddr";
 
-    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<Integer> fragments, Map<String, String> storageOptions, int readBatchSize)
+    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<Integer> fragments, Map<String, String> storageOptions, int readBatchSize, String userIdentity, LanceDatasetCache datasetCache)
     {
-        this(tableHandle, columns, List.of(), fragments, storageOptions, readBatchSize);
+        this(tableHandle, columns, List.of(), fragments, storageOptions, readBatchSize, userIdentity, datasetCache);
     }
 
-    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, List<Integer> fragments, Map<String, String> storageOptions, int readBatchSize)
+    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, List<Integer> fragments, Map<String, String> storageOptions, int readBatchSize, String userIdentity, LanceDatasetCache datasetCache)
     {
-        super(tableHandle, prepareColumns(columns), filterProjectionColumns, createScannerFactory(fragments, hasRowAddressColumn(columns), readBatchSize), storageOptions);
+        super(tableHandle, prepareColumns(columns), filterProjectionColumns, createScannerFactory(fragments, hasRowAddressColumn(columns), readBatchSize, datasetCache), storageOptions, userIdentity);
     }
 
     /**
@@ -69,9 +69,9 @@ public class LanceFragmentPageSource
         return columns.stream().anyMatch(col -> LANCE_ROW_ADDRESS.equals(col.name()));
     }
 
-    private static ScannerFactory createScannerFactory(List<Integer> fragments, boolean includeRowAddress, int readBatchSize)
+    private static ScannerFactory createScannerFactory(List<Integer> fragments, boolean includeRowAddress, int readBatchSize, LanceDatasetCache datasetCache)
     {
-        return new FragmentScannerFactory(fragments, includeRowAddress, readBatchSize);
+        return new FragmentScannerFactory(fragments, includeRowAddress, readBatchSize, datasetCache);
     }
 
     /**
@@ -86,19 +86,22 @@ public class LanceFragmentPageSource
         private final List<Integer> fragmentIds;
         private final boolean includeRowAddress;
         private final int readBatchSize;
+        private final LanceDatasetCache datasetCache;
         private Dataset lanceDataset;
         private LanceScanner lanceScanner;
 
-        public FragmentScannerFactory(List<Integer> fragmentIds, boolean includeRowAddress, int readBatchSize)
+        public FragmentScannerFactory(List<Integer> fragmentIds, boolean includeRowAddress, int readBatchSize, LanceDatasetCache datasetCache)
         {
             this.fragmentIds = fragmentIds;
             this.includeRowAddress = includeRowAddress;
             this.readBatchSize = readBatchSize;
+            this.datasetCache = datasetCache;
         }
 
         @Override
         public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns,
-                Map<String, String> storageOptions, Optional<ByteBuffer> substraitFilter, OptionalLong limit)
+                Map<String, String> storageOptions, Optional<ByteBuffer> substraitFilter, OptionalLong limit,
+                String userIdentity, Long datasetVersion)
         {
             ScanOptions.Builder optionsBuilder = new ScanOptions.Builder();
             if (!columns.isEmpty()) {
@@ -113,20 +116,22 @@ public class LanceFragmentPageSource
                 optionsBuilder.withRowAddress(true);
             }
 
-            log.debug("Opening dataset scanner for %d fragments with batchSize: %d, substraitFilter: %s, limit: %s, withRowAddress: %s",
+            log.debug("Opening dataset scanner for %d fragments with batchSize: %d, substraitFilter: %s, limit: %s, withRowAddress: %s, user: %s, version: %s",
                     fragmentIds.size(),
                     readBatchSize,
                     substraitFilter.isPresent() ? "present" : "none",
                     limit.isPresent() ? limit.getAsLong() : "none",
-                    includeRowAddress);
+                    includeRowAddress,
+                    userIdentity,
+                    datasetVersion);
 
             // Use dataset-level scan with fragment filtering to respect deletion vectors
             // When scanning multiple fragments with a substrait filter, Lance will automatically
             // use scalar indexes (btree, bitmap) if they cover the filter columns
-            Object[] result = LanceDatasetCache.openDatasetScanner(
-                    tablePath, fragmentIds, optionsBuilder.build(), storageOptions);
-            this.lanceDataset = (Dataset) result[0];
-            this.lanceScanner = (LanceScanner) result[1];
+            // Dataset is cached, so we don't close it here - the cache manages its lifecycle
+            this.lanceDataset = datasetCache.getDataset(userIdentity, tablePath, datasetVersion, storageOptions);
+            this.lanceScanner = datasetCache.openDatasetScanner(
+                    userIdentity, tablePath, datasetVersion, fragmentIds, optionsBuilder.build(), storageOptions);
             return lanceScanner;
         }
 
@@ -141,14 +146,8 @@ public class LanceFragmentPageSource
             catch (Exception e) {
                 log.warn("error while closing lance scanner, Exception: %s", e.getMessage());
             }
-            try {
-                if (lanceDataset != null) {
-                    lanceDataset.close();
-                }
-            }
-            catch (Exception e) {
-                log.warn("error while closing lance dataset, Exception: %s", e.getMessage());
-            }
+            // Don't close the dataset - it's managed by the cache
+            // The cache will close it when it's evicted or on shutdown
         }
     }
 }

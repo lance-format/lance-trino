@@ -19,13 +19,11 @@ import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSource;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.util.VisibleForTesting;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -46,12 +44,12 @@ public abstract class LanceBasePageSource
     protected final BufferAllocator bufferAllocator;
     protected final PageBuilder pageBuilder;
 
-    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions)
+    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity)
     {
-        this(tableHandle, columns, List.of(), scannerFactory, storageOptions);
+        this(tableHandle, columns, List.of(), scannerFactory, storageOptions, userIdentity);
     }
 
-    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions)
+    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity)
     {
         this.tableHandle = tableHandle;
         this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
@@ -66,7 +64,9 @@ public abstract class LanceBasePageSource
                             scannerFactory,
                             storageOptions,
                             tableHandle.getSubstraitFilterBuffer(),
-                            tableHandle.getLimit());
+                            tableHandle.getLimit(),
+                            userIdentity,
+                            tableHandle.getDatasetVersion());
         }
         catch (RuntimeException e) {
             // Handle concurrent modification errors (e.g., fragment not found due to concurrent update)
@@ -99,13 +99,6 @@ public abstract class LanceBasePageSource
             current = current.getCause();
         }
         return false;
-    }
-
-    @VisibleForTesting
-    public static List<LanceColumnHandle> toColumnHandles(LanceTableHandle tableHandle, Map<String, String> storageOptions)
-    {
-        return LanceDatasetCache.getColumnHandles(tableHandle.getTablePath(), storageOptions).values().stream()
-                .map(c -> (LanceColumnHandle) c).collect(Collectors.toList());
     }
 
     @Override
