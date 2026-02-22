@@ -54,6 +54,12 @@ import io.trino.spi.security.TrinoPrincipal;
 import io.trino.spi.statistics.ComputedStatistics;
 import io.trino.spi.statistics.Estimate;
 import io.trino.spi.statistics.TableStatistics;
+import io.trino.spi.type.DateType;
+import io.trino.spi.type.LongTimestamp;
+import io.trino.spi.type.LongTimestampWithTimeZone;
+import io.trino.spi.type.TimestampType;
+import io.trino.spi.type.TimestampWithTimeZoneType;
+import io.trino.spi.type.Type;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Dataset;
 import org.lance.FragmentMetadata;
@@ -87,6 +93,10 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.nio.ByteBuffer;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
@@ -107,10 +117,16 @@ import static io.trino.plugin.lance.SubstraitExpressionBuilder.isDomainPushable;
 import static io.trino.plugin.lance.SubstraitExpressionBuilder.isSupportedType;
 import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
+import static io.trino.spi.StandardErrorCode.INVALID_ARGUMENTS;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.spi.StandardErrorCode.TRANSACTION_CONFLICT;
 import static io.trino.spi.type.BigintType.BIGINT;
+import static io.trino.spi.type.DateTimeEncoding.unpackMillisUtc;
+import static io.trino.spi.type.IntegerType.INTEGER;
+import static io.trino.spi.type.SmallintType.SMALLINT;
+import static io.trino.spi.type.TinyintType.TINYINT;
 import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.MICROSECONDS;
 
 public class LanceMetadata
         implements ConnectorMetadata
@@ -232,18 +248,123 @@ public class LanceMetadata
     public LanceTableHandle getTableHandle(ConnectorSession session, SchemaTableName name,
             Optional<ConnectorTableVersion> startVersion, Optional<ConnectorTableVersion> endVersion)
     {
+        if (startVersion.isPresent()) {
+            throw new TrinoException(NOT_SUPPORTED, "Lance connector does not support start version for time travel");
+        }
+
         String tablePath = getTablePath(session, name);
         if (tablePath != null) {
             List<String> tableId = namespaceHolder.getTableId(name.getSchemaName(), name.getTableName());
             Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
-
-            // Capture dataset version for snapshot isolation
             String userIdentity = session.getUser();
-            Long datasetVersion = datasetCache.getLatestVersion(userIdentity, tablePath, storageOptions);
+
+            Long datasetVersion;
+            if (endVersion.isPresent()) {
+                datasetVersion = resolveVersion(session, tablePath, storageOptions, endVersion.get());
+            }
+            else {
+                datasetVersion = datasetCache.getLatestVersion(userIdentity, tablePath, storageOptions);
+            }
 
             return new LanceTableHandle(name.getSchemaName(), name.getTableName(), tablePath, tableId, storageOptions, datasetVersion);
         }
         return null;
+    }
+
+    private Long resolveVersion(ConnectorSession session, String tablePath,
+            Map<String, String> storageOptions, ConnectorTableVersion version)
+    {
+        String userIdentity = session.getUser();
+        Type versionType = version.getVersionType();
+
+        return switch (version.getPointerType()) {
+            case TARGET_ID -> resolveTargetIdVersion(tablePath, storageOptions, userIdentity, version, versionType);
+            case TEMPORAL -> resolveTemporalVersion(session, tablePath, storageOptions, userIdentity, version, versionType);
+        };
+    }
+
+    private Long resolveTargetIdVersion(String tablePath, Map<String, String> storageOptions,
+            String userIdentity, ConnectorTableVersion version, Type versionType)
+    {
+        long versionNumber;
+        if (versionType.equals(BIGINT)) {
+            versionNumber = (long) version.getVersion();
+        }
+        else if (versionType.equals(INTEGER)) {
+            versionNumber = ((Number) version.getVersion()).longValue();
+        }
+        else if (versionType.equals(SMALLINT)) {
+            versionNumber = ((Number) version.getVersion()).longValue();
+        }
+        else if (versionType.equals(TINYINT)) {
+            versionNumber = ((Number) version.getVersion()).longValue();
+        }
+        else {
+            throw new TrinoException(NOT_SUPPORTED, "Unsupported type for Lance version: " + versionType.getDisplayName() +
+                    ". Only integer types (TINYINT, SMALLINT, INTEGER, BIGINT) are supported for FOR VERSION AS OF.");
+        }
+
+        if (versionNumber <= 0) {
+            throw new TrinoException(INVALID_ARGUMENTS, "Lance version number must be positive: " + versionNumber);
+        }
+
+        // Verify the version exists
+        if (!datasetCache.versionExists(userIdentity, tablePath, versionNumber, storageOptions)) {
+            throw new TrinoException(INVALID_ARGUMENTS, "Lance version does not exist: " + versionNumber);
+        }
+
+        return versionNumber;
+    }
+
+    private Long resolveTemporalVersion(ConnectorSession session, String tablePath,
+            Map<String, String> storageOptions, String userIdentity, ConnectorTableVersion version, Type versionType)
+    {
+        long timestampMillis = getTimestampMillis(session, version, versionType);
+
+        Optional<Long> resolvedVersion = datasetCache.getVersionAtTimestamp(
+                userIdentity, tablePath, timestampMillis, storageOptions);
+
+        if (resolvedVersion.isEmpty()) {
+            throw new TrinoException(INVALID_ARGUMENTS,
+                    "No Lance version found at or before timestamp: " + Instant.ofEpochMilli(timestampMillis));
+        }
+
+        log.debug("Resolved temporal version for timestamp %s to version %d",
+                Instant.ofEpochMilli(timestampMillis), resolvedVersion.get());
+        return resolvedVersion.get();
+    }
+
+    private long getTimestampMillis(ConnectorSession session, ConnectorTableVersion version, Type versionType)
+    {
+        if (versionType.equals(DateType.DATE)) {
+            // Convert date to start of day in session timezone
+            long epochDay = (long) version.getVersion();
+            return LocalDate.ofEpochDay(epochDay)
+                    .atStartOfDay()
+                    .atZone(session.getTimeZoneKey().getZoneId())
+                    .toInstant()
+                    .toEpochMilli();
+        }
+
+        if (versionType instanceof TimestampType timestampType) {
+            long epochMicrosUtc = timestampType.isShort()
+                    ? (long) version.getVersion()
+                    : ((LongTimestamp) version.getVersion()).getEpochMicros();
+            long epochMillisUtc = MICROSECONDS.toMillis(epochMicrosUtc);
+            return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillisUtc), ZoneOffset.UTC)
+                    .atZone(session.getTimeZoneKey().getZoneId())
+                    .toInstant()
+                    .toEpochMilli();
+        }
+
+        if (versionType instanceof TimestampWithTimeZoneType timeZonedVersionType) {
+            return timeZonedVersionType.isShort()
+                    ? unpackMillisUtc((long) version.getVersion())
+                    : ((LongTimestampWithTimeZone) version.getVersion()).getEpochMillis();
+        }
+
+        throw new TrinoException(NOT_SUPPORTED,
+                "Unsupported type for Lance temporal version: " + versionType.getDisplayName());
     }
 
     @Override

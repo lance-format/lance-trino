@@ -28,17 +28,20 @@ import org.lance.Fragment;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
 import org.lance.Session;
+import org.lance.Version;
 import org.lance.ipc.LanceScanner;
 import org.lance.ipc.ScanOptions;
 import org.lance.schema.LanceField;
 import org.lance.schema.LanceSchema;
 
 import java.io.Closeable;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -199,6 +202,63 @@ public class LanceDatasetCache
     {
         try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
             return dataset.version();
+        }
+    }
+
+    /**
+     * Check if a specific version exists in the dataset.
+     *
+     * @param userIdentity the user identity
+     * @param tablePath the path to the dataset
+     * @param version the version to check
+     * @param storageOptions the storage options
+     * @return true if the version exists, false otherwise
+     */
+    public boolean versionExists(String userIdentity, String tablePath,
+            long version, Map<String, String> storageOptions)
+    {
+        try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
+            List<Version> versions = dataset.listVersions();
+            return versions.stream().anyMatch(v -> v.getId() == version);
+        }
+    }
+
+    /**
+     * Get the version of the dataset at or before the given timestamp.
+     *
+     * @param userIdentity the user identity
+     * @param tablePath the path to the dataset
+     * @param timestampMillis the timestamp in milliseconds since epoch
+     * @param storageOptions the storage options
+     * @return the version at or before the timestamp, or empty if no such version exists
+     */
+    public Optional<Long> getVersionAtTimestamp(String userIdentity, String tablePath,
+            long timestampMillis, Map<String, String> storageOptions)
+    {
+        try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
+            List<Version> versions = dataset.listVersions();
+
+            // Find the latest version where timestamp <= requested timestamp
+            Version bestMatch = null;
+            for (Version version : versions) {
+                long versionTimestamp = version.getDataTime().toInstant().toEpochMilli();
+                if (versionTimestamp <= timestampMillis) {
+                    if (bestMatch == null || version.getId() > bestMatch.getId()) {
+                        bestMatch = version;
+                    }
+                }
+            }
+
+            if (bestMatch != null) {
+                log.debug("Found version %d at timestamp %s for requested time %s",
+                        bestMatch.getId(),
+                        bestMatch.getDataTime(),
+                        Instant.ofEpochMilli(timestampMillis));
+                return Optional.of(bestMatch.getId());
+            }
+
+            log.debug("No version found at or before timestamp %s", Instant.ofEpochMilli(timestampMillis));
+            return Optional.empty();
         }
     }
 

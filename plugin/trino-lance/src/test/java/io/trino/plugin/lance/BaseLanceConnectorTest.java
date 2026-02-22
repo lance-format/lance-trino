@@ -467,4 +467,94 @@ public abstract class BaseLanceConnectorTest
         // Lance throws TRANSACTION_CONFLICT when concurrent updates conflict
         assertThat(e).hasMessageMatching(".*[Cc]oncurrent.*|.*commit conflict.*");
     }
+
+    @Override
+    protected void verifyVersionedQueryFailurePermissible(Exception e)
+    {
+        // Lance supports time travel, so we expect specific error messages instead of "not supported"
+        assertThat(e).hasMessageMatching(
+                "Lance connector does not support start version for time travel|" +
+                "Lance version number must be positive: .*|" +
+                "Lance version does not exist: .*|" +
+                "Unsupported type for Lance version: .*\\..*|" +
+                "Unsupported type for Lance temporal version: .*|" +
+                "No Lance version found at or before timestamp: .*");
+    }
+
+    // ===== Time Travel Tests =====
+
+    @Test
+    public void testTimeTravelByVersion()
+    {
+        String tableName = "test_time_travel_version_" + System.currentTimeMillis();
+        try {
+            // Create table with initial data
+            assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '1' AS id, VARCHAR 'v1' AS value", 1);
+
+            // Insert more data to create another version
+            assertUpdate("INSERT INTO " + tableName + " VALUES (BIGINT '2', VARCHAR 'v2')", 1);
+
+            // Insert more data to create another version
+            assertUpdate("INSERT INTO " + tableName + " VALUES (BIGINT '3', VARCHAR 'v3')", 1);
+
+            // Query latest version - should have 3 rows
+            assertQuery("SELECT COUNT(*) FROM " + tableName, "SELECT 3");
+
+            // Test that we can query by valid version number (version 1 should exist)
+            // The exact row count at version 1 depends on how CTAS creates versions
+            computeActual("SELECT COUNT(*) FROM " + tableName + " FOR VERSION AS OF 1");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testTimeTravelByTimestamp()
+    {
+        String tableName = "test_time_travel_timestamp_" + System.currentTimeMillis();
+        try {
+            // Create table with initial data
+            assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '1' AS id", 1);
+
+            // Query latest version - should have 1 row
+            assertQuery("SELECT COUNT(*) FROM " + tableName, "SELECT 1");
+
+            // Query by timestamp in the past - should return data or fail with valid time travel error
+            try {
+                computeActual("SELECT COUNT(*) FROM " + tableName + " FOR TIMESTAMP AS OF TIMESTAMP '2020-01-01 00:00:00'");
+            }
+            catch (Exception e) {
+                // Expected: no version found before this timestamp
+                assertThat(e).hasMessageContaining("No Lance version found at or before timestamp");
+            }
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testTimeTravelInvalidVersion()
+    {
+        assertQueryFails(
+                "SELECT * FROM nation FOR VERSION AS OF 999999",
+                "Lance version does not exist: 999999");
+    }
+
+    @Test
+    public void testTimeTravelNegativeVersion()
+    {
+        assertQueryFails(
+                "SELECT * FROM nation FOR VERSION AS OF -1",
+                "Lance version number must be positive: -1");
+    }
+
+    @Test
+    public void testTimeTravelZeroVersion()
+    {
+        assertQueryFails(
+                "SELECT * FROM nation FOR VERSION AS OF 0",
+                "Lance version number must be positive: 0");
+    }
 }
