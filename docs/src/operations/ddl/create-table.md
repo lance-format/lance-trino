@@ -1,6 +1,6 @@
-# CREATE TABLE
+# CREATE TABLE / REPLACE TABLE
 
-Create a new table in the Lance catalog.
+Create a new table or replace an existing table in the Lance catalog.
 
 ## Syntax
 
@@ -22,12 +22,25 @@ CREATE OR REPLACE TABLE <table_name>
 AS <query>
 ```
 
+```sql
+REPLACE TABLE <table_name> (
+    <column_name> <data_type> [, ...]
+) [WITH (<property_name> = <value> [, ...])]
+```
+
+```sql
+REPLACE TABLE <table_name>
+[WITH (<property_name> = <value> [, ...])]
+AS <query>
+```
+
 ## Parameters
 
 | Parameter | Description |
 |-----------|-------------|
 | `IF NOT EXISTS` | Optional. Prevents error if the table already exists. |
-| `OR REPLACE` | Optional. Replaces the table if it already exists. |
+| `OR REPLACE` | Optional. Replaces the table if it already exists, or creates it if it doesn't. |
+| `REPLACE TABLE` | Replaces an existing table. The table must already exist. |
 | `table_name` | Fully qualified table name: `catalog.schema.table`. |
 | `column_name` | Name of the column. |
 | `data_type` | Data type of the column. See [Data Types](../data-types.md). |
@@ -86,7 +99,9 @@ FROM lance.default.orders
 GROUP BY region;
 ```
 
-### Replace existing table
+### Replace existing table (CREATE OR REPLACE)
+
+Use `CREATE OR REPLACE` to replace a table if it exists, or create it if it doesn't:
 
 ```sql
 CREATE OR REPLACE TABLE lance.default.daily_stats
@@ -94,6 +109,41 @@ AS SELECT
     current_date as report_date,
     COUNT(*) as total_orders
 FROM lance.default.orders;
+```
+
+### Replace table with new data (REPLACE TABLE AS SELECT)
+
+Use `REPLACE TABLE` to completely replace an existing table's data and schema:
+
+```sql
+-- Replace table with new data (same schema)
+REPLACE TABLE lance.default.user_stats
+AS SELECT user_id, COUNT(*) as order_count
+FROM lance.default.orders
+GROUP BY user_id;
+```
+
+Replace with a different schema:
+
+```sql
+-- Original table had: (id BIGINT, name VARCHAR, value DOUBLE)
+-- Replace with completely different schema
+REPLACE TABLE lance.default.metrics
+AS SELECT
+    VARCHAR 'metric_1' as metric_name,
+    VARBINARY X'0102030405' as data;
+```
+
+### Replace table with empty schema
+
+Replace a table with a new schema but no data:
+
+```sql
+REPLACE TABLE lance.default.staging (
+    new_id BIGINT,
+    description VARCHAR,
+    created_at DATE
+);
 ```
 
 ### Create table with blob columns

@@ -139,6 +139,79 @@ public abstract class BaseLanceConnectorSmokeTest
     }
 
     @Test
+    public void testReplaceTableAsSelect()
+    {
+        String tableName = "test_rtas_" + System.currentTimeMillis();
+        try {
+            // Create initial table with data
+            assertUpdate("CREATE TABLE " + tableName + " (id BIGINT, name VARCHAR, value DOUBLE)");
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.3)", 2);
+
+            // Replace with new data
+            assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT BIGINT '10' AS id, VARCHAR 'NewAlice' AS name, DOUBLE '100.0' AS value", 1);
+
+            // Verify old data is gone and new data is present
+            assertQuery("SELECT COUNT(*) FROM " + tableName, "SELECT 1");
+            assertQuery("SELECT id, name FROM " + tableName, "SELECT CAST(10 AS BIGINT), CAST('NewAlice' AS VARCHAR)");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testReplaceTableAsSelectDifferentSchema()
+    {
+        String tableName = "test_rtas_schema_" + System.currentTimeMillis();
+        try {
+            // Create initial table with schema: (id BIGINT, name VARCHAR, value DOUBLE)
+            assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '1' AS id, VARCHAR 'Alice' AS name, DOUBLE '10.5' AS value", 1);
+
+            // Replace with incompatible schema: (id VARCHAR, data VARBINARY)
+            assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT VARCHAR 'row1' AS id, VARBINARY 'abc' AS data", 1);
+
+            // Verify new schema and data
+            assertQuery("SELECT COUNT(*) FROM " + tableName, "SELECT 1");
+            assertQuery("SELECT id FROM " + tableName, "SELECT CAST('row1' AS VARCHAR)");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testCreateOrReplaceTableAsSelectOnNonExistent()
+    {
+        String tableName = "test_cortas_new_" + System.currentTimeMillis();
+        try {
+            // CREATE OR REPLACE on non-existent table should create it
+            assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT BIGINT '1' AS id, VARCHAR 'Alice' AS name", 1);
+
+            assertQuery("SELECT COUNT(*) FROM " + tableName, "SELECT 1");
+            assertQuery("SELECT id, name FROM " + tableName, "SELECT CAST(1 AS BIGINT), CAST('Alice' AS VARCHAR)");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testCreateOrReplaceTableIdempotent()
+    {
+        String tableName = "test_cortas_idempotent_" + System.currentTimeMillis();
+        try {
+            // Run CREATE OR REPLACE twice - both should succeed
+            assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT BIGINT '1' AS id, VARCHAR 'one' AS name", 1);
+            assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT BIGINT '1' AS id, VARCHAR 'one' AS name", 1);
+
+            assertQuery("SELECT COUNT(*) FROM " + tableName, "SELECT 1");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
     public void testInsertMultipleRows()
     {
         String tableName = "test_insert_multi_" + System.currentTimeMillis();
