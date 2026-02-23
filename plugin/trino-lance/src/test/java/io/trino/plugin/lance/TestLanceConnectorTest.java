@@ -193,13 +193,7 @@ public class TestLanceConnectorTest
         abort("Lance does not support concurrent updates reliably");
     }
 
-    @Test
-    @Override
-    public void testInsertRowConcurrently()
-    {
-        // Lance concurrent append requires fixes in lance-core that are not yet available
-        abort("Lance concurrent append support pending upstream fix");
-    }
+    // testInsertRowConcurrently - use default implementation from base class
 
     @Test
     @Override
@@ -265,8 +259,8 @@ public class TestLanceConnectorTest
     @Override
     public void testCreateOrReplaceTableConcurrently()
     {
-        // Lance doesn't handle concurrent writes well
-        abort("Lance does not support concurrent table creation");
+        // CREATE OR REPLACE TABLE has semantic conflicts that cannot be resolved with retries
+        abort("Lance does not support concurrent CREATE OR REPLACE TABLE");
     }
 
     @Test
