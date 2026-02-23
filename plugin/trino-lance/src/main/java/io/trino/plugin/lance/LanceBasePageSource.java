@@ -45,10 +45,12 @@ public abstract class LanceBasePageSource
         this(tableHandle, columns, List.of(), scannerFactory, storageOptions, userIdentity, parentAllocator);
     }
 
-    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity, BufferAllocator allocator)
+    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity, BufferAllocator parentAllocator)
     {
         this.tableHandle = tableHandle;
-        this.bufferAllocator = allocator;
+        // Create a child allocator for this page source. This provides isolation and proper resource tracking.
+        // The child allocator will be closed when the page source is closed.
+        this.bufferAllocator = parentAllocator.newChildAllocator(tableHandle.getTableName(), 0, Long.MAX_VALUE);
 
         try {
             this.lanceArrowToPageScanner =
@@ -67,8 +69,10 @@ public abstract class LanceBasePageSource
         catch (RuntimeException e) {
             // Handle concurrent modification errors (e.g., fragment not found due to concurrent update)
             if (isConcurrentModificationError(e)) {
+                bufferAllocator.close();
                 throw new TrinoException(TRANSACTION_CONFLICT, "Concurrent modification detected", e);
             }
+            bufferAllocator.close();
             throw e;
         }
         this.pageBuilder =
@@ -139,6 +143,7 @@ public abstract class LanceBasePageSource
     public void close()
     {
         lanceArrowToPageScanner.close();
-        // Don't close the allocator - it's the shared LanceRuntime allocator
+        // Close the child allocator - this releases resources allocated by this page source
+        bufferAllocator.close();
     }
 }

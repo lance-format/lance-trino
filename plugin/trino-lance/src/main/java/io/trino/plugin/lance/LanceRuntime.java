@@ -334,7 +334,10 @@ public class LanceRuntime
             optionsBuilder.setStorageOptions(storageOptions);
         }
 
-        return Dataset.open(tablePath, optionsBuilder.build());
+        // Use our shared allocator instead of letting Dataset create its own.
+        // This prevents the allocator from being closed when datasets are closed,
+        // which would break concurrent operations that are still using scanners.
+        return Dataset.open(allocator, tablePath, optionsBuilder.build());
     }
 
     public long getLatestVersion(String userIdentity, String tablePath, Map<String, String> storageOptions)
@@ -590,13 +593,9 @@ public class LanceRuntime
             }
         }
 
-        // Close allocator last
-        try {
-            allocator.close();
-        }
-        catch (Exception e) {
-            log.warn(e, "Failed to close Arrow allocator during shutdown");
-        }
+        // Note: We intentionally do NOT close the allocator here.
+        // Page sources may still be using the allocator asynchronously.
+        // Arrow allocators just manage memory and will be cleaned up on JVM exit.
     }
 
     // ================== Cache Key ==================
