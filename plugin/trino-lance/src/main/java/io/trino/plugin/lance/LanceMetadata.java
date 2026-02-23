@@ -72,6 +72,8 @@ import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateEmptyTableRequest;
 import org.lance.namespace.model.CreateEmptyTableResponse;
 import org.lance.namespace.model.CreateNamespaceRequest;
+import org.lance.namespace.model.DeclareTableRequest;
+import org.lance.namespace.model.DeclareTableResponse;
 import org.lance.namespace.model.DescribeNamespaceRequest;
 import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
@@ -819,6 +821,7 @@ public class LanceMetadata
         String existingPath = getTablePath(session, tableName);
         String tablePath;
         boolean tableExisted = existingPath != null;
+        Map<String, String> storageOptions;
 
         if (tableExisted) {
             if (!replace) {
@@ -826,12 +829,20 @@ public class LanceMetadata
             }
             log.debug("beginCreateTable: replacing existing table at: %s", existingPath);
             tablePath = existingPath;
+            storageOptions = getStorageOptionsForTable(tableId);
         }
         else {
-            CreateEmptyTableRequest createRequest = new CreateEmptyTableRequest()
-                    .id(tableId);
-            CreateEmptyTableResponse createResponse = getNamespace().createEmptyTable(createRequest);
-            tablePath = createResponse.getLocation();
+            // Use declareTable to reserve the location without creating the actual table.
+            // The table will only be created in finishCreateTable after fragments are written.
+            DeclareTableRequest declareRequest = new DeclareTableRequest();
+            tableId.forEach(declareRequest::addIdItem);
+            DeclareTableResponse declareResponse = getNamespace().declareTable(declareRequest);
+            tablePath = declareResponse.getLocation();
+            // Get storage options from the declare response for new tables
+            storageOptions = declareResponse.getStorageOptions();
+            if (storageOptions == null) {
+                storageOptions = new HashMap<>();
+            }
         }
 
         List<LanceColumnHandle> columns = tableMetadata.getColumns().stream()
@@ -841,8 +852,6 @@ public class LanceMetadata
 
         Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
         String schemaJson = arrowSchema.toJson();
-
-        Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
 
         String transactionId = null;
         if (tableExisted) {
