@@ -39,7 +39,7 @@ public class TestLanceCountPageSource
     private static final SchemaTableName TEST_TABLE_1 = new SchemaTableName("default", "test_table1");
 
     private LanceMetadata metadata;
-    private LanceDatasetCache datasetCache;
+    private LanceRuntime runtime;
 
     @BeforeEach
     public void setUp()
@@ -52,11 +52,10 @@ public class TestLanceCountPageSource
         LanceConfig lanceConfig = new LanceConfig()
                 .setSingleLevelNs(true);
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
-        LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(lanceConfig, catalogProperties);
-        this.datasetCache = new LanceDatasetCache(lanceConfig);
+        this.runtime = new LanceRuntime(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-        this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, datasetCache, commitTaskDataCodec, mergeCommitDataCodec);
+        this.metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
     }
 
     @Test
@@ -73,7 +72,7 @@ public class TestLanceCountPageSource
                 countHandle,
                 Collections.emptyMap(),
                 null,
-                datasetCache)) {
+                runtime)) {
             assertThat(pageSource.isFinished()).isFalse();
 
             Page page = pageSource.getNextPage();

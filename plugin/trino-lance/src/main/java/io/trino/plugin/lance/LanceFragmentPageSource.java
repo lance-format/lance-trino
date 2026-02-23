@@ -35,14 +35,14 @@ public class LanceFragmentPageSource
     private static final Logger log = Logger.get(LanceFragmentPageSource.class);
     private static final String LANCE_INTERNAL_ROW_ADDRESS = "_rowaddr";
 
-    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<Integer> fragments, Map<String, String> storageOptions, int readBatchSize, String userIdentity, LanceDatasetCache datasetCache)
+    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<Integer> fragments, Map<String, String> storageOptions, int readBatchSize, String userIdentity, LanceRuntime runtime)
     {
-        this(tableHandle, columns, List.of(), fragments, storageOptions, readBatchSize, userIdentity, datasetCache);
+        this(tableHandle, columns, List.of(), fragments, storageOptions, readBatchSize, userIdentity, runtime);
     }
 
-    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, List<Integer> fragments, Map<String, String> storageOptions, int readBatchSize, String userIdentity, LanceDatasetCache datasetCache)
+    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, List<Integer> fragments, Map<String, String> storageOptions, int readBatchSize, String userIdentity, LanceRuntime runtime)
     {
-        super(tableHandle, prepareColumns(columns), filterProjectionColumns, createScannerFactory(fragments, hasRowAddressColumn(columns), readBatchSize, datasetCache), storageOptions, userIdentity);
+        super(tableHandle, prepareColumns(columns), filterProjectionColumns, createScannerFactory(fragments, hasRowAddressColumn(columns), readBatchSize, runtime), storageOptions, userIdentity, runtime.getAllocator());
     }
 
     /**
@@ -69,9 +69,9 @@ public class LanceFragmentPageSource
         return columns.stream().anyMatch(col -> LANCE_ROW_ADDRESS.equals(col.name()));
     }
 
-    private static ScannerFactory createScannerFactory(List<Integer> fragments, boolean includeRowAddress, int readBatchSize, LanceDatasetCache datasetCache)
+    private static ScannerFactory createScannerFactory(List<Integer> fragments, boolean includeRowAddress, int readBatchSize, LanceRuntime runtime)
     {
-        return new FragmentScannerFactory(fragments, includeRowAddress, readBatchSize, datasetCache);
+        return new FragmentScannerFactory(fragments, includeRowAddress, readBatchSize, runtime);
     }
 
     /**
@@ -86,16 +86,16 @@ public class LanceFragmentPageSource
         private final List<Integer> fragmentIds;
         private final boolean includeRowAddress;
         private final int readBatchSize;
-        private final LanceDatasetCache datasetCache;
+        private final LanceRuntime runtime;
         private Dataset lanceDataset;
         private LanceScanner lanceScanner;
 
-        public FragmentScannerFactory(List<Integer> fragmentIds, boolean includeRowAddress, int readBatchSize, LanceDatasetCache datasetCache)
+        public FragmentScannerFactory(List<Integer> fragmentIds, boolean includeRowAddress, int readBatchSize, LanceRuntime runtime)
         {
             this.fragmentIds = fragmentIds;
             this.includeRowAddress = includeRowAddress;
             this.readBatchSize = readBatchSize;
-            this.datasetCache = datasetCache;
+            this.runtime = runtime;
         }
 
         @Override
@@ -129,8 +129,8 @@ public class LanceFragmentPageSource
             // When scanning multiple fragments with a substrait filter, Lance will automatically
             // use scalar indexes (btree, bitmap) if they cover the filter columns
             // Dataset is cached, so we don't close it here - the cache manages its lifecycle
-            this.lanceDataset = datasetCache.getDataset(userIdentity, tablePath, datasetVersion, storageOptions);
-            this.lanceScanner = datasetCache.openDatasetScanner(
+            this.lanceDataset = runtime.getDataset(userIdentity, tablePath, datasetVersion, storageOptions);
+            this.lanceScanner = runtime.openDatasetScanner(
                     userIdentity, tablePath, datasetVersion, fragmentIds, optionsBuilder.build(), storageOptions);
             return lanceScanner;
         }

@@ -18,7 +18,6 @@ import io.trino.spi.PageBuilder;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSource;
 import org.apache.arrow.memory.BufferAllocator;
-import org.apache.arrow.memory.RootAllocator;
 
 import java.util.List;
 import java.util.Map;
@@ -32,9 +31,6 @@ import static io.trino.spi.StandardErrorCode.TRANSACTION_CONFLICT;
 public abstract class LanceBasePageSource
         implements ConnectorPageSource
 {
-    private static final BufferAllocator allocator = new RootAllocator(
-            RootAllocator.configBuilder().from(RootAllocator.defaultConfig()).maxAllocation(Integer.MAX_VALUE).build());
-
     protected final LanceTableHandle tableHandle;
 
     protected final AtomicLong readBytes = new AtomicLong();
@@ -44,15 +40,15 @@ public abstract class LanceBasePageSource
     protected final BufferAllocator bufferAllocator;
     protected final PageBuilder pageBuilder;
 
-    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity)
+    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity, BufferAllocator parentAllocator)
     {
-        this(tableHandle, columns, List.of(), scannerFactory, storageOptions, userIdentity);
+        this(tableHandle, columns, List.of(), scannerFactory, storageOptions, userIdentity, parentAllocator);
     }
 
-    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity)
+    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity, BufferAllocator allocator)
     {
         this.tableHandle = tableHandle;
-        this.bufferAllocator = allocator.newChildAllocator(tableHandle.getTableName(), 1024, Long.MAX_VALUE);
+        this.bufferAllocator = allocator;
 
         try {
             this.lanceArrowToPageScanner =
@@ -71,10 +67,8 @@ public abstract class LanceBasePageSource
         catch (RuntimeException e) {
             // Handle concurrent modification errors (e.g., fragment not found due to concurrent update)
             if (isConcurrentModificationError(e)) {
-                bufferAllocator.close();
                 throw new TrinoException(TRANSACTION_CONFLICT, "Concurrent modification detected", e);
             }
-            bufferAllocator.close();
             throw e;
         }
         this.pageBuilder =
@@ -145,6 +139,6 @@ public abstract class LanceBasePageSource
     public void close()
     {
         lanceArrowToPageScanner.close();
-        bufferAllocator.close();
+        // Don't close the allocator - it's the shared LanceRuntime allocator
     }
 }

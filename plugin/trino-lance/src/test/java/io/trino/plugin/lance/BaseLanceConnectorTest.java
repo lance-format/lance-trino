@@ -187,13 +187,7 @@ public abstract class BaseLanceConnectorTest
         abort("Lance uses filesystem paths which have length limits");
     }
 
-    @Test
-    @Override
-    public void testCreateOrReplaceTableConcurrently()
-    {
-        // CREATE OR REPLACE TABLE has semantic conflicts that cannot be resolved with retries
-        abort("Lance does not support concurrent CREATE OR REPLACE TABLE");
-    }
+    // testCreateOrReplaceTableConcurrently - use default implementation from base class
 
     @Test
     @Override

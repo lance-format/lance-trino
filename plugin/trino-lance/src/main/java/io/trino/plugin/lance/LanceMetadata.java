@@ -136,23 +136,20 @@ public class LanceMetadata
     private static final Logger log = Logger.get(LanceMetadata.class);
     private static final ConcurrentMap<String, Dataset> transactionDatasets = new ConcurrentHashMap<>();
 
-    private final LanceNamespaceHolder namespaceHolder;
+    private final LanceRuntime runtime;
     private final LanceConfig lanceConfig;
-    private final LanceDatasetCache datasetCache;
     private final JsonCodec<LanceCommitTaskData> commitTaskDataCodec;
     private final JsonCodec<LanceMergeCommitData> mergeCommitDataCodec;
 
     @Inject
     public LanceMetadata(
-            LanceNamespaceHolder namespaceHolder,
+            LanceRuntime runtime,
             LanceConfig lanceConfig,
-            LanceDatasetCache datasetCache,
             JsonCodec<LanceCommitTaskData> commitTaskDataCodec,
             JsonCodec<LanceMergeCommitData> mergeCommitDataCodec)
     {
-        this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
+        this.runtime = requireNonNull(runtime, "runtime is null");
         this.lanceConfig = requireNonNull(lanceConfig, "lanceConfig is null");
-        this.datasetCache = requireNonNull(datasetCache, "datasetCache is null");
         this.commitTaskDataCodec = requireNonNull(commitTaskDataCodec, "commitTaskDataCodec is null");
         this.mergeCommitDataCodec = requireNonNull(mergeCommitDataCodec, "mergeCommitDataCodec is null");
     }
@@ -162,13 +159,13 @@ public class LanceMetadata
     @Override
     public List<String> listSchemaNames(ConnectorSession session)
     {
-        if (namespaceHolder.isSingleLevelNs()) {
-            return List.of(LanceNamespaceHolder.DEFAULT_SCHEMA);
+        if (runtime.isSingleLevelNs()) {
+            return List.of(LanceRuntime.DEFAULT_SCHEMA);
         }
 
         ListNamespacesRequest request = new ListNamespacesRequest();
-        if (namespaceHolder.getParentPrefix().isPresent()) {
-            request.setId(namespaceHolder.getParentPrefix().get());
+        if (runtime.getParentPrefix().isPresent()) {
+            request.setId(runtime.getParentPrefix().get());
         }
         ListNamespacesResponse response = getNamespace().listNamespaces(request);
         Set<String> namespaces = response.getNamespaces();
@@ -181,11 +178,11 @@ public class LanceMetadata
     @Override
     public void createSchema(ConnectorSession session, String schemaName, Map<String, Object> properties, TrinoPrincipal owner)
     {
-        if (namespaceHolder.isSingleLevelNs()) {
+        if (runtime.isSingleLevelNs()) {
             throw new TrinoException(NOT_SUPPORTED, "This connector does not support creating schemas");
         }
 
-        List<String> namespaceId = namespaceHolder.trinoSchemaToLanceNamespace(schemaName);
+        List<String> namespaceId = runtime.trinoSchemaToLanceNamespace(schemaName);
         log.debug("createSchema: creating namespace with id=%s for schema '%s'", namespaceId, schemaName);
 
         CreateNamespaceRequest request = new CreateNamespaceRequest();
@@ -207,7 +204,7 @@ public class LanceMetadata
     @Override
     public void dropSchema(ConnectorSession session, String schemaName, boolean cascade)
     {
-        if (namespaceHolder.isSingleLevelNs()) {
+        if (runtime.isSingleLevelNs()) {
             throw new TrinoException(NOT_SUPPORTED, "This connector does not support dropping schemas");
         }
 
@@ -215,7 +212,7 @@ public class LanceMetadata
             throw new TrinoException(NOT_SUPPORTED, "This connector does not support dropping schemas with CASCADE option");
         }
 
-        List<String> namespaceId = namespaceHolder.trinoSchemaToLanceNamespace(schemaName);
+        List<String> namespaceId = runtime.trinoSchemaToLanceNamespace(schemaName);
 
         DropNamespaceRequest request = new DropNamespaceRequest();
         request.setId(namespaceId);
@@ -226,12 +223,12 @@ public class LanceMetadata
     @Override
     public Map<String, Object> getSchemaProperties(ConnectorSession session, String schemaName)
     {
-        if (namespaceHolder.isSingleLevelNs() && LanceNamespaceHolder.DEFAULT_SCHEMA.equals(schemaName)) {
+        if (runtime.isSingleLevelNs() && LanceRuntime.DEFAULT_SCHEMA.equals(schemaName)) {
             return Collections.emptyMap();
         }
 
         DescribeNamespaceRequest request = new DescribeNamespaceRequest();
-        request.setId(namespaceHolder.trinoSchemaToLanceNamespace(schemaName));
+        request.setId(runtime.trinoSchemaToLanceNamespace(schemaName));
         DescribeNamespaceResponse response = getNamespace().describeNamespace(request);
 
         Map<String, String> props = response.getProperties();
@@ -256,7 +253,7 @@ public class LanceMetadata
 
         String tablePath = getTablePath(session, name);
         if (tablePath != null) {
-            List<String> tableId = namespaceHolder.getTableId(name.getSchemaName(), name.getTableName());
+            List<String> tableId = runtime.getTableId(name.getSchemaName(), name.getTableName());
             Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
             String userIdentity = session.getUser();
 
@@ -265,7 +262,7 @@ public class LanceMetadata
                 datasetVersion = resolveVersion(session, tablePath, storageOptions, endVersion.get());
             }
             else {
-                datasetVersion = datasetCache.getLatestVersion(userIdentity, tablePath, storageOptions);
+                datasetVersion = runtime.getLatestVersion(userIdentity, tablePath, storageOptions);
             }
 
             return new LanceTableHandle(name.getSchemaName(), name.getTableName(), tablePath, tableId, storageOptions, datasetVersion);
@@ -311,7 +308,7 @@ public class LanceMetadata
         }
 
         // Verify the version exists
-        if (!datasetCache.versionExists(userIdentity, tablePath, versionNumber, storageOptions)) {
+        if (!runtime.versionExists(userIdentity, tablePath, versionNumber, storageOptions)) {
             throw new TrinoException(INVALID_ARGUMENTS, "Lance version does not exist: " + versionNumber);
         }
 
@@ -323,7 +320,7 @@ public class LanceMetadata
     {
         long timestampMillis = getTimestampMillis(session, version, versionType);
 
-        Optional<Long> resolvedVersion = datasetCache.getVersionAtTimestamp(
+        Optional<Long> resolvedVersion = runtime.getVersionAtTimestamp(
                 userIdentity, tablePath, timestampMillis, storageOptions);
 
         if (resolvedVersion.isEmpty()) {
@@ -376,7 +373,7 @@ public class LanceMetadata
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
             String userIdentity = session.getUser();
-            List<ColumnMetadata> columnsMetadata = datasetCache.getColumnMetadata(
+            List<ColumnMetadata> columnsMetadata = runtime.getColumnMetadata(
                     userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
             SchemaTableName schemaTableName =
                     new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName());
@@ -391,13 +388,13 @@ public class LanceMetadata
     @Override
     public List<SchemaTableName> listTables(ConnectorSession session, Optional<String> schemaNameOrNull)
     {
-        String schema = schemaNameOrNull.orElse(LanceNamespaceHolder.DEFAULT_SCHEMA);
+        String schema = schemaNameOrNull.orElse(LanceRuntime.DEFAULT_SCHEMA);
 
         if (!schemaExists(schema)) {
             return Collections.emptyList();
         }
 
-        List<String> namespaceId = namespaceHolder.trinoSchemaToLanceNamespace(schema);
+        List<String> namespaceId = runtime.trinoSchemaToLanceNamespace(schema);
         ListTablesRequest request = new ListTablesRequest();
         request.setId(namespaceId);
 
@@ -418,7 +415,7 @@ public class LanceMetadata
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
             String userIdentity = session.getUser();
-            return datasetCache.getColumnHandles(userIdentity, lanceTableHandle.getTablePath(),
+            return runtime.getColumnHandles(userIdentity, lanceTableHandle.getTablePath(),
                     lanceTableHandle.getDatasetVersion(), storageOptions);
         }
         catch (Exception e) {
@@ -433,16 +430,16 @@ public class LanceMetadata
         requireNonNull(prefix, "prefix is null");
         ImmutableMap.Builder<SchemaTableName, List<ColumnMetadata>> columns = ImmutableMap.builder();
 
-        String schemaName = prefix.getSchema().orElse(LanceNamespaceHolder.DEFAULT_SCHEMA);
+        String schemaName = prefix.getSchema().orElse(LanceRuntime.DEFAULT_SCHEMA);
         String userIdentity = session.getUser();
         for (SchemaTableName tableName : listTables(session, Optional.of(schemaName))) {
             try {
                 String tablePath = getTablePath(session, tableName);
                 if (tablePath != null) {
-                    List<String> tableId = namespaceHolder.getTableId(tableName.getSchemaName(), tableName.getTableName());
+                    List<String> tableId = runtime.getTableId(tableName.getSchemaName(), tableName.getTableName());
                     Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
                     // Use null version for listing (always get latest)
-                    List<ColumnMetadata> columnsMetadata = datasetCache.getColumnMetadata(userIdentity, tablePath, null, storageOptions);
+                    List<ColumnMetadata> columnsMetadata = runtime.getColumnMetadata(userIdentity, tablePath, null, storageOptions);
                     columns.put(tableName, columnsMetadata);
                 }
             }
@@ -475,7 +472,7 @@ public class LanceMetadata
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
             String userIdentity = session.getUser();
-            ManifestSummary summary = datasetCache.getManifestSummary(
+            ManifestSummary summary = runtime.getManifestSummary(
                     userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
             log.debug("getTableStatistics: table=%s, totalRows=%d, totalFilesSize=%d, totalFragments=%d",
@@ -598,7 +595,7 @@ public class LanceMetadata
         // Get all columns from the table for building the full schema
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
         String userIdentity = session.getUser();
-        List<LanceColumnHandle> allColumns = datasetCache.getColumnHandleList(
+        List<LanceColumnHandle> allColumns = runtime.getColumnHandleList(
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
         // Build field ID map from all column handles
@@ -739,7 +736,7 @@ public class LanceMetadata
         getNamespace().dropTable(dropRequest);
 
         String userIdentity = session.getUser();
-        datasetCache.invalidate(userIdentity, tablePath);
+        runtime.invalidate(userIdentity, tablePath);
     }
 
     // ===== CREATE TABLE =====
@@ -759,7 +756,7 @@ public class LanceMetadata
         LancePageToArrowConverter.validateBlobColumns(tableMetadata.getColumns(), blobColumns);
         LancePageToArrowConverter.validateVectorColumns(tableMetadata.getColumns(), vectorColumns);
 
-        List<String> tableId = namespaceHolder.getTableId(tableName.getSchemaName(), tableName.getTableName());
+        List<String> tableId = runtime.getTableId(tableName.getSchemaName(), tableName.getTableName());
         String existingPath = getTablePath(session, tableName);
 
         if (existingPath != null) {
@@ -774,10 +771,10 @@ public class LanceMetadata
             Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
             String userIdentity = session.getUser();
             // For write operations, open dataset directly (not cached)
-            try (Dataset dataset = datasetCache.openDatasetDirect(userIdentity, existingPath, null, storageOptions)) {
+            try (Dataset dataset = runtime.openDatasetDirect(userIdentity, existingPath, null, storageOptions)) {
                 commitOverwrite(dataset, List.of(), arrowSchema, storageOptions);
             }
-            datasetCache.invalidate(userIdentity, existingPath);
+            runtime.invalidate(userIdentity, existingPath);
             log.debug("createTable: replaced table %s at %s", tableName, existingPath);
             return;
         }
@@ -817,7 +814,7 @@ public class LanceMetadata
         LancePageToArrowConverter.validateBlobColumns(tableMetadata.getColumns(), blobColumns);
         LancePageToArrowConverter.validateVectorColumns(tableMetadata.getColumns(), vectorColumns);
 
-        List<String> tableId = namespaceHolder.getTableId(tableName.getSchemaName(), tableName.getTableName());
+        List<String> tableId = runtime.getTableId(tableName.getSchemaName(), tableName.getTableName());
         String existingPath = getTablePath(session, tableName);
         String tablePath;
         boolean tableExisted = existingPath != null;
@@ -932,7 +929,7 @@ public class LanceMetadata
         }
 
         String userIdentity = session.getUser();
-        datasetCache.invalidate(userIdentity, handle.tablePath());
+        runtime.invalidate(userIdentity, handle.tablePath());
         return Optional.empty();
     }
 
@@ -958,12 +955,12 @@ public class LanceMetadata
         Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
         String userIdentity = session.getUser();
         // For write operations, get schema but open dataset directly (not cached)
-        Schema arrowSchema = datasetCache.getSchema(userIdentity, tablePath, null, storageOptions);
+        Schema arrowSchema = runtime.getSchema(userIdentity, tablePath, null, storageOptions);
         String schemaJson = arrowSchema.toJson();
 
         String transactionId = UUID.randomUUID().toString();
         // For write operations, open dataset directly (not cached)
-        Dataset dataset = datasetCache.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
+        Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
         transactionDatasets.put(transactionId, dataset);
 
         log.debug("beginInsert: table=%s, path=%s, columns=%d, transactionId=%s", tableName, tablePath, columns.size(), transactionId);
@@ -1009,7 +1006,7 @@ public class LanceMetadata
             commitAppend(dataset, allFragmentsJson, storageOptions);
 
             String userIdentity = session.getUser();
-            datasetCache.invalidate(userIdentity, handle.tablePath());
+            runtime.invalidate(userIdentity, handle.tablePath());
             return Optional.empty();
         }
         finally {
@@ -1055,12 +1052,12 @@ public class LanceMetadata
         String transactionId = UUID.randomUUID().toString();
         String userIdentity = session.getUser();
         // For write operations, open dataset directly (not cached)
-        Dataset dataset = datasetCache.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
+        Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
         long readVersion = dataset.version();
         transactionDatasets.put(transactionId, dataset);
 
-        List<LanceColumnHandle> columns = datasetCache.getColumnHandleList(userIdentity, tablePath, null, storageOptions);
-        Schema arrowSchema = datasetCache.getSchema(userIdentity, tablePath, null, storageOptions);
+        List<LanceColumnHandle> columns = runtime.getColumnHandleList(userIdentity, tablePath, null, storageOptions);
+        Schema arrowSchema = runtime.getSchema(userIdentity, tablePath, null, storageOptions);
         String schemaJson = arrowSchema.toJson();
 
         log.debug("beginMerge: table=%s, path=%s, version=%d, transactionId=%s",
@@ -1157,7 +1154,7 @@ public class LanceMetadata
             }
 
             String userIdentity = session.getUser();
-            datasetCache.invalidate(userIdentity, handle.getTablePath());
+            runtime.invalidate(userIdentity, handle.getTablePath());
         }
         catch (RuntimeException e) {
             if (isCommitConflict(e)) {
@@ -1174,21 +1171,21 @@ public class LanceMetadata
 
     private LanceNamespace getNamespace()
     {
-        return namespaceHolder.getNamespace();
+        return runtime.getNamespace();
     }
 
     private boolean schemaExists(String schema)
     {
-        if (namespaceHolder.isSingleLevelNs() && LanceNamespaceHolder.DEFAULT_SCHEMA.equals(schema)) {
+        if (runtime.isSingleLevelNs() && LanceRuntime.DEFAULT_SCHEMA.equals(schema)) {
             return true;
         }
-        if (namespaceHolder.isSingleLevelNs()) {
+        if (runtime.isSingleLevelNs()) {
             return false;
         }
 
         try {
             NamespaceExistsRequest request = new NamespaceExistsRequest();
-            request.setId(namespaceHolder.trinoSchemaToLanceNamespace(schema));
+            request.setId(runtime.trinoSchemaToLanceNamespace(schema));
             getNamespace().namespaceExists(request);
             return true;
         }
@@ -1199,12 +1196,12 @@ public class LanceMetadata
 
     private String getTablePath(ConnectorSession session, SchemaTableName schemaTableName)
     {
-        if (namespaceHolder.isSingleLevelNs() && !LanceNamespaceHolder.DEFAULT_SCHEMA.equals(schemaTableName.getSchemaName())) {
+        if (runtime.isSingleLevelNs() && !LanceRuntime.DEFAULT_SCHEMA.equals(schemaTableName.getSchemaName())) {
             return null;
         }
 
         try {
-            List<String> tableId = namespaceHolder.getTableId(schemaTableName.getSchemaName(), schemaTableName.getTableName());
+            List<String> tableId = runtime.getTableId(schemaTableName.getSchemaName(), schemaTableName.getTableName());
             DescribeTableRequest request = new DescribeTableRequest()
                     .id(tableId);
             DescribeTableResponse response = getNamespace().describeTable(request);
@@ -1230,7 +1227,7 @@ public class LanceMetadata
             log.debug("Failed to get storage options from describeTable for %s: %s", tableId, e.getMessage());
         }
 
-        Map<String, String> nsOptions = namespaceHolder.getNamespaceStorageOptions();
+        Map<String, String> nsOptions = runtime.getNamespaceStorageOptions();
         if (!nsOptions.isEmpty()) {
             return nsOptions;
         }
@@ -1277,7 +1274,7 @@ public class LanceMetadata
     private void createEmptyDataset(String datasetUri, Schema schema, WriteParams params)
     {
         log.debug("Creating empty dataset at: %s", datasetUri);
-        Dataset.create(LanceNamespaceHolder.getAllocator(), datasetUri, schema, params).close();
+        Dataset.create(runtime.getAllocator(), datasetUri, schema, params).close();
     }
 
     private void commitAppend(Dataset dataset, List<String> serializedFragments, Map<String, String> storageOptions)
@@ -1311,7 +1308,7 @@ public class LanceMetadata
         log.debug("Creating dataset with %d fragments at: %s", serializedFragments.size(), datasetUri);
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        Dataset.create(LanceNamespaceHolder.getAllocator(), datasetUri, schema, params).close();
+        Dataset.create(runtime.getAllocator(), datasetUri, schema, params).close();
 
         FragmentOperation.Overwrite overwriteOp = new FragmentOperation.Overwrite(fragments, schema);
 
@@ -1321,7 +1318,7 @@ public class LanceMetadata
 
         try (Dataset dataset = Dataset.open(datasetUri, readOptions)) {
             Dataset.commit(
-                    LanceNamespaceHolder.getAllocator(),
+                    runtime.getAllocator(),
                     datasetUri,
                     overwriteOp,
                     Optional.of(dataset.version()),
@@ -1383,9 +1380,9 @@ public class LanceMetadata
     }
 
     @VisibleForTesting
-    public LanceNamespaceHolder getNamespaceHolder()
+    public LanceRuntime getRuntime()
     {
-        return namespaceHolder;
+        return runtime;
     }
 
     /**
