@@ -62,6 +62,7 @@ import java.util.function.Consumer;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.airlift.slice.Slices.wrappedBuffer;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
+import static io.trino.spi.StandardErrorCode.TRANSACTION_CONFLICT;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.DateTimeEncoding.packDateTimeWithZone;
 import static io.trino.spi.type.DateType.DATE;
@@ -182,6 +183,14 @@ public class LanceArrowToPageScanner
         }
         catch (IOException e) {
             throw new RuntimeException("Error loading next batch!", e);
+        }
+        catch (IllegalStateException e) {
+            // Handle allocator closed during concurrent operations
+            if (e.getMessage() != null && e.getMessage().contains("allocator")) {
+                throw new TrinoException(TRANSACTION_CONFLICT,
+                        "Concurrent operation conflict: allocator was closed during read", e);
+            }
+            throw e;
         }
     }
 

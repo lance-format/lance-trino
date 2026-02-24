@@ -42,17 +42,17 @@ public class LancePageSinkProvider
 {
     private final JsonCodec<LanceCommitTaskData> jsonCodec;
     private final JsonCodec<LanceMergeCommitData> mergeCommitDataCodec;
-    private final LanceNamespaceHolder namespaceHolder;
+    private final LanceRuntime runtime;
 
     @Inject
     public LancePageSinkProvider(
             JsonCodec<LanceCommitTaskData> jsonCodec,
             JsonCodec<LanceMergeCommitData> mergeCommitDataCodec,
-            LanceNamespaceHolder namespaceHolder)
+            LanceRuntime runtime)
     {
         this.jsonCodec = requireNonNull(jsonCodec, "jsonCodec is null");
         this.mergeCommitDataCodec = requireNonNull(mergeCommitDataCodec, "mergeCommitDataCodec is null");
-        this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
+        this.runtime = requireNonNull(runtime, "runtime is null");
     }
 
     @Override
@@ -97,7 +97,7 @@ public class LancePageSinkProvider
                 arrowSchema,
                 jsonCodec,
                 mergeCommitDataCodec,
-                namespaceHolder);
+                runtime);
     }
 
     private ConnectorPageSink createPageSink(LanceWritableTableHandle handle)
@@ -114,8 +114,9 @@ public class LancePageSinkProvider
                 arrowSchema,
                 handle.inputColumns(),
                 jsonCodec,
-                namespaceHolder.getNamespace(),
+                runtime.getNamespace(),
                 handle.tableId(),
-                handle.storageOptions());
+                handle.storageOptions(),
+                runtime.getAllocator());
     }
 }

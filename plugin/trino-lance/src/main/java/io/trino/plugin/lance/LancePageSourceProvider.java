@@ -37,16 +37,14 @@ import static java.util.Objects.requireNonNull;
 public class LancePageSourceProvider
         implements ConnectorPageSourceProvider
 {
-    private final LanceNamespaceHolder namespaceHolder;
+    private final LanceRuntime runtime;
     private final LanceConfig lanceConfig;
-    private final LanceDatasetCache datasetCache;
 
     @Inject
-    public LancePageSourceProvider(LanceNamespaceHolder namespaceHolder, LanceConfig lanceConfig, LanceDatasetCache datasetCache)
+    public LancePageSourceProvider(LanceRuntime runtime, LanceConfig lanceConfig)
     {
-        this.namespaceHolder = requireNonNull(namespaceHolder, "namespaceHolder is null");
+        this.runtime = requireNonNull(runtime, "runtime is null");
         this.lanceConfig = requireNonNull(lanceConfig, "lanceConfig is null");
-        this.datasetCache = requireNonNull(datasetCache, "datasetCache is null");
     }
 
     @Override
@@ -69,7 +67,7 @@ public class LancePageSourceProvider
 
         // For COUNT(*) queries, use the count page source
         if (lanceTableHandle.isCountStar()) {
-            return new LanceCountPageSource(lanceTableHandle, storageOptions, userIdentity, datasetCache);
+            return new LanceCountPageSource(lanceTableHandle, storageOptions, userIdentity, runtime);
         }
 
         // Get additional projection columns for filter pushdown (column names only, not for output conversion)
@@ -84,7 +82,7 @@ public class LancePageSourceProvider
                 storageOptions,
                 lanceConfig.getReadBatchSize(),
                 userIdentity,
-                datasetCache);
+                runtime);
     }
 
     /**
@@ -138,7 +136,7 @@ public class LancePageSourceProvider
     {
         try {
             DescribeTableRequest request = new DescribeTableRequest().id(tableId);
-            DescribeTableResponse response = namespaceHolder.getNamespace().describeTable(request);
+            DescribeTableResponse response = runtime.getNamespace().describeTable(request);
             Map<String, String> storageOptions = response.getStorageOptions();
             if (storageOptions != null && !storageOptions.isEmpty()) {
                 return storageOptions;
@@ -148,7 +146,7 @@ public class LancePageSourceProvider
             // Fall through to namespace-level options
         }
 
-        Map<String, String> nsOptions = namespaceHolder.getNamespaceStorageOptions();
+        Map<String, String> nsOptions = runtime.getNamespaceStorageOptions();
         if (!nsOptions.isEmpty()) {
             return nsOptions;
         }

@@ -65,7 +65,7 @@ public class LanceMergeSink
             Schema arrowSchema,
             JsonCodec<LanceCommitTaskData> insertCodec,
             JsonCodec<LanceMergeCommitData> commitDataCodec,
-            LanceNamespaceHolder namespaceHolder)
+            LanceRuntime runtime)
     {
         this.mergeHandle = requireNonNull(mergeHandle, "mergeHandle is null");
         this.commitDataCodec = requireNonNull(commitDataCodec, "commitDataCodec is null");
@@ -75,9 +75,10 @@ public class LanceMergeSink
                 arrowSchema,
                 mergeHandle.inputColumns(),
                 insertCodec,
-                namespaceHolder.getNamespace(),
+                runtime.getNamespace(),
                 mergeHandle.getTableId(),
-                mergeHandle.getStorageOptions());
+                mergeHandle.getStorageOptions(),
+                runtime.getAllocator());
     }
 
     @Override

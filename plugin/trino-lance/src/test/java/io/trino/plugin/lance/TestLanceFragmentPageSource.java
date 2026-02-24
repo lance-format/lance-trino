@@ -44,8 +44,7 @@ public class TestLanceFragmentPageSource
 
     private LanceMetadata metadata;
     private LanceSplitManager splitManager;
-    private LanceNamespaceHolder namespaceHolder;
-    private LanceDatasetCache datasetCache;
+    private LanceRuntime runtime;
 
     @BeforeEach
     public void setUp()
@@ -58,12 +57,11 @@ public class TestLanceFragmentPageSource
         LanceConfig lanceConfig = new LanceConfig()
                 .setSingleLevelNs(true);  // example_db is flat (tables at root)
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
-        namespaceHolder = new LanceNamespaceHolder(lanceConfig, catalogProperties);
-        datasetCache = new LanceDatasetCache(lanceConfig);
+        runtime = new LanceRuntime(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-        this.metadata = new LanceMetadata(namespaceHolder, lanceConfig, datasetCache, commitTaskDataCodec, mergeCommitDataCodec);
-        this.splitManager = new LanceSplitManager(namespaceHolder, datasetCache, lanceConfig);
+        this.metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
+        this.splitManager = new LanceSplitManager(runtime, lanceConfig);
     }
 
     @Test
@@ -76,9 +74,9 @@ public class TestLanceFragmentPageSource
         assertThat(batch.getSplits().size()).isEqualTo(2);
         LanceSplit lanceSplit = (LanceSplit) batch.getSplits().get(0);
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-        List<LanceColumnHandle> columns = datasetCache.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
+        List<LanceColumnHandle> columns = runtime.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
         // testing split 0 is enough
-        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap(), 8192, null, datasetCache)) {
+        try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap(), 8192, null, runtime)) {
             Page page = pageSource.getNextPage();
             // assert row/column count
             assertThat(page.getChannelCount()).isEqualTo(4);
@@ -110,7 +108,7 @@ public class TestLanceFragmentPageSource
 
         // Get column handles
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-        List<LanceColumnHandle> allColumns = datasetCache.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
+        List<LanceColumnHandle> allColumns = runtime.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
         LanceColumnHandle colB = allColumns.stream().filter(c -> c.name().equals("b")).findFirst().orElseThrow();
         LanceColumnHandle colX = allColumns.stream().filter(c -> c.name().equals("x")).findFirst().orElseThrow();
 
@@ -124,7 +122,7 @@ public class TestLanceFragmentPageSource
                 Collections.emptyMap(),
                 8192,
                 null,
-                datasetCache)) {
+                runtime)) {
             Page page = pageSource.getNextPage();
 
             assertThat(page.getChannelCount()).isEqualTo(2);
@@ -154,7 +152,7 @@ public class TestLanceFragmentPageSource
         LanceSplit lanceSplit = (LanceSplit) batch.getSplits().get(0);
 
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
-        List<LanceColumnHandle> allColumns = datasetCache.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
+        List<LanceColumnHandle> allColumns = runtime.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
         LanceColumnHandle colX = allColumns.stream().filter(c -> c.name().equals("x")).findFirst().orElseThrow();
         LanceColumnHandle colC = allColumns.stream().filter(c -> c.name().equals("c")).findFirst().orElseThrow();
 
@@ -168,7 +166,7 @@ public class TestLanceFragmentPageSource
                 Collections.emptyMap(),
                 8192,
                 null,
-                datasetCache)) {
+                runtime)) {
             Page page = pageSource.getNextPage();
 
             // assert only 2 columns returned

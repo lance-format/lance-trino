@@ -20,6 +20,9 @@ import com.google.inject.Inject;
 import io.airlift.log.Logger;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
+import jakarta.annotation.PreDestroy;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.gaul.modernizer_maven_annotations.SuppressModernizer;
@@ -31,12 +34,16 @@ import org.lance.Session;
 import org.lance.Version;
 import org.lance.ipc.LanceScanner;
 import org.lance.ipc.ScanOptions;
+import org.lance.namespace.LanceNamespace;
 import org.lance.schema.LanceField;
 import org.lance.schema.LanceSchema;
 
 import java.io.Closeable;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,38 +58,96 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.spi.type.BigintType.BIGINT;
 
 /**
- * Cache for Lance sessions and datasets.
+ * Central runtime component for Lance connector.
+ * Holds the Arrow allocator, namespace, and dataset/session caches.
  *
  * <p>Key design principles:
  * <ul>
+ *   <li>Single lifecycle: All resources (allocator, namespace, caches) share the same lifecycle.</li>
  *   <li>Session sharing: Different datasets opened by the same user share the same session,
  *       improving cache hit rates for index and metadata caches.</li>
  *   <li>User isolation: Different users get different sessions, ensuring cache isolation.</li>
- *   <li>Version-aware: Datasets are cached by (user, path, version) to support snapshot isolation.
- *       All workers access the same version during a query.</li>
+ *   <li>Version-aware: Datasets are cached by (user, path, version) to support snapshot isolation.</li>
  * </ul>
- *
- * <p>Schema and fragment data are accessed directly from the cached Dataset object,
- * as the manifest is already loaded when the Dataset is opened.
  */
-@SuppressModernizer // Uses CacheBuilder for expireAfterAccess and removalListener
-public class LanceDatasetCache
+@SuppressModernizer
+public class LanceRuntime
         implements Closeable
 {
-    private static final Logger log = Logger.get(LanceDatasetCache.class);
+    private static final Logger log = Logger.get(LanceRuntime.class);
+
+    // Virtual "default" schema for single-level namespace mode
+    public static final String DEFAULT_SCHEMA = "default";
+    public static final String TABLE_PATH_SUFFIX = ".lance";
 
     private static final String ANONYMOUS_USER = "__anonymous__";
 
+    // Core resources
+    private final BufferAllocator allocator;
+    private final LanceNamespace namespace;
+
+    // Namespace configuration
+    private final String root;
+    private final boolean singleLevelNs;
+    private final Optional<List<String>> parentPrefix;
+    private final Map<String, String> namespaceStorageOptions;
+
+    // Caches
     private final Cache<String, Session> sessionCache;
     private final Cache<DatasetCacheKey, Dataset> datasetCache;
     private final Long sessionIndexCacheSizeBytes;
     private final Long sessionMetadataCacheSizeBytes;
 
     @Inject
-    public LanceDatasetCache(LanceConfig config)
+    public LanceRuntime(LanceConfig config, @LanceNamespaceProperties Map<String, String> namespaceProperties)
     {
+        // Initialize allocator first - it's needed for namespace initialization
+        this.allocator = new RootAllocator(
+                RootAllocator.configBuilder()
+                        .from(RootAllocator.defaultConfig())
+                        .maxAllocation(Long.MAX_VALUE)
+                        .build());
+
+        // Parse namespace properties
+        String impl = config.getImpl();
+        Map<String, String> properties = new HashMap<>();
+        Map<String, String> storageOpts = new HashMap<>();
+        for (Map.Entry<String, String> entry : namespaceProperties.entrySet()) {
+            String key = entry.getKey();
+            if (key.startsWith("lance.")) {
+                String strippedKey = key.substring(6);
+                properties.put(strippedKey, entry.getValue());
+                if (strippedKey.startsWith("storage.")) {
+                    storageOpts.put(strippedKey.substring(8), entry.getValue());
+                }
+            }
+        }
+        this.namespaceStorageOptions = storageOpts;
+
+        // For DirectoryNamespace, ensure default settings are applied
+        if ("dir".equals(impl)) {
+            properties.putIfAbsent("manifest_enabled", "true");
+            properties.putIfAbsent("dir_listing_enabled", "true");
+        }
+
+        // Initialize namespace
+        this.namespace = LanceNamespace.connect(impl, properties, allocator);
+        this.root = properties.get("root");
+
+        // Initialize namespace level handling
+        this.singleLevelNs = config.isSingleLevelNs();
+        String parent = config.getParent();
+        if (parent != null && !parent.isEmpty()) {
+            this.parentPrefix = Optional.of(Arrays.asList(parent.split("\\$")));
+        }
+        else {
+            this.parentPrefix = Optional.empty();
+        }
+
+        // Initialize caches
         this.sessionIndexCacheSizeBytes = config.getCacheSessionIndexCacheSizeBytes();
         this.sessionMetadataCacheSizeBytes = config.getCacheSessionMetadataCacheSizeBytes();
+
         this.sessionCache = CacheBuilder.newBuilder()
                 .maximumSize(config.getCacheSessionMaxEntries())
                 .expireAfterAccess(config.getCacheSessionTtlMinutes(), TimeUnit.MINUTES)
@@ -111,9 +176,85 @@ public class LanceDatasetCache
                 })
                 .build();
 
-        log.info("LanceDatasetCache initialized: maxSessions=%d, maxDatasets=%d, sessionTtl=%dm, datasetTtl=%dm",
-                config.getCacheSessionMaxEntries(), config.getCacheDatasetMaxEntries(),
-                config.getCacheSessionTtlMinutes(), config.getCacheDatasetTtlMinutes());
+        log.info("LanceRuntime initialized: impl=%s, root=%s, singleLevelNs=%s, maxSessions=%d, maxDatasets=%d",
+                impl, root, singleLevelNs, config.getCacheSessionMaxEntries(), config.getCacheDatasetMaxEntries());
+    }
+
+    // ================== Core Accessors ==================
+
+    public BufferAllocator getAllocator()
+    {
+        return allocator;
+    }
+
+    public LanceNamespace getNamespace()
+    {
+        return namespace;
+    }
+
+    public String getRoot()
+    {
+        return root;
+    }
+
+    public boolean isSingleLevelNs()
+    {
+        return singleLevelNs;
+    }
+
+    public Optional<List<String>> getParentPrefix()
+    {
+        return parentPrefix;
+    }
+
+    public Map<String, String> getNamespaceStorageOptions()
+    {
+        return new HashMap<>(namespaceStorageOptions);
+    }
+
+    // ================== Namespace Utilities ==================
+
+    /**
+     * Transform Trino schema name to Lance namespace identifier.
+     * In single-level mode, "default" maps to empty (root).
+     * Otherwise, adds parent prefix if configured.
+     */
+    public List<String> trinoSchemaToLanceNamespace(String schema)
+    {
+        if (singleLevelNs) {
+            return Collections.emptyList();
+        }
+        List<String> namespaceId = List.of(schema);
+        return addParentPrefix(namespaceId);
+    }
+
+    /**
+     * Add parent prefix for 3+ level namespaces.
+     */
+    public List<String> addParentPrefix(List<String> namespaceId)
+    {
+        if (parentPrefix.isEmpty()) {
+            return namespaceId;
+        }
+        List<String> result = new ArrayList<>(parentPrefix.get());
+        result.addAll(namespaceId);
+        return result;
+    }
+
+    /**
+     * Convert a Trino SchemaTableName to a Lance table identifier.
+     */
+    public List<String> getTableId(String schemaName, String tableName)
+    {
+        List<String> tableId = new ArrayList<>();
+        if (parentPrefix.isPresent()) {
+            tableId.addAll(parentPrefix.get());
+        }
+        if (!singleLevelNs) {
+            tableId.add(schemaName);
+        }
+        tableId.add(tableName);
+        return tableId;
     }
 
     // ================== Session Management ==================
@@ -121,7 +262,6 @@ public class LanceDatasetCache
     private Session getOrCreateSession(String userIdentity)
     {
         String key = normalizeUserIdentity(userIdentity);
-
         try {
             return sessionCache.get(key, () -> {
                 log.debug("Creating new session for user: %s", key);
@@ -162,7 +302,6 @@ public class LanceDatasetCache
             Map<String, String> storageOptions)
     {
         DatasetCacheKey key = new DatasetCacheKey(userIdentity, tablePath, version);
-
         try {
             return datasetCache.get(key, () -> openDataset(userIdentity, tablePath, version, storageOptions));
         }
@@ -195,7 +334,10 @@ public class LanceDatasetCache
             optionsBuilder.setStorageOptions(storageOptions);
         }
 
-        return Dataset.open(tablePath, optionsBuilder.build());
+        // Use our shared allocator instead of letting Dataset create its own.
+        // This prevents the allocator from being closed when datasets are closed,
+        // which would break concurrent operations that are still using scanners.
+        return Dataset.open(allocator, tablePath, optionsBuilder.build());
     }
 
     public long getLatestVersion(String userIdentity, String tablePath, Map<String, String> storageOptions)
@@ -205,15 +347,6 @@ public class LanceDatasetCache
         }
     }
 
-    /**
-     * Check if a specific version exists in the dataset.
-     *
-     * @param userIdentity the user identity
-     * @param tablePath the path to the dataset
-     * @param version the version to check
-     * @param storageOptions the storage options
-     * @return true if the version exists, false otherwise
-     */
     public boolean versionExists(String userIdentity, String tablePath,
             long version, Map<String, String> storageOptions)
     {
@@ -223,22 +356,12 @@ public class LanceDatasetCache
         }
     }
 
-    /**
-     * Get the version of the dataset at or before the given timestamp.
-     *
-     * @param userIdentity the user identity
-     * @param tablePath the path to the dataset
-     * @param timestampMillis the timestamp in milliseconds since epoch
-     * @param storageOptions the storage options
-     * @return the version at or before the timestamp, or empty if no such version exists
-     */
     public Optional<Long> getVersionAtTimestamp(String userIdentity, String tablePath,
             long timestampMillis, Map<String, String> storageOptions)
     {
         try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
             List<Version> versions = dataset.listVersions();
 
-            // Find the latest version where timestamp <= requested timestamp
             Version bestMatch = null;
             for (Version version : versions) {
                 long versionTimestamp = version.getDataTime().toInstant().toEpochMilli();
@@ -434,10 +557,12 @@ public class LanceDatasetCache
     // ================== Lifecycle ==================
 
     @Override
+    @PreDestroy
     public void close()
     {
-        log.info("Closing LanceDatasetCache: %d sessions, %d datasets", sessionCache.size(), datasetCache.size());
+        log.info("Closing LanceRuntime: %d sessions, %d datasets", sessionCache.size(), datasetCache.size());
 
+        // Close datasets first
         datasetCache.asMap().forEach((key, dataset) -> {
             if (dataset != null) {
                 try {
@@ -450,12 +575,27 @@ public class LanceDatasetCache
         });
         datasetCache.invalidateAll();
 
+        // Close sessions
         sessionCache.asMap().forEach((key, session) -> {
             if (session != null && !session.isClosed()) {
                 session.close();
             }
         });
         sessionCache.invalidateAll();
+
+        // Close namespace
+        if (namespace instanceof Closeable closeable) {
+            try {
+                closeable.close();
+            }
+            catch (Exception e) {
+                log.warn(e, "Failed to close namespace");
+            }
+        }
+
+        // Note: We intentionally do NOT close the allocator here.
+        // Page sources may still be using the allocator asynchronously.
+        // Arrow allocators just manage memory and will be cleaned up on JVM exit.
     }
 
     // ================== Cache Key ==================

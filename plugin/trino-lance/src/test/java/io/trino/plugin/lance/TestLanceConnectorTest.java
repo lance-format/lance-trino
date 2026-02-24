@@ -193,13 +193,7 @@ public class TestLanceConnectorTest
         abort("Lance does not support concurrent updates reliably");
     }
 
-    @Test
-    @Override
-    public void testInsertRowConcurrently()
-    {
-        // Lance concurrent append requires fixes in lance-core that are not yet available
-        abort("Lance concurrent append support pending upstream fix");
-    }
+    // testInsertRowConcurrently - use default implementation from base class
 
     @Test
     @Override
@@ -265,8 +259,11 @@ public class TestLanceConnectorTest
     @Override
     public void testCreateOrReplaceTableConcurrently()
     {
-        // Lance doesn't handle concurrent writes well
-        abort("Lance does not support concurrent table creation");
+        // This test fails due to Arrow allocator resource management issues in the connector,
+        // not Lance concurrent commit issues. The allocator gets closed while concurrent
+        // operations are still in progress.
+        // TODO: Fix allocator lifecycle management for concurrent operations
+        abort("Arrow allocator lifecycle issue in concurrent CREATE OR REPLACE TABLE");
     }
 
     @Test
@@ -516,16 +513,15 @@ public class TestLanceConnectorTest
                 }
             }
 
-            // Step 2: Read the dataset using LanceDatasetCache and verify schema mapping
+            // Step 2: Read the dataset using LanceRuntime and verify schema mapping
             // Use single-level mode since we're using a flat directory structure
             LanceConfig config = new LanceConfig().setSingleLevelNs(true);
             Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
-            LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(config, catalogProperties);
-            LanceDatasetCache datasetCache = new LanceDatasetCache(config);
+            LanceRuntime runtime = new LanceRuntime(config, catalogProperties);
 
             // Get column handles using the table path
             String tablePath = datasetPath;
-            Map<String, ColumnHandle> columnHandles = datasetCache.getColumnHandles(null, tablePath, null, Map.of());
+            Map<String, ColumnHandle> columnHandles = runtime.getColumnHandles(null, tablePath, null, Map.of());
             assertThat(columnHandles).hasSize(2);
 
             // Verify the large_text column is mapped to VARCHAR
@@ -539,7 +535,7 @@ public class TestLanceConnectorTest
             assertThat(idHandle.trinoType()).isEqualTo(INTEGER);
 
             // Step 3: Verify table metadata using the table path
-            List<ColumnMetadata> columnsMetadata = datasetCache.getColumnMetadata(null, tablePath, null, Map.of());
+            List<ColumnMetadata> columnsMetadata = runtime.getColumnMetadata(null, tablePath, null, Map.of());
             assertThat(columnsMetadata).hasSize(2);
 
             // Find the large_text column metadata
@@ -581,11 +577,10 @@ public class TestLanceConnectorTest
             // Use single-level mode since we're using a flat directory structure
             LanceConfig config = new LanceConfig().setSingleLevelNs(true);
             Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
-            LanceNamespaceHolder namespaceHolder = new LanceNamespaceHolder(config, catalogProperties);
-            LanceDatasetCache datasetCache = new LanceDatasetCache(config);
+            LanceRuntime runtime = new LanceRuntime(config, catalogProperties);
             JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
             JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-            LanceMetadata metadata = new LanceMetadata(namespaceHolder, config, datasetCache, commitTaskDataCodec, mergeCommitDataCodec);
+            LanceMetadata metadata = new LanceMetadata(runtime, config, commitTaskDataCodec, mergeCommitDataCodec);
 
             // Get table handle - this should NOT return null anymore
             LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(

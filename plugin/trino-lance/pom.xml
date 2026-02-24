@@ -90,6 +90,11 @@
         </dependency>
 
         <dependency>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>jakarta.validation</groupId>
             <artifactId>jakarta.validation-api</artifactId>
         </dependency>
@@ -120,13 +125,13 @@
         <dependency>
             <groupId>org.lance</groupId>
             <artifactId>lance-namespace-apache-client</artifactId>
-            <version>0.4.5</version>
+            <version>0.5.2</version>
         </dependency>
 
         <dependency>
             <groupId>org.lance</groupId>
             <artifactId>lance-namespace-core</artifactId>
-            <version>0.4.5</version>
+            <version>0.5.2</version>
         </dependency>
 
         <dependency>

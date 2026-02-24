@@ -187,13 +187,7 @@ public abstract class BaseLanceConnectorTest
         abort("Lance uses filesystem paths which have length limits");
     }
 
-    @Test
-    @Override
-    public void testCreateOrReplaceTableConcurrently()
-    {
-        // Lance doesn't handle concurrent writes well
-        abort("Lance does not support concurrent table creation");
-    }
+    // testCreateOrReplaceTableConcurrently - use default implementation from base class
 
     @Test
     @Override
@@ -400,9 +394,9 @@ public abstract class BaseLanceConnectorTest
     @Override
     public void testInsertRowConcurrently()
     {
-        // Lance concurrent append requires fixes in lance-core that are not yet available
-        // See: https://github.com/lance-format/lance/issues/XXXX
-        abort("Lance concurrent append support pending upstream fix");
+        // Lance does not guarantee all concurrent inserts are visible due to its merge-on-read approach.
+        // This is a limitation of the current implementation without proper distributed locking.
+        abort("Lance does not support concurrent inserts reliably");
     }
 
     @Test

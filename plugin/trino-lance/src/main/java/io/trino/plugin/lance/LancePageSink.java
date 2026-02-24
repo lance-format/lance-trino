@@ -70,7 +70,8 @@ public class LancePageSink
             JsonCodec<LanceCommitTaskData> jsonCodec,
             LanceNamespace namespace,
             List<String> tableId,
-            Map<String, String> configuredStorageOptions)
+            Map<String, String> configuredStorageOptions,
+            BufferAllocator parentAllocator)
     {
         this.datasetUri = requireNonNull(datasetUri, "datasetUri is null");
         this.arrowSchema = requireNonNull(arrowSchema, "arrowSchema is null");
@@ -81,7 +82,7 @@ public class LancePageSink
         this.namespace = requireNonNull(namespace, "namespace is null");
         this.tableId = requireNonNull(tableId, "tableId is null");
         this.configuredStorageOptions = requireNonNull(configuredStorageOptions, "configuredStorageOptions is null");
-        this.allocator = LanceNamespaceHolder.getAllocator().newChildAllocator("page-sink", 0, Long.MAX_VALUE);
+        this.allocator = parentAllocator.newChildAllocator("page-sink", 0, Long.MAX_VALUE);
     }
 
     @Override

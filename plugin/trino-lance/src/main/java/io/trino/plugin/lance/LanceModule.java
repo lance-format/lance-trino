@@ -29,8 +29,7 @@ public class LanceModule
         configBinder(binder).bindConfig(LanceConfig.class);
 
         // Core components
-        binder.bind(LanceDatasetCache.class).in(Scopes.SINGLETON);
-        binder.bind(LanceNamespaceHolder.class).in(Scopes.SINGLETON);
+        binder.bind(LanceRuntime.class).in(Scopes.SINGLETON);
         binder.bind(LanceMetadata.class).in(Scopes.SINGLETON);
 
         // Read components
