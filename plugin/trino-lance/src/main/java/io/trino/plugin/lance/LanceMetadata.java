@@ -824,6 +824,8 @@ public class LanceMetadata
         // Get blob and vector columns from table properties
         Set<String> blobColumns = LanceTableProperties.getBlobColumns(tableMetadata.getProperties());
         Map<String, Integer> vectorColumns = LanceTableProperties.getVectorColumns(tableMetadata.getProperties());
+        // Get storage format version from table properties (for new tables)
+        String requestedFileFormatVersion = LanceTableProperties.getFileFormatVersion(tableMetadata.getProperties());
         LancePageToArrowConverter.validateBlobColumns(tableMetadata.getColumns(), blobColumns);
         LancePageToArrowConverter.validateVectorColumns(tableMetadata.getColumns(), vectorColumns);
 
@@ -832,6 +834,7 @@ public class LanceMetadata
         String tablePath;
         boolean tableExisted = existingPath != null;
         Map<String, String> storageOptions;
+        String dataStorageVersion = null;
 
         if (tableExisted) {
             if (!replace) {
@@ -854,6 +857,8 @@ public class LanceMetadata
             if (storageOptions == null || storageOptions.isEmpty()) {
                 storageOptions = runtime.getNamespaceStorageOptions();
             }
+            // For new tables, use the requested storage version from table properties
+            dataStorageVersion = requestedFileFormatVersion;
         }
 
         List<LanceColumnHandle> columns = tableMetadata.getColumns().stream()
@@ -872,10 +877,13 @@ public class LanceMetadata
                     .build();
             Dataset dataset = Dataset.open(tablePath, readOptions);
             transactionDatasets.put(transactionId, dataset);
+            // For replace tables (RTAS/CORTAS), we don't override the user-specified format
+            // If no format is specified in table properties, dataStorageVersion will be null
+            // and Lance SDK will use its default format
         }
 
-        log.debug("beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s, transactionId=%s, blobColumns=%s",
-                tableName, tablePath, replace, tableExisted, transactionId, blobColumns);
+        log.debug("beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s, transactionId=%s, blobColumns=%s, dataStorageVersion=%s",
+                tableName, tablePath, replace, tableExisted, transactionId, blobColumns, dataStorageVersion);
 
         return new LanceWritableTableHandle(
                 tableName,
@@ -887,7 +895,8 @@ public class LanceMetadata
                 true,
                 replace,
                 tableExisted,
-                transactionId);
+                transactionId,
+                dataStorageVersion);
     }
 
     @Override
@@ -977,7 +986,10 @@ public class LanceMetadata
         Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
         transactionDatasets.put(transactionId, dataset);
 
-        log.debug("beginInsert: table=%s, path=%s, columns=%d, transactionId=%s", tableName, tablePath, columns.size(), transactionId);
+        // For INSERT to existing tables, we don't need to specify dataStorageVersion
+        // The Lance SDK will automatically use the existing table's format when writing fragments
+        log.debug("beginInsert: table=%s, path=%s, columns=%d, transactionId=%s",
+                tableName, tablePath, columns.size(), transactionId);
 
         return new LanceWritableTableHandle(
                 tableName,
@@ -989,7 +1001,8 @@ public class LanceMetadata
                 false,
                 false,
                 true,
-                transactionId);
+                transactionId,
+                null); // dataStorageVersion is null for INSERT - Lance SDK uses existing table's format
     }
 
     @Override
@@ -1074,6 +1087,8 @@ public class LanceMetadata
         Schema arrowSchema = runtime.getSchema(userIdentity, tablePath, null, storageOptions);
         String schemaJson = arrowSchema.toJson();
 
+        // For MERGE/UPDATE/DELETE, we don't need to specify dataStorageVersion
+        // The Lance SDK will automatically use the existing table's format when writing fragments
         log.debug("beginMerge: table=%s, path=%s, version=%d, transactionId=%s",
                 tableName, tablePath, readVersion, transactionId);
 
@@ -1083,7 +1098,8 @@ public class LanceMetadata
                 readVersion,
                 schemaJson,
                 columns,
-                transactionId);
+                transactionId,
+                null); // dataStorageVersion is null - Lance SDK uses existing table's format
     }
 
     @Override
