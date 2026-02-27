@@ -59,7 +59,7 @@ public class LancePageSink
     private final LanceNamespace namespace;
     private final List<String> tableId;
     private final Map<String, String> configuredStorageOptions;
-    private final String dataStorageVersion;
+    private final String fileFormatVersion;
 
     private final List<Page> bufferedPages = new ArrayList<>();
     private long writtenBytes;
@@ -74,7 +74,7 @@ public class LancePageSink
             LanceNamespace namespace,
             List<String> tableId,
             Map<String, String> configuredStorageOptions,
-            String dataStorageVersion,
+            String fileFormatVersion,
             BufferAllocator parentAllocator)
     {
         this.datasetUri = requireNonNull(datasetUri, "datasetUri is null");
@@ -86,7 +86,7 @@ public class LancePageSink
         this.namespace = requireNonNull(namespace, "namespace is null");
         this.tableId = requireNonNull(tableId, "tableId is null");
         this.configuredStorageOptions = requireNonNull(configuredStorageOptions, "configuredStorageOptions is null");
-        this.dataStorageVersion = dataStorageVersion; // nullable
+        this.fileFormatVersion = fileFormatVersion; // nullable
         this.allocator = parentAllocator.newChildAllocator("page-sink", 0, Long.MAX_VALUE);
     }
 
@@ -178,11 +178,11 @@ public class LancePageSink
                     .allocator(allocator)
                     .data(root);
 
-            // Set data storage version if specified
-            if (dataStorageVersion != null) {
-                WriteParams.LanceFileVersion version = parseDataStorageVersion(dataStorageVersion);
+            // Set file format version if specified
+            if (fileFormatVersion != null) {
+                WriteParams.LanceFileVersion version = parseFileFormatVersion(fileFormatVersion);
                 fragmentWriter = fragmentWriter.dataStorageVersion(version);
-                log.debug("Using data storage version %s for table %s", dataStorageVersion, tableId);
+                log.debug("Using file format version %s for table %s", fileFormatVersion, tableId);
             }
 
             if (storageOptions != null && !storageOptions.isEmpty()) {
@@ -206,7 +206,7 @@ public class LancePageSink
         }
     }
 
-    private static WriteParams.LanceFileVersion parseDataStorageVersion(String version)
+    private static WriteParams.LanceFileVersion parseFileFormatVersion(String version)
     {
         return switch (version.toLowerCase()) {
             case "legacy", "0.1" -> WriteParams.LanceFileVersion.LEGACY;
