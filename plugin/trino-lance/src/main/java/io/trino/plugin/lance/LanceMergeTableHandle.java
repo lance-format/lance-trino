@@ -33,7 +33,8 @@ public record LanceMergeTableHandle(
         @JsonProperty("readVersion") long readVersion,
         @JsonProperty("schemaJson") String schemaJson,
         @JsonProperty("inputColumns") List<LanceColumnHandle> inputColumns,
-        @JsonProperty("transactionId") String transactionId)
+        @JsonProperty("transactionId") String transactionId,
+        @JsonProperty("dataStorageVersion") String dataStorageVersion)
         implements ConnectorMergeTableHandle
 {
     @JsonCreator
@@ -43,6 +44,7 @@ public record LanceMergeTableHandle(
         requireNonNull(mergeRowIdColumnHandle, "mergeRowIdColumnHandle is null");
         requireNonNull(schemaJson, "schemaJson is null");
         requireNonNull(inputColumns, "inputColumns is null");
+        // dataStorageVersion can be null
     }
 
     @JsonProperty
