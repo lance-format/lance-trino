@@ -39,7 +39,8 @@ public record LanceWritableTableHandle(
         boolean forCreateTable,
         boolean replace,
         boolean tableExisted,
-        String transactionId)
+        String transactionId,
+        String fileFormatVersion)
         implements ConnectorInsertTableHandle, ConnectorOutputTableHandle
 {
     @JsonCreator
@@ -53,7 +54,8 @@ public record LanceWritableTableHandle(
             @JsonProperty("forCreateTable") boolean forCreateTable,
             @JsonProperty("replace") boolean replace,
             @JsonProperty("tableExisted") boolean tableExisted,
-            @JsonProperty("transactionId") String transactionId)
+            @JsonProperty("transactionId") String transactionId,
+            @JsonProperty("fileFormatVersion") String fileFormatVersion)
     {
         this.tableName = requireNonNull(tableName, "tableName is null");
         this.tablePath = requireNonNull(tablePath, "tablePath is null");
@@ -65,6 +67,7 @@ public record LanceWritableTableHandle(
         this.replace = replace;
         this.tableExisted = tableExisted;
         this.transactionId = transactionId;
+        this.fileFormatVersion = fileFormatVersion; // nullable - if null, will use default
     }
 
     @JsonProperty
@@ -148,5 +151,16 @@ public record LanceWritableTableHandle(
     public String transactionId()
     {
         return transactionId;
+    }
+
+    /**
+     * Returns the file format version to use when writing.
+     * Returns null to use existing table's version (for INSERT) or default (for new tables).
+     */
+    @JsonProperty
+    @Override
+    public String fileFormatVersion()
+    {
+        return fileFormatVersion;
     }
 }

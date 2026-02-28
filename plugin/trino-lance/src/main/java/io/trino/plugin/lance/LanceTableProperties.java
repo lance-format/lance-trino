@@ -14,6 +14,8 @@
 package io.trino.plugin.lance;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import io.trino.spi.TrinoException;
 import io.trino.spi.session.PropertyMetadata;
 
 import java.util.HashMap;
@@ -22,12 +24,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static io.trino.spi.StandardErrorCode.INVALID_TABLE_PROPERTY;
 import static io.trino.spi.session.PropertyMetadata.stringProperty;
 
 public final class LanceTableProperties
 {
     public static final String BLOB_COLUMNS = "blob_columns";
     public static final String VECTOR_COLUMNS = "vector_columns";
+    public static final String FILE_FORMAT_VERSION = "file_format_version";
+
+    private static final Set<String> VALID_STORAGE_VERSIONS = ImmutableSet.of(
+            "legacy", "0.1", "2.0", "2.1", "2.2", "stable", "next");
 
     private LanceTableProperties() {}
 
@@ -42,6 +49,11 @@ public final class LanceTableProperties
                 stringProperty(
                         VECTOR_COLUMNS,
                         "Comma-separated list of vector columns with dimensions, format: 'column1:dim1, column2:dim2' (e.g., 'embedding:768, features:256')",
+                        null,
+                        false),
+                stringProperty(
+                        FILE_FORMAT_VERSION,
+                        "Lance file format version: 'legacy' (0.1), '2.0', '2.1', '2.2', 'stable' (default for new tables), or 'next'",
                         null,
                         false));
     }
@@ -110,5 +122,29 @@ public final class LanceTableProperties
             }
         }
         return result;
+    }
+
+    /**
+     * Get the file format version from table properties.
+     * Returns null if not specified (will use existing table's version or default for new tables).
+     *
+     * @return the file format version string, or null if not specified
+     */
+    public static String getFileFormatVersion(Map<String, Object> properties)
+    {
+        if (properties == null || properties.isEmpty()) {
+            return null;
+        }
+        Object value = properties.get(FILE_FORMAT_VERSION);
+        if (value == null || value.toString().isEmpty()) {
+            return null;
+        }
+        String version = value.toString().trim().toLowerCase();
+        if (!VALID_STORAGE_VERSIONS.contains(version)) {
+            throw new TrinoException(INVALID_TABLE_PROPERTY,
+                    "Invalid file_format_version: '" + value + "'. " +
+                    "Valid values are: legacy, 0.1, 2.0, 2.1, 2.2, stable, next");
+        }
+        return version;
     }
 }

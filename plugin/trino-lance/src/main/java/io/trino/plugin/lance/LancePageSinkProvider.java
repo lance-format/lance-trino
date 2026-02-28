@@ -117,6 +117,7 @@ public class LancePageSinkProvider
                 runtime.getNamespace(),
                 handle.tableId(),
                 handle.storageOptions(),
+                handle.fileFormatVersion(),
                 runtime.getAllocator());
     }
 }
