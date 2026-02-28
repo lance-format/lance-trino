@@ -61,12 +61,13 @@ import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
 import org.apache.arrow.vector.types.pojo.Schema;
+import org.lance.CommitBuilder;
 import org.lance.Dataset;
 import org.lance.FragmentMetadata;
-import org.lance.FragmentOperation;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
 import org.lance.SourcedTransaction;
+import org.lance.Transaction;
 import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateNamespaceRequest;
@@ -801,8 +802,7 @@ public class LanceMetadata
         Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
         Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
 
-        WriteParams params = buildWriteParams(storageOptions);
-        createEmptyDataset(tablePath, arrowSchema, params);
+        createEmptyDataset(tablePath, arrowSchema, storageOptions);
 
         log.debug("createTable: created empty table %s at %s", tableName, tablePath);
     }
@@ -877,9 +877,10 @@ public class LanceMetadata
                     .build();
             Dataset dataset = Dataset.open(tablePath, readOptions);
             transactionDatasets.put(transactionId, dataset);
-            // For replace tables (RTAS/CORTAS), we don't override the user-specified format
-            // If no format is specified in table properties, fileFormatVersion will be null
-            // and Lance SDK will use its default format
+            // For replace tables (RTAS/CORTAS), use existing table's format if not specified
+            if (fileFormatVersion == null) {
+                fileFormatVersion = dataset.getLanceFileFormatVersion();
+            }
         }
 
         log.debug("beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s, transactionId=%s, blobColumns=%s, fileFormatVersion=%s",
@@ -940,15 +941,8 @@ public class LanceMetadata
             }
         }
         else {
-            if (fragments.isEmpty()) {
-                WriteParams params = buildWriteParams(storageOptions);
-                createEmptyDataset(handle.tablePath(), arrowSchema, params);
-            }
-            else {
-                List<String> allFragmentsJson = collectFragmentsFromSlices(fragments);
-                WriteParams params = buildWriteParams(storageOptions);
-                createDatasetWithFragments(handle.tablePath(), allFragmentsJson, arrowSchema, params, storageOptions);
-            }
+            List<String> allFragmentsJson = collectFragmentsFromSlices(fragments);
+            createDatasetWithFragments(handle.tablePath(), allFragmentsJson, arrowSchema, storageOptions);
         }
 
         String userIdentity = session.getUser();
@@ -986,10 +980,10 @@ public class LanceMetadata
         Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
         transactionDatasets.put(transactionId, dataset);
 
-        // For INSERT to existing tables, we don't need to specify fileFormatVersion
-        // The Lance SDK will automatically use the existing table's format when writing fragments
-        log.debug("beginInsert: table=%s, path=%s, columns=%d, transactionId=%s",
-                tableName, tablePath, columns.size(), transactionId);
+        // Read the existing table's file format version to ensure consistent writes
+        String fileFormatVersion = dataset.getLanceFileFormatVersion();
+        log.debug("beginInsert: table=%s, path=%s, columns=%d, transactionId=%s, fileFormatVersion=%s",
+                tableName, tablePath, columns.size(), transactionId, fileFormatVersion);
 
         return new LanceWritableTableHandle(
                 tableName,
@@ -1002,7 +996,7 @@ public class LanceMetadata
                 false,
                 true,
                 transactionId,
-                null); // fileFormatVersion is null for INSERT - Lance SDK uses existing table's format
+                fileFormatVersion);
     }
 
     @Override
@@ -1087,10 +1081,10 @@ public class LanceMetadata
         Schema arrowSchema = runtime.getSchema(userIdentity, tablePath, null, storageOptions);
         String schemaJson = arrowSchema.toJson();
 
-        // For MERGE/UPDATE/DELETE, we don't need to specify fileFormatVersion
-        // The Lance SDK will automatically use the existing table's format when writing fragments
-        log.debug("beginMerge: table=%s, path=%s, version=%d, transactionId=%s",
-                tableName, tablePath, readVersion, transactionId);
+        // Read the existing table's file format version to ensure consistent writes
+        String fileFormatVersion = dataset.getLanceFileFormatVersion();
+        log.debug("beginMerge: table=%s, path=%s, version=%d, transactionId=%s, fileFormatVersion=%s",
+                tableName, tablePath, readVersion, transactionId, fileFormatVersion);
 
         return new LanceMergeTableHandle(
                 table.withStorageOptions(storageOptions),
@@ -1099,7 +1093,7 @@ public class LanceMetadata
                 schemaJson,
                 columns,
                 transactionId,
-                null); // fileFormatVersion is null - Lance SDK uses existing table's format
+                fileFormatVersion);
     }
 
     @Override
@@ -1295,19 +1289,18 @@ public class LanceMetadata
 
     // ===== Write Operations (formerly in LanceWriter) =====
 
-    private WriteParams buildWriteParams(Map<String, String> storageOptions)
-    {
-        WriteParams.Builder builder = new WriteParams.Builder();
-        if (storageOptions != null && !storageOptions.isEmpty()) {
-            builder.withStorageOptions(storageOptions);
-        }
-        return builder.build();
-    }
-
-    private void createEmptyDataset(String datasetUri, Schema schema, WriteParams params)
+    private void createEmptyDataset(String datasetUri, Schema schema, Map<String, String> storageOptions)
     {
         log.debug("Creating empty dataset at: %s", datasetUri);
-        Dataset.create(runtime.getAllocator(), datasetUri, schema, params).close();
+        Overwrite operation = Overwrite.builder().fragments(List.of()).schema(schema).build();
+        try (Transaction txn = new Transaction.Builder()
+                .operation(operation)
+                .build();
+                Dataset committed = new CommitBuilder(datasetUri, runtime.getAllocator())
+                        .writeParams(storageOptions)
+                        .execute(txn)) {
+            // auto-close txn and committed dataset
+        }
     }
 
     private void commitAppend(Dataset dataset, List<String> serializedFragments, Map<String, String> storageOptions)
@@ -1342,26 +1335,19 @@ public class LanceMetadata
         }
     }
 
-    private void createDatasetWithFragments(String datasetUri, List<String> serializedFragments, Schema schema, WriteParams params, Map<String, String> storageOptions)
+    private void createDatasetWithFragments(String datasetUri, List<String> serializedFragments, Schema schema, Map<String, String> storageOptions)
     {
         log.debug("Creating dataset with %d fragments at: %s", serializedFragments.size(), datasetUri);
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        Dataset.create(runtime.getAllocator(), datasetUri, schema, params).close();
-
-        FragmentOperation.Overwrite overwriteOp = new FragmentOperation.Overwrite(fragments, schema);
-
-        ReadOptions readOptions = new ReadOptions.Builder()
-                .setStorageOptions(storageOptions)
+        Overwrite operation = Overwrite.builder().fragments(fragments).schema(schema).build();
+        try (Transaction txn = new Transaction.Builder()
+                .operation(operation)
                 .build();
-
-        try (Dataset dataset = Dataset.open(datasetUri, readOptions)) {
-            Dataset.commit(
-                    runtime.getAllocator(),
-                    datasetUri,
-                    overwriteOp,
-                    Optional.of(dataset.version()),
-                    storageOptions).close();
+                Dataset committed = new CommitBuilder(datasetUri, runtime.getAllocator())
+                        .writeParams(storageOptions)
+                        .execute(txn)) {
+            // auto-close txn and committed dataset
         }
     }
 

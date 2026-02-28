@@ -26,7 +26,6 @@ import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Fragment;
 import org.lance.FragmentMetadata;
 import org.lance.WriteFragmentBuilder;
-import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.LanceNamespaceStorageOptionsProvider;
 
@@ -180,8 +179,7 @@ public class LancePageSink
 
             // Set file format version if specified
             if (fileFormatVersion != null) {
-                WriteParams.LanceFileVersion version = parseFileFormatVersion(fileFormatVersion);
-                fragmentWriter = fragmentWriter.dataStorageVersion(version);
+                fragmentWriter = fragmentWriter.dataStorageVersion(fileFormatVersion);
                 log.debug("Using file format version %s for table %s", fileFormatVersion, tableId);
             }
 
@@ -204,19 +202,6 @@ public class LancePageSink
 
             return LanceMetadata.serializeFragments(fragments);
         }
-    }
-
-    private static WriteParams.LanceFileVersion parseFileFormatVersion(String version)
-    {
-        return switch (version.toLowerCase()) {
-            case "legacy", "0.1" -> WriteParams.LanceFileVersion.LEGACY;
-            case "2.0" -> WriteParams.LanceFileVersion.V2_0;
-            case "stable" -> WriteParams.LanceFileVersion.STABLE;
-            case "2.1" -> WriteParams.LanceFileVersion.V2_1;
-            case "next" -> WriteParams.LanceFileVersion.NEXT;
-            case "2.2" -> WriteParams.LanceFileVersion.V2_2;
-            default -> throw new IllegalArgumentException("Unknown data storage version: " + version);
-        };
     }
 
     /**
