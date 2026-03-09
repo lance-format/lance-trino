@@ -103,6 +103,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -598,11 +599,7 @@ public class LanceMetadata
         List<LanceColumnHandle> allColumns = runtime.getColumnHandleList(
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
-        // Build field ID map from all column handles
-        Map<String, Integer> fieldIdMap = new HashMap<>();
-        for (LanceColumnHandle column : allColumns) {
-            fieldIdMap.put(column.name(), column.fieldId());
-        }
+        Map<String, Integer> fieldIdMap = buildPositionalOrdinals(allColumns);
 
         // Filter out columns without valid field IDs (e.g., synthetic COUNT columns)
         Map<LanceColumnHandle, Domain> domains = supportedConstraint.getDomains().orElse(Map.of());
@@ -670,6 +667,22 @@ public class LanceMetadata
                 remainingFilter.transformKeys(ColumnHandle.class::cast),
                 constraint.getExpression(),
                 false));
+    }
+
+    /**
+     * Used for interacting with Substrait field references. Returns a map of column name to ordinal position {@link LanceColumnHandle#fieldId()}.
+     */
+    @VisibleForTesting
+    static Map<String, Integer> buildPositionalOrdinals(List<LanceColumnHandle> allColumns)
+    {
+        List<LanceColumnHandle> sortedColumns = allColumns.stream()
+                .sorted(Comparator.comparingInt(LanceColumnHandle::fieldId))
+                .toList();
+        Map<String, Integer> ordinals = new HashMap<>();
+        for (int i = 0; i < sortedColumns.size(); ++i) {
+            ordinals.put(sortedColumns.get(i).name(), i);
+        }
+        return ordinals;
     }
 
     private TupleDomain<LanceColumnHandle> filterToSupportedTypes(TupleDomain<LanceColumnHandle> tupleDomain)

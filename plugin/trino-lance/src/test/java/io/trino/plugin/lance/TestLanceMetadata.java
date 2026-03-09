@@ -47,8 +47,9 @@ public class TestLanceMetadata
     private static final LanceTableHandle TEST_TABLE_2_HANDLE = new LanceTableHandle("default", "test_table2",
             TEST_DB_PATH + "test_table2.lance", List.of("test_table2"), Map.of());
 
-    // Actual column order in test data: x, y, b, c
+    // Actual column order in test data: x, y, b, c (field IDs 0, 1, 2, 3)
     private static final ArrowType INT64_TYPE = new ArrowType.Int(64, true);
+    private LanceRuntime runtime;
     private LanceMetadata metadata;
 
     @BeforeEach
@@ -62,7 +63,7 @@ public class TestLanceMetadata
         LanceConfig lanceConfig = new LanceConfig()
                 .setSingleLevelNs(true);  // example_db is flat (tables at root)
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
-        LanceRuntime runtime = new LanceRuntime(lanceConfig, catalogProperties);
+        runtime = new LanceRuntime(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
         metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
@@ -132,6 +133,27 @@ public class TestLanceMetadata
     }
 
     @Test
+    public void testBuildPositionalOrdinalsWithNonSequentialFieldIds()
+    {
+        LanceTableHandle table = metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table5"), Optional.empty(), Optional.empty());
+
+        List<LanceColumnHandle> columns = runtime.getColumnHandleList(
+                SESSION.getUser(), table.getTablePath(), table.getDatasetVersion(), table.getStorageOptions());
+        assertThat(columns).extracting(LanceColumnHandle::name)
+                .containsExactlyInAnyOrder("x", "b", "c", "e");
+
+        Map<String, Integer> ordinals = LanceMetadata.buildPositionalOrdinals(columns);
+
+        // Field IDs: x=0, b=2, c=3, e=4 → sorted positions: x=0, b=1, c=2, e=3
+        assertThat(ordinals)
+                .as("Positional ordinals must be 0-based indices in field-ID-sorted order, not raw field IDs")
+                .containsEntry("x", 0)
+                .containsEntry("b", 1)
+                .containsEntry("c", 2)
+                .containsEntry("e", 3);
+    }
+
+    @Test
     public void testListTables()
     {
         // all schemas
@@ -139,13 +161,15 @@ public class TestLanceMetadata
                 new SchemaTableName("default", "test_table1"),
                 new SchemaTableName("default", "test_table2"),
                 new SchemaTableName("default", "test_table3"),
-                new SchemaTableName("default", "test_table4")));
+                new SchemaTableName("default", "test_table4"),
+                new SchemaTableName("default", "test_table5")));
 
         // specific schema
         assertThat(ImmutableSet.copyOf(metadata.listTables(SESSION, Optional.of("default")))).isEqualTo(ImmutableSet.of(
                 new SchemaTableName("default", "test_table1"),
                 new SchemaTableName("default", "test_table2"),
                 new SchemaTableName("default", "test_table3"),
-                new SchemaTableName("default", "test_table4")));
+                new SchemaTableName("default", "test_table4"),
+                new SchemaTableName("default", "test_table5")));
     }
 }
