@@ -27,11 +27,17 @@ values = ["stable", "alpha", "beta", "rc"]
 optional_value = "0"
 first_value = "0"
 
-# Root pom.xml - lance-trino.version property
+# Root pom.xml - project version
 [[tool.bumpversion.files]]
 filename = "pom.xml"
-search = "<lance-trino.version>{current_version}</lance-trino.version>"
-replace = "<lance-trino.version>{new_version}</lance-trino.version>"
+search = "<version>{current_version}</version>"
+replace = "<version>{new_version}</version>"
+
+# Child pom.xml - parent version
+[[tool.bumpversion.files]]
+filename = "plugin/trino-lance/pom.xml"
+search = "<version>{current_version}</version>"
+replace = "<version>{new_version}</version>"
 
 # docs/src/install.md - bash example
 [[tool.bumpversion.files]]
