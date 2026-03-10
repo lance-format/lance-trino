@@ -162,7 +162,8 @@ public class TestLanceMetadata
                 new SchemaTableName("default", "test_table2"),
                 new SchemaTableName("default", "test_table3"),
                 new SchemaTableName("default", "test_table4"),
-                new SchemaTableName("default", "test_table5")));
+                new SchemaTableName("default", "test_table5"),
+                new SchemaTableName("default", "wide_types_table")));
 
         // specific schema
         assertThat(ImmutableSet.copyOf(metadata.listTables(SESSION, Optional.of("default")))).isEqualTo(ImmutableSet.of(
@@ -170,6 +171,7 @@ public class TestLanceMetadata
                 new SchemaTableName("default", "test_table2"),
                 new SchemaTableName("default", "test_table3"),
                 new SchemaTableName("default", "test_table4"),
-                new SchemaTableName("default", "test_table5")));
+                new SchemaTableName("default", "test_table5"),
+                new SchemaTableName("default", "wide_types_table")));
     }
 }

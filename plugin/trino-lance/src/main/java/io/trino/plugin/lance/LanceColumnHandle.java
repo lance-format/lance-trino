@@ -155,10 +155,11 @@ public record LanceColumnHandle(
             }
         }
         else if (type instanceof ArrowType.FloatingPoint fpType) {
-            if (fpType.getPrecision() == FloatingPointPrecision.SINGLE) {
-                return REAL;
+            if (fpType.getPrecision() == FloatingPointPrecision.DOUBLE) {
+                return DOUBLE;
             }
-            return DOUBLE;
+            // SINGLE and HALF (float16) both map to REAL — Trino has no float16 type
+            return REAL;
         }
         else if (type instanceof ArrowType.Utf8) {
             return VARCHAR;

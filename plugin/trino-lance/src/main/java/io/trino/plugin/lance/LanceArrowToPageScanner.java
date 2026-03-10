@@ -32,6 +32,7 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float2Vector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
@@ -334,8 +335,15 @@ public class LanceArrowToPageScanner
                 }
                 else if (type.equals(REAL)) {
                     // REAL stores float bits as int which is widened to long
-                    writeVectorValues(output, vector, index -> type.writeLong(output,
-                            Float.floatToIntBits(((Float4Vector) vector).get(index))), offset, length);
+                    if (vector instanceof Float2Vector f2v) {
+                        // Widen float16 to float32 since Trino has no float16 type
+                        writeVectorValues(output, vector, index -> type.writeLong(output,
+                                Float.floatToIntBits(f2v.getValueAsFloat(index))), offset, length);
+                    }
+                    else {
+                        writeVectorValues(output, vector, index -> type.writeLong(output,
+                                Float.floatToIntBits(((Float4Vector) vector).get(index))), offset, length);
+                    }
                 }
                 else if (type instanceof TimestampWithTimeZoneType) {
                     // Timestamp with timezone - stored as microseconds in Arrow
