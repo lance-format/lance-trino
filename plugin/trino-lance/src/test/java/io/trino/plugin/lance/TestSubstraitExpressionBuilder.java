@@ -19,6 +19,7 @@ import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.predicate.ValueSet;
+import io.trino.spi.type.VarbinaryType;
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
@@ -178,6 +179,7 @@ public class TestSubstraitExpressionBuilder
         assertThat(SubstraitExpressionBuilder.isSupportedType(INTEGER)).isTrue();
         assertThat(SubstraitExpressionBuilder.isSupportedType(BIGINT)).isTrue();
         assertThat(SubstraitExpressionBuilder.isSupportedType(VARCHAR)).isTrue();
+        assertThat(SubstraitExpressionBuilder.isSupportedType(VarbinaryType.VARBINARY)).isTrue();
     }
 
     @Test

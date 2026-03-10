@@ -36,6 +36,7 @@ import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.DateType;
 import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.TimestampWithTimeZoneType;
+import io.trino.spi.type.VarbinaryType;
 import io.trino.spi.type.VarcharType;
 
 import java.nio.ByteBuffer;
@@ -79,7 +80,7 @@ public final class SubstraitExpressionBuilder
      *
      * @param tupleDomain the predicate to convert
      * @param allColumns all columns from the table (for building the full schema)
-     * @param columnOrdinals map of column name to ordinal position in the schema (field ID)
+     * @param columnOrdinals map of column name to ordinal position in the schema
      * @return Optional containing the serialized Substrait ExtendedExpression, or empty if no filter
      */
     public static Optional<ByteBuffer> tupleDomainToSubstrait(
@@ -97,7 +98,7 @@ public final class SubstraitExpressionBuilder
                 .sorted(Comparator.comparingInt(LanceColumnHandle::fieldId))
                 .toList();
 
-        return Optional.of(serializeAsExtendedExpression(expression.get(), sortedColumns, columnOrdinals));
+        return Optional.of(serializeAsExtendedExpression(expression.get(), sortedColumns));
     }
 
     /**
@@ -441,6 +442,9 @@ public final class SubstraitExpressionBuilder
             long epochMillis = io.trino.spi.type.DateTimeEncoding.unpackMillisUtc(packedValue);
             return ExpressionCreator.precisionTimestampTZ(false, epochMillis * 1000, 6);
         }
+        else if (trinoType instanceof VarbinaryType) {
+            return ExpressionCreator.binary(false, ((Slice) value).getBytes());
+        }
 
         throw new UnsupportedOperationException("Unsupported type for Substrait literal: " + trinoType);
     }
@@ -480,6 +484,9 @@ public final class SubstraitExpressionBuilder
         else if (trinoType instanceof TimestampWithTimeZoneType tzType) {
             return R.precisionTimestampTZ(tzType.getPrecision());
         }
+        else if (trinoType instanceof VarbinaryType) {
+            return R.BINARY;
+        }
 
         throw new UnsupportedOperationException("Unsupported type for Substrait: " + trinoType);
     }
@@ -490,8 +497,7 @@ public final class SubstraitExpressionBuilder
      */
     private static ByteBuffer serializeAsExtendedExpression(
             Expression expression,
-            List<LanceColumnHandle> columns,
-            Map<String, Integer> columnOrdinals)
+            List<LanceColumnHandle> columns)
     {
         ExtensionCollector extensionCollector = new ExtensionCollector();
         RelProtoConverter relProtoConverter = new RelProtoConverter(extensionCollector);
@@ -594,6 +600,10 @@ public final class SubstraitExpressionBuilder
                     .setType(trinoTypeToProtoType(elementType))
                     .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
         }
+        else if (trinoType instanceof VarbinaryType) {
+            return builder.setBinary(io.substrait.proto.Type.Binary.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
 
         throw new UnsupportedOperationException("Unsupported type for Substrait proto: " + trinoType);
     }
@@ -613,7 +623,8 @@ public final class SubstraitExpressionBuilder
                 type instanceof VarcharType ||
                 type instanceof DateType ||
                 type instanceof TimestampType ||
-                type instanceof TimestampWithTimeZoneType;
+                type instanceof TimestampWithTimeZoneType ||
+                type instanceof VarbinaryType;
     }
 
     /**
