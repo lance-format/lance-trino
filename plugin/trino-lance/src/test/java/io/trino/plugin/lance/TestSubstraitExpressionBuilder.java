@@ -19,6 +19,8 @@ import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.predicate.ValueSet;
+import io.trino.spi.type.TimestampType;
+import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.VarbinaryType;
 import org.junit.jupiter.api.Test;
 
@@ -30,6 +32,8 @@ import java.util.Optional;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
 import static io.trino.spi.type.IntegerType.INTEGER;
+import static io.trino.spi.type.TimestampType.TIMESTAMP_MICROS;
+import static io.trino.spi.type.TimestampType.TIMESTAMP_MILLIS;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -190,5 +194,66 @@ public class TestSubstraitExpressionBuilder
 
         assertThat(SubstraitExpressionBuilder.isDomainPushable(Domain.all(INTEGER))).isTrue();
         assertThat(SubstraitExpressionBuilder.isDomainPushable(Domain.none(INTEGER))).isTrue();
+    }
+
+    @Test
+    public void testTimestampMicrosEquality()
+    {
+        // TIMESTAMP(6) - microsecond precision
+        LanceColumnHandle tsColumn = new LanceColumnHandle("created_at", TIMESTAMP_MICROS, true, 4);
+        List<LanceColumnHandle> columns = List.of(INT_COLUMN, tsColumn);
+        Map<String, Integer> ordinals = Map.of("id", 0, "created_at", 1);
+
+        // Trino stores timestamps as microseconds since epoch
+        long epochMicros = 1704067200000000L; // 2024-01-01 00:00:00 UTC in microseconds
+        TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
+                Map.of(tsColumn, Domain.singleValue(TIMESTAMP_MICROS, epochMicros)));
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, columns, ordinals);
+        assertThat(result).isPresent();
+        assertThat(result.get().remaining()).isGreaterThan(0);
+    }
+
+    @Test
+    public void testTimestampMillisEquality()
+    {
+        // TIMESTAMP(3) - millisecond precision
+        LanceColumnHandle tsColumn = new LanceColumnHandle("created_at", TIMESTAMP_MILLIS, true, 4);
+        List<LanceColumnHandle> columns = List.of(INT_COLUMN, tsColumn);
+        Map<String, Integer> ordinals = Map.of("id", 0, "created_at", 1);
+
+        // Trino stores timestamps as microseconds since epoch (even for TIMESTAMP(3))
+        long epochMicros = 1704067200000000L;
+        TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
+                Map.of(tsColumn, Domain.singleValue(TIMESTAMP_MILLIS, epochMicros)));
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, columns, ordinals);
+        assertThat(result).isPresent();
+        assertThat(result.get().remaining()).isGreaterThan(0);
+    }
+
+    @Test
+    public void testTimestampRange()
+    {
+        LanceColumnHandle tsColumn = new LanceColumnHandle("created_at", TIMESTAMP_MICROS, true, 4);
+        List<LanceColumnHandle> columns = List.of(INT_COLUMN, tsColumn);
+        Map<String, Integer> ordinals = Map.of("id", 0, "created_at", 1);
+
+        long startMicros = 1704067200000000L; // 2024-01-01 00:00:00 UTC
+        long endMicros = 1704153600000000L;   // 2024-01-02 00:00:00 UTC
+        TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
+                Map.of(tsColumn, Domain.create(
+                        ValueSet.ofRanges(Range.range(TIMESTAMP_MICROS, startMicros, true, endMicros, false)), false)));
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, columns, ordinals);
+        assertThat(result).isPresent();
+        assertThat(result.get().remaining()).isGreaterThan(0);
+    }
+
+    @Test
+    public void testTimestampIsSupportedType()
+    {
+        assertThat(SubstraitExpressionBuilder.isSupportedType(TIMESTAMP_MICROS)).isTrue();
+        assertThat(SubstraitExpressionBuilder.isSupportedType(TIMESTAMP_MILLIS)).isTrue();
+        assertThat(SubstraitExpressionBuilder.isSupportedType(TimestampType.createTimestampType(0))).isTrue();
+        assertThat(SubstraitExpressionBuilder.isSupportedType(TimestampType.createTimestampType(9))).isTrue();
+        assertThat(SubstraitExpressionBuilder.isSupportedType(TimestampWithTimeZoneType.createTimestampWithTimeZoneType(3))).isTrue();
     }
 }

@@ -429,18 +429,21 @@ public final class SubstraitExpressionBuilder
             int daysSinceEpoch = ((Long) value).intValue();
             return ExpressionCreator.date(false, daysSinceEpoch);
         }
-        else if (trinoType instanceof TimestampType) {
-            // Trino stores timestamps as microseconds since epoch
+        else if (trinoType instanceof TimestampType timestampType) {
+            // Trino stores timestamps as microseconds since epoch for precision <= 6
             long epochMicros = (Long) value;
-            // Substrait uses microsecond precision timestamps
-            return ExpressionCreator.precisionTimestamp(false, epochMicros, 6);
+            // Use the same precision as the type to ensure type consistency in Substrait
+            int precision = timestampType.getPrecision();
+            return ExpressionCreator.precisionTimestamp(false, epochMicros, precision);
         }
-        else if (trinoType instanceof TimestampWithTimeZoneType) {
+        else if (trinoType instanceof TimestampWithTimeZoneType tzType) {
             // Trino stores timestamp with timezone as packed long (millis + zone key)
             // Extract milliseconds and convert to microseconds
             long packedValue = (Long) value;
             long epochMillis = io.trino.spi.type.DateTimeEncoding.unpackMillisUtc(packedValue);
-            return ExpressionCreator.precisionTimestampTZ(false, epochMillis * 1000, 6);
+            // Use the same precision as the type to ensure type consistency in Substrait
+            int precision = tzType.getPrecision();
+            return ExpressionCreator.precisionTimestampTZ(false, epochMillis * 1000, precision);
         }
         else if (trinoType instanceof VarbinaryType) {
             return ExpressionCreator.binary(false, ((Slice) value).getBytes());
