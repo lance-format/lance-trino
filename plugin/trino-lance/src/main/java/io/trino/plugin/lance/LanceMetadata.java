@@ -61,12 +61,13 @@ import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
 import org.apache.arrow.vector.types.pojo.Schema;
+import org.lance.CommitBuilder;
 import org.lance.Dataset;
 import org.lance.FragmentMetadata;
 import org.lance.FragmentOperation;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
-import org.lance.Transaction;
+import org.lance.SourcedTransaction;
 import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateEmptyTableRequest;
@@ -1158,12 +1159,14 @@ public class LanceMetadata
                         .newFragments(newFragments)
                         .build();
 
-                Transaction transaction = dataset
-                        .newTransactionBuilder()
-                        .writeParams(storageOptions)
+                try (SourcedTransaction transaction = dataset.newTransactionBuilder()
                         .operation(update)
                         .build();
-                transaction.commit().close();
+                        Dataset committed = new CommitBuilder(dataset)
+                                .writeParams(storageOptions)
+                                .execute(transaction.transaction())) {
+                    // no-op; commit side effects are persisted by execute()
+                }
             }
 
             String userIdentity = session.getUser();
@@ -1295,12 +1298,14 @@ public class LanceMetadata
         log.debug("Committing %d fragments to dataset: %s (append)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        Transaction transaction = dataset
-                .newTransactionBuilder()
-                .writeParams(storageOptions)
+        try (SourcedTransaction transaction = dataset.newTransactionBuilder()
                 .operation(Append.builder().fragments(fragments).build())
                 .build();
-        transaction.commit().close();
+                Dataset committed = new CommitBuilder(dataset)
+                        .writeParams(storageOptions)
+                        .execute(transaction.transaction())) {
+            // no-op; commit side effects are persisted by execute()
+        }
     }
 
     private void commitOverwrite(Dataset dataset, List<String> serializedFragments, Schema schema, Map<String, String> storageOptions)
@@ -1308,12 +1313,14 @@ public class LanceMetadata
         log.debug("Committing %d fragments to dataset: %s (overwrite)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        Transaction transaction = dataset
-                .newTransactionBuilder()
-                .writeParams(storageOptions)
+        try (SourcedTransaction transaction = dataset.newTransactionBuilder()
                 .operation(Overwrite.builder().fragments(fragments).schema(schema).build())
                 .build();
-        transaction.commit().close();
+                Dataset committed = new CommitBuilder(dataset)
+                        .writeParams(storageOptions)
+                        .execute(transaction.transaction())) {
+            // no-op; commit side effects are persisted by execute()
+        }
     }
 
     private void createDatasetWithFragments(String datasetUri, List<String> serializedFragments, Schema schema, WriteParams params, Map<String, String> storageOptions)
