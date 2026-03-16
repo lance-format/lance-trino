@@ -78,6 +78,7 @@ public class LanceMergeSink
                 runtime.getNamespace(),
                 mergeHandle.getTableId(),
                 mergeHandle.getStorageOptions(),
+                mergeHandle.fileFormatVersion(),
                 runtime.getAllocator());
     }
 

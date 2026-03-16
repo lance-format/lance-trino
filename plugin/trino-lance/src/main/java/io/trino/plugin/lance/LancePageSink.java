@@ -25,6 +25,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.Fragment;
 import org.lance.FragmentMetadata;
+import org.lance.WriteFragmentBuilder;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.LanceNamespaceStorageOptionsProvider;
 
@@ -57,6 +58,7 @@ public class LancePageSink
     private final LanceNamespace namespace;
     private final List<String> tableId;
     private final Map<String, String> configuredStorageOptions;
+    private final String fileFormatVersion;
 
     private final List<Page> bufferedPages = new ArrayList<>();
     private long writtenBytes;
@@ -71,6 +73,7 @@ public class LancePageSink
             LanceNamespace namespace,
             List<String> tableId,
             Map<String, String> configuredStorageOptions,
+            String fileFormatVersion,
             BufferAllocator parentAllocator)
     {
         this.datasetUri = requireNonNull(datasetUri, "datasetUri is null");
@@ -82,6 +85,7 @@ public class LancePageSink
         this.namespace = requireNonNull(namespace, "namespace is null");
         this.tableId = requireNonNull(tableId, "tableId is null");
         this.configuredStorageOptions = requireNonNull(configuredStorageOptions, "configuredStorageOptions is null");
+        this.fileFormatVersion = fileFormatVersion; // nullable
         this.allocator = parentAllocator.newChildAllocator("page-sink", 0, Long.MAX_VALUE);
     }
 
@@ -168,10 +172,16 @@ public class LancePageSink
             // Write fragments using Lance API
             // Use storageOptionsProvider only if credentials have expiration (expires_at_millis)
             // Otherwise use static storage_options directly
-            var fragmentWriter = Fragment.write()
+            WriteFragmentBuilder fragmentWriter = Fragment.write()
                     .datasetUri(datasetUri)
                     .allocator(allocator)
                     .data(root);
+
+            // Set file format version if specified
+            if (fileFormatVersion != null) {
+                fragmentWriter = fragmentWriter.dataStorageVersion(fileFormatVersion);
+                log.debug("Using file format version %s for table %s", fileFormatVersion, tableId);
+            }
 
             if (storageOptions != null && !storageOptions.isEmpty()) {
                 if (storageOptions.containsKey("expires_at_millis")) {

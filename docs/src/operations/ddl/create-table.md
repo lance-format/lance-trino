@@ -52,6 +52,7 @@ AS <query>
 |----------|-------------|
 | `blob_columns` | Comma-separated list of VARBINARY columns to use blob encoding (out-of-line storage for large binary data). Example: `'image, video'` |
 | `vector_columns` | Comma-separated list of vector columns with dimensions. Format: `'column1:dim1, column2:dim2'`. Columns must be `ARRAY(REAL)` or `ARRAY(DOUBLE)`. Example: `'embedding:768'` |
+| `file_format_version` | Lance file format version for new tables. Valid values: `'legacy'`, `'0.1'`, `'2.0'`, `'2.1'`, `'2.2'`, `'stable'`, `'next'`. Default uses the Lance SDK's default version. |
 
 ## Examples
 
@@ -217,6 +218,41 @@ CREATE TABLE lance.default.image_search (
     vector_columns = 'embedding:512'
 );
 ```
+
+### Create table with specific file format version
+
+Specify the Lance file format version for the table:
+
+```sql
+CREATE TABLE lance.default.legacy_table (
+    id BIGINT,
+    name VARCHAR
+) WITH (file_format_version = 'legacy');
+```
+
+Create a table with the latest stable format:
+
+```sql
+CREATE TABLE lance.default.modern_table (
+    id BIGINT,
+    data VARCHAR
+) WITH (file_format_version = '2.1');
+```
+
+Combine with other table properties:
+
+```sql
+CREATE TABLE lance.default.ml_data (
+    id BIGINT,
+    embedding ARRAY(REAL)
+) WITH (
+    vector_columns = 'embedding:768',
+    file_format_version = '2.0'
+);
+```
+
+!!! note "File Format Version"
+    The `file_format_version` property only applies when creating new tables. When inserting data into existing tables, the connector automatically uses the table's existing format version to ensure compatibility.
 
 ## Supported Data Types
 
