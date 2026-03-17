@@ -66,7 +66,7 @@ import org.lance.FragmentMetadata;
 import org.lance.FragmentOperation;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
-import org.lance.Transaction;
+import org.lance.SourcedTransaction;
 import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateEmptyTableRequest;
@@ -1158,11 +1158,13 @@ public class LanceMetadata
                         .newFragments(newFragments)
                         .build();
 
-                Transaction transaction = dataset
+                SourcedTransaction.Builder transactionBuilder = dataset
                         .newTransactionBuilder()
-                        .writeParams(storageOptions)
-                        .operation(update)
-                        .build();
+                        .operation(update);
+                if (storageOptions != null && !storageOptions.isEmpty()) {
+                    transactionBuilder.transactionProperties(storageOptions);
+                }
+                SourcedTransaction transaction = transactionBuilder.build();
                 transaction.commit().close();
             }
 
@@ -1295,11 +1297,13 @@ public class LanceMetadata
         log.debug("Committing %d fragments to dataset: %s (append)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        Transaction transaction = dataset
+        SourcedTransaction.Builder transactionBuilder = dataset
                 .newTransactionBuilder()
-                .writeParams(storageOptions)
-                .operation(Append.builder().fragments(fragments).build())
-                .build();
+                .operation(Append.builder().fragments(fragments).build());
+        if (storageOptions != null && !storageOptions.isEmpty()) {
+            transactionBuilder.transactionProperties(storageOptions);
+        }
+        SourcedTransaction transaction = transactionBuilder.build();
         transaction.commit().close();
     }
 
@@ -1308,11 +1312,13 @@ public class LanceMetadata
         log.debug("Committing %d fragments to dataset: %s (overwrite)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        Transaction transaction = dataset
+        SourcedTransaction.Builder transactionBuilder = dataset
                 .newTransactionBuilder()
-                .writeParams(storageOptions)
-                .operation(Overwrite.builder().fragments(fragments).schema(schema).build())
-                .build();
+                .operation(Overwrite.builder().fragments(fragments).schema(schema).build());
+        if (storageOptions != null && !storageOptions.isEmpty()) {
+            transactionBuilder.transactionProperties(storageOptions);
+        }
+        SourcedTransaction transaction = transactionBuilder.build();
         transaction.commit().close();
     }
 
