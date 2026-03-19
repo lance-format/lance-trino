@@ -849,10 +849,11 @@ public class LanceMetadata
             tableId.forEach(declareRequest::addIdItem);
             DeclareTableResponse declareResponse = getNamespace().declareTable(declareRequest);
             tablePath = declareResponse.getLocation();
-            // Get storage options from the declare response for new tables
+            // Get storage options from the declare response; fall back to namespace-level options
+            // (e.g. S3 credentials configured via lance.storage.*) if the namespace doesn't vend credentials.
             storageOptions = declareResponse.getStorageOptions();
-            if (storageOptions == null) {
-                storageOptions = new HashMap<>();
+            if (storageOptions == null || storageOptions.isEmpty()) {
+                storageOptions = runtime.getNamespaceStorageOptions();
             }
         }
 

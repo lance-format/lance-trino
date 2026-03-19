@@ -415,6 +415,11 @@
                     <argLine>--add-opens=java.base/java.nio=ALL-UNNAMED</argLine>
                     <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
                     <useSystemClassLoader>false</useSystemClassLoader>
+                    <!-- Run test classes sequentially: each DistributedQueryRunner consumes
+                         hundreds of threads, so concurrent class execution causes OOM. -->
+                    <systemPropertyVariables>
+                        <junit.jupiter.execution.parallel.mode.classes.default>same_thread</junit.jupiter.execution.parallel.mode.classes.default>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
             <plugin>
