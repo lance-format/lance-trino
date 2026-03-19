@@ -380,8 +380,8 @@ public class LanceMetadata
             return new ConnectorTableMetadata(schemaTableName, columnsMetadata);
         }
         catch (Exception e) {
-            throw new TrinoException(GENERIC_INTERNAL_ERROR,
-                    "Failed to get table metadata for " + lanceTableHandle.getTableName(), e);
+            log.debug(e, "Failed to get table metadata for %s", lanceTableHandle.getTableName());
+            return null;
         }
     }
 
