@@ -66,7 +66,7 @@ import org.lance.FragmentMetadata;
 import org.lance.FragmentOperation;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
-import org.lance.Transaction;
+import org.lance.SourcedTransaction;
 import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateEmptyTableRequest;
@@ -100,6 +100,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
@@ -637,7 +638,7 @@ public class LanceMetadata
         // so we just use the new one (this matches the previous behavior with TupleDomain.intersect)
         // In practice, Trino calls applyFilter once with the full constraint
         if (existingFilter != null && existingFilter.length > 0 &&
-                java.util.Arrays.equals(existingFilter, newFilterBytes)) {
+                Arrays.equals(existingFilter, newFilterBytes)) {
             log.debug("applyFilter: filter unchanged, returning empty");
             return Optional.empty();
         }
@@ -1158,11 +1159,13 @@ public class LanceMetadata
                         .newFragments(newFragments)
                         .build();
 
-                Transaction transaction = dataset
+                SourcedTransaction.Builder transactionBuilder = dataset
                         .newTransactionBuilder()
-                        .writeParams(storageOptions)
-                        .operation(update)
-                        .build();
+                        .operation(update);
+                if (storageOptions != null && !storageOptions.isEmpty()) {
+                    transactionBuilder.transactionProperties(storageOptions);
+                }
+                SourcedTransaction transaction = transactionBuilder.build();
                 transaction.commit().close();
             }
 
@@ -1295,11 +1298,13 @@ public class LanceMetadata
         log.debug("Committing %d fragments to dataset: %s (append)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        Transaction transaction = dataset
+        SourcedTransaction.Builder transactionBuilder = dataset
                 .newTransactionBuilder()
-                .writeParams(storageOptions)
-                .operation(Append.builder().fragments(fragments).build())
-                .build();
+                .operation(Append.builder().fragments(fragments).build());
+        if (storageOptions != null && !storageOptions.isEmpty()) {
+            transactionBuilder.transactionProperties(storageOptions);
+        }
+        SourcedTransaction transaction = transactionBuilder.build();
         transaction.commit().close();
     }
 
@@ -1308,11 +1313,13 @@ public class LanceMetadata
         log.debug("Committing %d fragments to dataset: %s (overwrite)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        Transaction transaction = dataset
+        SourcedTransaction.Builder transactionBuilder = dataset
                 .newTransactionBuilder()
-                .writeParams(storageOptions)
-                .operation(Overwrite.builder().fragments(fragments).schema(schema).build())
-                .build();
+                .operation(Overwrite.builder().fragments(fragments).schema(schema).build());
+        if (storageOptions != null && !storageOptions.isEmpty()) {
+            transactionBuilder.transactionProperties(storageOptions);
+        }
+        SourcedTransaction transaction = transactionBuilder.build();
         transaction.commit().close();
     }
 
