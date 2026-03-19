@@ -380,8 +380,8 @@ public class LanceMetadata
             return new ConnectorTableMetadata(schemaTableName, columnsMetadata);
         }
         catch (Exception e) {
-            log.warn(e, "Failed to get table metadata for %s", lanceTableHandle.getTableName());
-            return null;
+            throw new TrinoException(GENERIC_INTERNAL_ERROR,
+                    "Failed to get table metadata for " + lanceTableHandle.getTableName(), e);
         }
     }
 
@@ -1164,8 +1164,9 @@ public class LanceMetadata
                 if (storageOptions != null && !storageOptions.isEmpty()) {
                     transactionBuilder.transactionProperties(storageOptions);
                 }
-                SourcedTransaction transaction = transactionBuilder.build();
-                transaction.commit().close();
+                try (SourcedTransaction transaction = transactionBuilder.build()) {
+                    transaction.commit().close();
+                }
             }
 
             String userIdentity = session.getUser();
@@ -1303,8 +1304,9 @@ public class LanceMetadata
         if (storageOptions != null && !storageOptions.isEmpty()) {
             transactionBuilder.transactionProperties(storageOptions);
         }
-        SourcedTransaction transaction = transactionBuilder.build();
-        transaction.commit().close();
+        try (SourcedTransaction transaction = transactionBuilder.build()) {
+            transaction.commit().close();
+        }
     }
 
     private void commitOverwrite(Dataset dataset, List<String> serializedFragments, Schema schema, Map<String, String> storageOptions)
@@ -1318,8 +1320,9 @@ public class LanceMetadata
         if (storageOptions != null && !storageOptions.isEmpty()) {
             transactionBuilder.transactionProperties(storageOptions);
         }
-        SourcedTransaction transaction = transactionBuilder.build();
-        transaction.commit().close();
+        try (SourcedTransaction transaction = transactionBuilder.build()) {
+            transaction.commit().close();
+        }
     }
 
     private void createDatasetWithFragments(String datasetUri, List<String> serializedFragments, Schema schema, WriteParams params, Map<String, String> storageOptions)

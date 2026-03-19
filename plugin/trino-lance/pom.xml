@@ -16,6 +16,8 @@
 
     <properties>
         <air.main.basedir>${project.parent.basedir}</air.main.basedir>
+        <!-- Default to 1C (1 per CPU). Override via -Dsurefire.forkCount for constrained machines. -->
+        <surefire.forkCount>1C</surefire.forkCount>
     </properties>
 
     <dependencies>
@@ -415,8 +417,10 @@
                     <argLine>--add-opens=java.base/java.nio=ALL-UNNAMED</argLine>
                     <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
                     <useSystemClassLoader>false</useSystemClassLoader>
-                    <!-- Run test classes sequentially: each DistributedQueryRunner consumes
-                         hundreds of threads, so concurrent class execution causes OOM. -->
+                    <!-- Each DistributedQueryRunner consumes ~500 threads. Limit parallel forks to
+                         avoid exhausting the OS thread limit (ulimit -u). The Makefile computes a
+                         safe value for the local machine and passes it via -Dsurefire.forkCount. -->
+                    <forkCount>${surefire.forkCount}</forkCount>
                     <systemPropertyVariables>
                         <junit.jupiter.execution.parallel.mode.classes.default>same_thread</junit.jupiter.execution.parallel.mode.classes.default>
                     </systemPropertyVariables>

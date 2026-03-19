@@ -1,5 +1,14 @@
 .PHONY: build test clean install compile package help run lint format check serve-docs
 
+# Compute a safe Surefire forkCount based on system thread limits.
+# Each test fork starts a Trino DistributedQueryRunner that needs ~500 threads.
+# Use 50% of the per-user process limit (ulimit -u) as headroom, capped at CPU count.
+_THREAD_LIMIT := $(shell ulimit -u 2>/dev/null || echo 4096)
+_CPUS         := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+_SAFE_FORKS   := $(shell expr $(_THREAD_LIMIT) / 2 / 500 2>/dev/null || echo 1)
+_SAFE_FORKS   := $(shell [ "0$(_SAFE_FORKS)" -gt 0 ] 2>/dev/null && echo $(_SAFE_FORKS) || echo 1)
+SUREFIRE_FORK_COUNT ?= $(shell [ "$(_SAFE_FORKS)" -lt "$(_CPUS)" ] 2>/dev/null && echo $(_SAFE_FORKS) || echo $(_CPUS))
+
 # Default target
 help:
 	@echo "Available targets:"
@@ -21,11 +30,11 @@ build: compile package
 
 # Run tests
 test:
-	./mvnw test -Dair.check.skip-enforcer=true
+	./mvnw test -Dair.check.skip-enforcer=true -Dsurefire.forkCount=$(SUREFIRE_FORK_COUNT)
 
 # Install to local repository
 install:
-	./mvnw clean install -Dair.check.skip-enforcer=true
+	./mvnw clean install -Dair.check.skip-enforcer=true -Dsurefire.forkCount=$(SUREFIRE_FORK_COUNT)
 
 # Compile source code
 compile:
@@ -41,7 +50,7 @@ clean:
 
 # Full verification
 verify:
-	./mvnw verify -Dair.check.skip-enforcer=true
+	./mvnw verify -Dair.check.skip-enforcer=true -Dsurefire.forkCount=$(SUREFIRE_FORK_COUNT)
 
 # Run the development query runner server
 run:
