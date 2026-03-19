@@ -258,7 +258,7 @@ public final class LanceQueryRunner
             if (namespaceTestConfig.isPresent()) {
                 LanceNamespaceTestConfig config = namespaceTestConfig.get();
                 // Only apply if not S3 config (S3 properties are set separately in builderForS3)
-                if (!config.isS3Config() && useTempDirectory && !connectorProperties.containsKey("lance.root")) {
+                if (!config.isS3Config() && useTempDirectory) {
                     Path tempDir = Files.createTempDirectory("lance-trino-test");
                     tempDir.toFile().deleteOnExit();
                     Map<String, String> configProps = config.buildConnectorProperties(tempDir.toUri().toString());
@@ -266,10 +266,9 @@ public final class LanceQueryRunner
                     log.info("Using temporary directory for Lance with config %s: %s", config, tempDir);
                 }
             }
-            else if (useTempDirectory && !connectorProperties.containsKey("lance.root") && !connectorProperties.containsKey("lance.uri")) {
-                // Default behavior: use temp directory without namespace config
-                // Use single-level mode for backwards compatibility with DirectoryNamespace
-                // Only apply when not using REST (which has lance.uri instead of lance.root)
+            else if (useTempDirectory && !connectorProperties.containsKey("lance.uri")) {
+                // useTempDirectory overrides any pre-set lance.root (e.g. from builder()) so that
+                // write tests never pollute the shared read-only example_db test resource.
                 Path tempDir = Files.createTempDirectory("lance-trino-test");
                 tempDir.toFile().deleteOnExit();
                 connectorProperties.put("lance.root", tempDir.toUri().toString());
