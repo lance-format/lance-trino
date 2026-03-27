@@ -116,7 +116,7 @@
         <dependency>
             <groupId>org.lance</groupId>
             <artifactId>lance-core</artifactId>
-            <version>4.0.0-beta.13</version>
+            <version>5.0.0-beta.1</version>
             <exclusions>
                 <exclusion>
                     <groupId>org.junit.jupiter</groupId>
