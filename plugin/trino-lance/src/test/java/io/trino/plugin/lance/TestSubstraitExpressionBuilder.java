@@ -15,6 +15,12 @@ package io.trino.plugin.lance;
 
 import io.airlift.slice.Slices;
 import io.substrait.expression.Expression;
+import io.trino.spi.connector.ColumnHandle;
+import io.trino.spi.expression.Call;
+import io.trino.spi.expression.ConnectorExpression;
+import io.trino.spi.expression.Constant;
+import io.trino.spi.expression.FunctionName;
+import io.trino.spi.expression.Variable;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;
@@ -29,6 +35,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static io.trino.spi.expression.StandardFunctions.AND_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.LIKE_FUNCTION_NAME;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
 import static io.trino.spi.type.IntegerType.INTEGER;
@@ -255,5 +263,143 @@ public class TestSubstraitExpressionBuilder
         assertThat(SubstraitExpressionBuilder.isSupportedType(TimestampType.createTimestampType(0))).isTrue();
         assertThat(SubstraitExpressionBuilder.isSupportedType(TimestampType.createTimestampType(9))).isTrue();
         assertThat(SubstraitExpressionBuilder.isSupportedType(TimestampWithTimeZoneType.createTimestampWithTimeZoneType(3))).isTrue();
+    }
+
+    // LIKE pattern pushdown tests
+
+    @Test
+    public void testIsPushableLikePattern()
+    {
+        // All non-empty patterns should be pushable (Lance filters at storage layer)
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo%")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%bar")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("_foo%")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("exact")).isTrue();
+
+        // Only empty/null patterns are not pushable
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern(null)).isFalse();
+    }
+
+    @Test
+    public void testExtractLikePredicatesSimple()
+    {
+        // Create a LIKE expression: name LIKE 'foo%'
+        ConnectorExpression likeExpr = new Call(
+                io.trino.spi.type.BooleanType.BOOLEAN,
+                LIKE_FUNCTION_NAME,
+                List.of(
+                        new Variable("name", VARCHAR),
+                        new Constant(Slices.utf8Slice("foo%"), VARCHAR)));
+
+        Map<String, ColumnHandle> assignments = Map.of("name", VARCHAR_COLUMN);
+
+        SubstraitExpressionBuilder.LikePredicateExtractionResult result =
+                SubstraitExpressionBuilder.extractLikePredicates(likeExpr, assignments);
+
+        assertThat(result.likePredicates()).hasSize(1);
+        assertThat(result.likePredicates().getFirst().columnName()).isEqualTo("name");
+        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("foo%");
+        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
+    }
+
+    @Test
+    public void testExtractLikePredicatesSuffixPattern()
+    {
+        // Create a LIKE expression with suffix pattern: name LIKE '%foo'
+        // All patterns are pushable now (Lance filters at storage layer)
+        ConnectorExpression likeExpr = new Call(
+                io.trino.spi.type.BooleanType.BOOLEAN,
+                LIKE_FUNCTION_NAME,
+                List.of(
+                        new Variable("name", VARCHAR),
+                        new Constant(Slices.utf8Slice("%foo"), VARCHAR)));
+
+        Map<String, ColumnHandle> assignments = Map.of("name", VARCHAR_COLUMN);
+
+        SubstraitExpressionBuilder.LikePredicateExtractionResult result =
+                SubstraitExpressionBuilder.extractLikePredicates(likeExpr, assignments);
+
+        // All patterns are now pushable
+        assertThat(result.likePredicates()).hasSize(1);
+        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("%foo");
+        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
+    }
+
+    @Test
+    public void testExtractLikePredicatesWithAnd()
+    {
+        // Create: name LIKE 'foo%' AND id > 10
+        ConnectorExpression likeExpr = new Call(
+                io.trino.spi.type.BooleanType.BOOLEAN,
+                LIKE_FUNCTION_NAME,
+                List.of(
+                        new Variable("name", VARCHAR),
+                        new Constant(Slices.utf8Slice("foo%"), VARCHAR)));
+
+        ConnectorExpression otherExpr = new Call(
+                io.trino.spi.type.BooleanType.BOOLEAN,
+                new FunctionName("$greater_than"),
+                List.of(
+                        new Variable("id", INTEGER),
+                        new Constant(10L, INTEGER)));
+
+        ConnectorExpression andExpr = new Call(
+                io.trino.spi.type.BooleanType.BOOLEAN,
+                AND_FUNCTION_NAME,
+                List.of(likeExpr, otherExpr));
+
+        Map<String, ColumnHandle> assignments = Map.of("name", VARCHAR_COLUMN, "id", INT_COLUMN);
+
+        SubstraitExpressionBuilder.LikePredicateExtractionResult result =
+                SubstraitExpressionBuilder.extractLikePredicates(andExpr, assignments);
+
+        // LIKE should be extracted, other predicate should remain
+        assertThat(result.likePredicates()).hasSize(1);
+        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("foo%");
+        // The remaining expression should be the > predicate
+        assertThat(result.remainingExpression()).isEqualTo(otherExpr);
+    }
+
+    @Test
+    public void testLikeExpressionCreation()
+    {
+        Expression likeExpr = SubstraitExpressionBuilder.likeExpression(2, io.substrait.type.TypeCreator.of(false).STRING, "foo%");
+        assertThat(likeExpr).isInstanceOf(Expression.ScalarFunctionInvocation.class);
+    }
+
+    @Test
+    public void testCombineExpressionsWithLike()
+    {
+        // Create TupleDomain expression
+        TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
+                Map.of(INT_COLUMN, Domain.singleValue(INTEGER, 42L)));
+        Optional<Expression> tupleDomainExpr = SubstraitExpressionBuilder.tupleDomainToExpression(domain, COLUMN_ORDINALS);
+
+        // Create LIKE predicate
+        List<SubstraitExpressionBuilder.LikePredicate> likePredicates = List.of(
+                new SubstraitExpressionBuilder.LikePredicate("name", VARCHAR_COLUMN, "foo%"));
+
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.combineExpressionsToSubstrait(
+                tupleDomainExpr, likePredicates, ALL_COLUMNS, COLUMN_ORDINALS);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().remaining()).isGreaterThan(0);
+    }
+
+    @Test
+    public void testCombineExpressionsOnlyLike()
+    {
+        // Only LIKE predicate, no TupleDomain
+        List<SubstraitExpressionBuilder.LikePredicate> likePredicates = List.of(
+                new SubstraitExpressionBuilder.LikePredicate("name", VARCHAR_COLUMN, "prefix%"));
+
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.combineExpressionsToSubstrait(
+                Optional.empty(), likePredicates, ALL_COLUMNS, COLUMN_ORDINALS);
+
+        assertThat(result).isPresent();
+        assertThat(result.get().remaining()).isGreaterThan(0);
     }
 }

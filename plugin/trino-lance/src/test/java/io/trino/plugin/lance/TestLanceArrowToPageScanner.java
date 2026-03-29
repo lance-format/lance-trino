@@ -101,7 +101,7 @@ public class TestLanceArrowToPageScanner
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
         metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
-        splitManager = new LanceSplitManager(runtime, lanceConfig);
+        splitManager = new LanceSplitManager(runtime);
 
         ConnectorTableHandle tableHandle = metadata.getTableHandle(
                 TestingConnectorSession.SESSION, WIDE_TABLE, Optional.empty(), Optional.empty());
