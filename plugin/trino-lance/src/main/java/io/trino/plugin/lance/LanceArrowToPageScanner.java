@@ -37,6 +37,7 @@ import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.LargeVarBinaryVector;
+import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.TimeMicroVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
 import org.apache.arrow.vector.TimeStampMicroVector;
@@ -438,8 +439,14 @@ public class LanceArrowToPageScanner
     private void writeSlice(BlockBuilder output, Type type, FieldVector vector, int index)
     {
         if (type instanceof VarcharType) {
-            byte[] slice = ((VarCharVector) vector).get(index);
-            type.writeSlice(output, wrappedBuffer(slice));
+            if (vector instanceof LargeVarCharVector largeVarCharVector) {
+                byte[] slice = largeVarCharVector.get(index);
+                type.writeSlice(output, wrappedBuffer(slice));
+            }
+            else {
+                byte[] slice = ((VarCharVector) vector).get(index);
+                type.writeSlice(output, wrappedBuffer(slice));
+            }
         }
         else if (type instanceof VarbinaryType) {
             if (vector instanceof VarBinaryVector varBinaryVector) {

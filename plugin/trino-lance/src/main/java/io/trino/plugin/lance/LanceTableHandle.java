@@ -43,7 +43,6 @@ public class LanceTableHandle
     private final Map<String, String> storageOptions;
     private final byte[] substraitFilter;
     private final List<String> filterColumns;  // Column names in the filter, for display purposes
-    private final List<String> equalityFilterColumns;  // Columns with equality predicates (for index optimization)
     private final OptionalLong limit;
     private final boolean countStar;
     private final Long datasetVersion;  // Captured at planning time for snapshot isolation
@@ -55,7 +54,7 @@ public class LanceTableHandle
             List<String> tableId,
             Map<String, String> storageOptions)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, null, List.of(), List.of(), OptionalLong.empty(), false, null);
+        this(schemaName, tableName, tablePath, tableId, storageOptions, null, List.of(), OptionalLong.empty(), false, null);
     }
 
     public LanceTableHandle(
@@ -66,7 +65,7 @@ public class LanceTableHandle
             Map<String, String> storageOptions,
             Long datasetVersion)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, null, List.of(), List.of(), OptionalLong.empty(), false, datasetVersion);
+        this(schemaName, tableName, tablePath, tableId, storageOptions, null, List.of(), OptionalLong.empty(), false, datasetVersion);
     }
 
     @JsonCreator
@@ -78,14 +77,12 @@ public class LanceTableHandle
             @JsonProperty("storageOptions") Map<String, String> storageOptions,
             @JsonProperty("substraitFilter") byte[] substraitFilter,
             @JsonProperty("filterColumns") List<String> filterColumns,
-            @JsonProperty("equalityFilterColumns") List<String> equalityFilterColumns,
             @JsonProperty("limit") Long limit,
             @JsonProperty("countStar") Boolean countStar,
             @JsonProperty("datasetVersion") Long datasetVersion)
     {
         this(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter,
                 filterColumns != null ? filterColumns : List.of(),
-                equalityFilterColumns != null ? equalityFilterColumns : List.of(),
                 limit != null ? OptionalLong.of(limit) : OptionalLong.empty(),
                 countStar != null && countStar,
                 datasetVersion);
@@ -99,7 +96,6 @@ public class LanceTableHandle
             Map<String, String> storageOptions,
             byte[] substraitFilter,
             List<String> filterColumns,
-            List<String> equalityFilterColumns,
             OptionalLong limit,
             boolean countStar,
             Long datasetVersion)
@@ -111,7 +107,6 @@ public class LanceTableHandle
         this.storageOptions = storageOptions != null ? new HashMap<>(storageOptions) : new HashMap<>();
         this.substraitFilter = substraitFilter;
         this.filterColumns = filterColumns != null ? List.copyOf(filterColumns) : List.of();
-        this.equalityFilterColumns = equalityFilterColumns != null ? List.copyOf(equalityFilterColumns) : List.of();
         this.limit = requireNonNull(limit, "limit is null");
         this.countStar = countStar;
         this.datasetVersion = datasetVersion;
@@ -222,16 +217,6 @@ public class LanceTableHandle
     }
 
     /**
-     * Get the column names with equality predicates (for index optimization).
-     * Only these columns can benefit from btree/bitmap index acceleration.
-     */
-    @JsonProperty("equalityFilterColumns")
-    public List<String> getEqualityFilterColumns()
-    {
-        return equalityFilterColumns;
-    }
-
-    /**
      * Get the limit if set.
      */
     @JsonIgnore
@@ -273,15 +258,15 @@ public class LanceTableHandle
      */
     public LanceTableHandle withStorageOptions(Map<String, String> newStorageOptions)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, filterColumns, equalityFilterColumns, limit, countStar, datasetVersion);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, filterColumns, limit, countStar, datasetVersion);
     }
 
     /**
      * Create a new handle with the given Substrait filter and column names.
      */
-    public LanceTableHandle withSubstraitFilter(byte[] newSubstraitFilter, List<String> newFilterColumns, List<String> newEqualityFilterColumns)
+    public LanceTableHandle withSubstraitFilter(byte[] newSubstraitFilter, List<String> newFilterColumns)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, newFilterColumns, newEqualityFilterColumns, limit, countStar, datasetVersion);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, newFilterColumns, limit, countStar, datasetVersion);
     }
 
     /**
@@ -289,7 +274,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withLimit(long newLimit)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, equalityFilterColumns, OptionalLong.of(newLimit), countStar, datasetVersion);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, OptionalLong.of(newLimit), countStar, datasetVersion);
     }
 
     /**
@@ -297,7 +282,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withCountStar()
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, equalityFilterColumns, limit, true, datasetVersion);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, true, datasetVersion);
     }
 
     /**
@@ -305,7 +290,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withDatasetVersion(Long newDatasetVersion)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, equalityFilterColumns, limit, countStar, newDatasetVersion);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, countStar, newDatasetVersion);
     }
 
     @Override
@@ -324,7 +309,6 @@ public class LanceTableHandle
                 Objects.equals(tableId, that.tableId) &&
                 Arrays.equals(substraitFilter, that.substraitFilter) &&
                 Objects.equals(filterColumns, that.filterColumns) &&
-                Objects.equals(equalityFilterColumns, that.equalityFilterColumns) &&
                 Objects.equals(limit, that.limit) &&
                 Objects.equals(datasetVersion, that.datasetVersion);
     }
@@ -332,7 +316,7 @@ public class LanceTableHandle
     @Override
     public int hashCode()
     {
-        int result = Objects.hash(tableName, tablePath, tableId, filterColumns, equalityFilterColumns, limit, countStar, datasetVersion);
+        int result = Objects.hash(tableName, tablePath, tableId, filterColumns, limit, countStar, datasetVersion);
         result = 31 * result + Arrays.hashCode(substraitFilter);
         return result;
     }

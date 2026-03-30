@@ -577,20 +577,8 @@ public class LanceMetadata
         LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
 
         TupleDomain<ColumnHandle> summary = constraint.getSummary();
-        if (summary.isAll()) {
-            log.debug("applyFilter: constraint summary is ALL, returning empty");
-            return Optional.empty();
-        }
-
         TupleDomain<LanceColumnHandle> newConstraint = summary.transformKeys(LanceColumnHandle.class::cast);
         TupleDomain<LanceColumnHandle> supportedConstraint = filterToSupportedTypes(newConstraint);
-
-        log.debug("applyFilter: newConstraint=%s, supportedConstraint=%s", newConstraint, supportedConstraint);
-
-        if (supportedConstraint.isAll()) {
-            log.debug("applyFilter: supportedConstraint is ALL, returning empty");
-            return Optional.empty();
-        }
 
         // Get all columns from the table for building the full schema
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
@@ -599,6 +587,23 @@ public class LanceMetadata
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
         Map<String, Integer> fieldIdMap = buildPositionalOrdinals(allColumns);
+
+        // Extract pushable expressions (LIKE, OR, NOT, comparisons, IN) from ConnectorExpression
+        io.trino.spi.expression.ConnectorExpression expression = constraint.getExpression();
+        SubstraitExpressionBuilder.ExpressionExtractionResult exprResult =
+                SubstraitExpressionBuilder.extractPushableExpressions(expression, constraint.getAssignments(), fieldIdMap);
+        List<io.substrait.expression.Expression> pushedExpressions = exprResult.substraitExpressions();
+        List<String> exprColumnNames = exprResult.columnNames();
+        io.trino.spi.expression.ConnectorExpression remainingExpression = exprResult.remainingExpression();
+
+        log.debug("applyFilter: newConstraint=%s, supportedConstraint=%s, pushedExpressions=%d",
+                newConstraint, supportedConstraint, pushedExpressions.size());
+
+        // If no TupleDomain constraints and no pushed expressions, nothing to push down
+        if (supportedConstraint.isAll() && pushedExpressions.isEmpty()) {
+            log.debug("applyFilter: no constraints to push, returning empty");
+            return Optional.empty();
+        }
 
         // Filter out columns without valid field IDs (e.g., synthetic COUNT columns)
         Map<LanceColumnHandle, Domain> domains = supportedConstraint.getDomains().orElse(Map.of());
@@ -612,16 +617,15 @@ public class LanceMetadata
                 log.debug("applyFilter: skipping synthetic column %s with invalid fieldId", column.name());
             }
         }
+        supportedConstraint = validDomains.isEmpty() ? TupleDomain.all() : TupleDomain.withColumnDomains(validDomains);
 
-        if (validDomains.isEmpty()) {
-            log.debug("applyFilter: no valid columns to filter on");
-            return Optional.empty();
-        }
-        supportedConstraint = TupleDomain.withColumnDomains(validDomains);
+        // Build TupleDomain expression
+        Optional<io.substrait.expression.Expression> tupleDomainExpr =
+                SubstraitExpressionBuilder.tupleDomainToExpression(supportedConstraint, fieldIdMap);
 
-        // Build Substrait filter with full schema
-        Optional<ByteBuffer> substraitFilter = SubstraitExpressionBuilder.tupleDomainToSubstrait(
-                supportedConstraint, allColumns, fieldIdMap);
+        // Combine TupleDomain and pushed expressions
+        Optional<ByteBuffer> substraitFilter = SubstraitExpressionBuilder.combineAllExpressionsToSubstrait(
+                tupleDomainExpr, pushedExpressions, allColumns);
 
         if (substraitFilter.isEmpty()) {
             log.debug("applyFilter: no substrait filter generated, returning empty");
@@ -642,29 +646,26 @@ public class LanceMetadata
         }
 
         // Collect column names for display in EXPLAIN
-        List<String> filterColumnNames = validDomains.keySet().stream()
-                .map(LanceColumnHandle::name)
-                .toList();
-
-        // Collect columns with equality predicates (single value domains)
-        // Only equality predicates can benefit from btree/bitmap index acceleration
-        List<String> equalityColumnNames = new ArrayList<>();
-        for (Map.Entry<LanceColumnHandle, Domain> entry : validDomains.entrySet()) {
-            if (entry.getValue().isSingleValue()) {
-                equalityColumnNames.add(entry.getKey().name());
+        List<String> filterColumnNames = new ArrayList<>();
+        for (LanceColumnHandle col : validDomains.keySet()) {
+            filterColumnNames.add(col.name());
+        }
+        for (String colName : exprColumnNames) {
+            if (!filterColumnNames.contains(colName)) {
+                filterColumnNames.add(colName);
             }
         }
 
-        LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes, filterColumnNames, equalityColumnNames);
+        LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes, filterColumnNames);
         TupleDomain<LanceColumnHandle> remainingFilter = filterToUnsupportedTypes(newConstraint);
 
-        log.debug("applyFilter: pushing substrait filter (size=%d bytes), remaining=%s",
-                newFilterBytes.length, remainingFilter);
+        log.debug("applyFilter: pushing substrait filter (size=%d bytes, %d expressions), remaining=%s",
+                newFilterBytes.length, pushedExpressions.size(), remainingFilter);
 
         return Optional.of(new ConstraintApplicationResult<>(
                 newHandle,
                 remainingFilter.transformKeys(ColumnHandle.class::cast),
-                constraint.getExpression(),
+                remainingExpression,
                 false));
     }
 

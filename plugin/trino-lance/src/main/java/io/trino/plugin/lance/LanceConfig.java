@@ -168,37 +168,6 @@ public class LanceConfig
         return this;
     }
 
-    // ===== Index-Aware Split Planning Configuration =====
-
-    private long btreeIndexedRowsPerSplit = 100_000_000L;  // 100M rows
-    private long bitmapIndexedRowsPerSplit = 10_000_000L;  // 10M rows
-
-    public long getBtreeIndexedRowsPerSplit()
-    {
-        return btreeIndexedRowsPerSplit;
-    }
-
-    @Config("lance.index.btree.rows_per_split")
-    @ConfigDescription("Row count threshold for grouping btree-indexed fragments per split (default 100M)")
-    public LanceConfig setBtreeIndexedRowsPerSplit(long btreeIndexedRowsPerSplit)
-    {
-        this.btreeIndexedRowsPerSplit = btreeIndexedRowsPerSplit;
-        return this;
-    }
-
-    public long getBitmapIndexedRowsPerSplit()
-    {
-        return bitmapIndexedRowsPerSplit;
-    }
-
-    @Config("lance.index.bitmap.rows_per_split")
-    @ConfigDescription("Row count threshold for grouping bitmap-indexed fragments per split (default 10M)")
-    public LanceConfig setBitmapIndexedRowsPerSplit(long bitmapIndexedRowsPerSplit)
-    {
-        this.bitmapIndexedRowsPerSplit = bitmapIndexedRowsPerSplit;
-        return this;
-    }
-
     // ===== Cache Configuration =====
 
     private int cacheSessionMaxEntries = 100;

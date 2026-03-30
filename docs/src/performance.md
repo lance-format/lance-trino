@@ -116,19 +116,29 @@ export LANCE_INITIAL_UPLOAD_SIZE=33554432  # 32MB
 | `LANCE_UPLOAD_CONCURRENCY` | Number of concurrent S3 upload streams | `10` |
 | `LANCE_INITIAL_UPLOAD_SIZE` | Initial S3 multipart upload part size (bytes) | `5242880` (5MB) |
 
-## Index-Aware Split Planning
+## Filter Pushdown
 
-Lance Trino optimizes split planning based on index availability. When a table has indexes on filtered columns, larger splits are used because index lookups are efficient.
+Lance Trino pushes all supported filter predicates down to the Lance storage layer via Substrait expressions.
+This minimizes data transfer between Lance and Trino by filtering data at the source.
 
-```properties
-# Rows per split when btree index is used (default: 100M)
-lance.index.btree.rows_per_split=100000000
+### Supported Filters
 
-# Rows per split when bitmap index is used (default: 10M)
-lance.index.bitmap.rows_per_split=10000000
-```
+The following filter types are pushed down to Lance:
 
-| Property | Description | Default |
-|----------|-------------|---------|
-| `lance.index.btree.rows_per_split` | Row count threshold for btree-indexed splits | `100000000` (100M) |
-| `lance.index.bitmap.rows_per_split` | Row count threshold for bitmap-indexed splits | `10000000` (10M) |
+| Filter Type | Example | Notes |
+|-------------|---------|-------|
+| Equality | `column = value` | Via TupleDomain |
+| Range | `column > value`, `column BETWEEN a AND b` | Via TupleDomain |
+| IN list | `column IN (1, 2, 3)` | Via TupleDomain |
+| IS NULL | `column IS NULL` | Via TupleDomain |
+| IS NOT NULL | `column IS NOT NULL` | Via TupleDomain |
+| LIKE | `column LIKE '%pattern%'` | All patterns supported |
+| OR | `col1 = 1 OR col2 = 2` | Via ConnectorExpression |
+| NOT | `NOT (column = value)` | Via ConnectorExpression |
+| starts_with | `starts_with(column, 'prefix')` | Converted to range by Trino |
+
+### Index Usage
+
+Lance automatically selects appropriate indexes (btree, bitmap, zonemap) during query execution
+based on the pushed-down predicates. No additional configuration is required - index selection
+is handled internally by Lance's query optimizer.

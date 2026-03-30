@@ -28,6 +28,11 @@ import io.substrait.proto.Type.Nullability;
 import io.substrait.relation.RelProtoConverter;
 import io.substrait.type.Type;
 import io.substrait.type.TypeCreator;
+import io.trino.spi.connector.ColumnHandle;
+import io.trino.spi.expression.Call;
+import io.trino.spi.expression.ConnectorExpression;
+import io.trino.spi.expression.Constant;
+import io.trino.spi.expression.Variable;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;
@@ -46,6 +51,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static io.trino.spi.expression.StandardFunctions.AND_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.EQUAL_OPERATOR_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.GREATER_THAN_OPERATOR_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.GREATER_THAN_OR_EQUAL_OPERATOR_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.IN_PREDICATE_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.IS_NULL_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.LESS_THAN_OPERATOR_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.LESS_THAN_OR_EQUAL_OPERATOR_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.LIKE_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.NOT_EQUAL_OPERATOR_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.NOT_FUNCTION_NAME;
+import static io.trino.spi.expression.StandardFunctions.OR_FUNCTION_NAME;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
 import static io.trino.spi.type.DoubleType.DOUBLE;
@@ -637,5 +654,593 @@ public final class SubstraitExpressionBuilder
     public static boolean isDomainPushable(Domain domain)
     {
         return true;
+    }
+
+    /**
+     * Result of extracting pushable expressions from a ConnectorExpression.
+     */
+    public record ExpressionExtractionResult(
+            List<Expression> substraitExpressions,
+            List<String> columnNames,
+            ConnectorExpression remainingExpression) {}
+
+    /**
+     * A LIKE predicate that can be pushed down to Lance.
+     */
+    public record LikePredicate(
+            String columnName,
+            LanceColumnHandle column,
+            String pattern) {}
+
+    /**
+     * Result of extracting LIKE predicates from an expression (legacy interface).
+     */
+    public record LikePredicateExtractionResult(
+            List<LikePredicate> likePredicates,
+            ConnectorExpression remainingExpression) {}
+
+    /**
+     * Extracts pushable LIKE predicates from a ConnectorExpression (legacy method).
+     *
+     * @param expression the expression to extract LIKE predicates from
+     * @param assignments map of variable names to column handles
+     * @return extracted LIKE predicates and the remaining unpushable expression
+     */
+    public static LikePredicateExtractionResult extractLikePredicates(
+            ConnectorExpression expression,
+            Map<String, ColumnHandle> assignments)
+    {
+        List<LikePredicate> likePredicates = new ArrayList<>();
+        ConnectorExpression remaining = extractLikePredicatesRecursive(expression, assignments, likePredicates);
+        return new LikePredicateExtractionResult(likePredicates, remaining);
+    }
+
+    /**
+     * Extracts all pushable expressions from a ConnectorExpression.
+     * Supports: LIKE, OR, NOT, IS NULL, comparisons (=, <>, <, <=, >, >=), IN.
+     *
+     * @param expression the expression to extract from
+     * @param assignments map of variable names to column handles
+     * @param columnOrdinals map of column name to ordinal position
+     * @return extracted Substrait expressions, column names, and remaining unpushable expression
+     */
+    public static ExpressionExtractionResult extractPushableExpressions(
+            ConnectorExpression expression,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals)
+    {
+        List<Expression> substraitExprs = new ArrayList<>();
+        List<String> columnNames = new ArrayList<>();
+        ConnectorExpression remaining = extractExpressionsRecursive(
+                expression, assignments, columnOrdinals, substraitExprs, columnNames);
+        return new ExpressionExtractionResult(substraitExprs, columnNames, remaining);
+    }
+
+    private static ConnectorExpression extractExpressionsRecursive(
+            ConnectorExpression expression,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals,
+            List<Expression> substraitExprs,
+            List<String> columnNames)
+    {
+        if (expression instanceof Constant) {
+            return expression;
+        }
+
+        if (!(expression instanceof Call call)) {
+            return expression;
+        }
+
+        // Handle AND - process both sides and combine remaining
+        if (call.getFunctionName().equals(AND_FUNCTION_NAME)) {
+            List<ConnectorExpression> remainingArgs = new ArrayList<>();
+            for (ConnectorExpression arg : call.getArguments()) {
+                ConnectorExpression remaining = extractExpressionsRecursive(
+                        arg, assignments, columnOrdinals, substraitExprs, columnNames);
+                if (!isConstantTrue(remaining)) {
+                    remainingArgs.add(remaining);
+                }
+            }
+            if (remainingArgs.isEmpty()) {
+                return Constant.TRUE;
+            }
+            if (remainingArgs.size() == 1) {
+                return remainingArgs.getFirst();
+            }
+            return new Call(call.getType(), AND_FUNCTION_NAME, remainingArgs);
+        }
+
+        // Try to convert entire expression to Substrait
+        Optional<Expression> substraitExpr = tryConvertToSubstrait(call, assignments, columnOrdinals, columnNames);
+        if (substraitExpr.isPresent()) {
+            substraitExprs.add(substraitExpr.get());
+            return Constant.TRUE;
+        }
+
+        // Not a pushable expression - return as is
+        return expression;
+    }
+
+    /**
+     * Try to convert a Call expression to Substrait.
+     * Returns empty if the expression cannot be pushed down.
+     */
+    private static Optional<Expression> tryConvertToSubstrait(
+            Call call,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals,
+            List<String> columnNames)
+    {
+        // Handle LIKE
+        if (call.getFunctionName().equals(LIKE_FUNCTION_NAME)) {
+            return tryConvertLike(call, assignments, columnOrdinals, columnNames);
+        }
+
+        // Handle IS NULL
+        if (call.getFunctionName().equals(IS_NULL_FUNCTION_NAME)) {
+            return tryConvertIsNull(call, assignments, columnOrdinals, columnNames);
+        }
+
+        // Handle NOT
+        if (call.getFunctionName().equals(NOT_FUNCTION_NAME)) {
+            return tryConvertNot(call, assignments, columnOrdinals, columnNames);
+        }
+
+        // Handle OR
+        if (call.getFunctionName().equals(OR_FUNCTION_NAME)) {
+            return tryConvertOr(call, assignments, columnOrdinals, columnNames);
+        }
+
+        // Handle comparison operators
+        if (call.getFunctionName().equals(EQUAL_OPERATOR_FUNCTION_NAME)) {
+            return tryConvertComparison(call, "equal:any_any", assignments, columnOrdinals, columnNames);
+        }
+        if (call.getFunctionName().equals(NOT_EQUAL_OPERATOR_FUNCTION_NAME)) {
+            return tryConvertComparison(call, "not_equal:any_any", assignments, columnOrdinals, columnNames);
+        }
+        if (call.getFunctionName().equals(LESS_THAN_OPERATOR_FUNCTION_NAME)) {
+            return tryConvertComparison(call, "lt:any_any", assignments, columnOrdinals, columnNames);
+        }
+        if (call.getFunctionName().equals(LESS_THAN_OR_EQUAL_OPERATOR_FUNCTION_NAME)) {
+            return tryConvertComparison(call, "lte:any_any", assignments, columnOrdinals, columnNames);
+        }
+        if (call.getFunctionName().equals(GREATER_THAN_OPERATOR_FUNCTION_NAME)) {
+            return tryConvertComparison(call, "gt:any_any", assignments, columnOrdinals, columnNames);
+        }
+        if (call.getFunctionName().equals(GREATER_THAN_OR_EQUAL_OPERATOR_FUNCTION_NAME)) {
+            return tryConvertComparison(call, "gte:any_any", assignments, columnOrdinals, columnNames);
+        }
+
+        // Handle IN predicate
+        if (call.getFunctionName().equals(IN_PREDICATE_FUNCTION_NAME)) {
+            return tryConvertIn(call, assignments, columnOrdinals, columnNames);
+        }
+
+        return Optional.empty();
+    }
+
+    private static Optional<Expression> tryConvertLike(
+            Call call,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals,
+            List<String> columnNames)
+    {
+        List<ConnectorExpression> args = call.getArguments();
+        if (args.size() < 2) {
+            return Optional.empty();
+        }
+
+        ConnectorExpression columnExpr = args.get(0);
+        ConnectorExpression patternExpr = args.get(1);
+
+        if (columnExpr instanceof Variable variable && patternExpr instanceof Constant constant) {
+            String columnName = variable.getName();
+            ColumnHandle columnHandle = assignments.get(columnName);
+            Integer ordinal = columnOrdinals.get(columnName);
+
+            if (columnHandle instanceof LanceColumnHandle lanceColumn && ordinal != null) {
+                Object patternValue = constant.getValue();
+                if (patternValue instanceof Slice slice) {
+                    String pattern = slice.toStringUtf8();
+                    if (isPushableLikePattern(pattern)) {
+                        Type substraitType = trinoTypeToSubstrait(lanceColumn.trinoType());
+                        if (!columnNames.contains(columnName)) {
+                            columnNames.add(columnName);
+                        }
+                        return Optional.of(likeExpression(ordinal, substraitType, pattern));
+                    }
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<Expression> tryConvertIsNull(
+            Call call,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals,
+            List<String> columnNames)
+    {
+        List<ConnectorExpression> args = call.getArguments();
+        if (args.size() != 1) {
+            return Optional.empty();
+        }
+
+        ConnectorExpression arg = args.get(0);
+        if (arg instanceof Variable variable) {
+            String columnName = variable.getName();
+            ColumnHandle columnHandle = assignments.get(columnName);
+            Integer ordinal = columnOrdinals.get(columnName);
+
+            if (columnHandle instanceof LanceColumnHandle lanceColumn && ordinal != null) {
+                if (isSupportedType(lanceColumn.trinoType())) {
+                    Type substraitType = trinoTypeToSubstrait(lanceColumn.trinoType());
+                    if (!columnNames.contains(columnName)) {
+                        columnNames.add(columnName);
+                    }
+                    return Optional.of(isNullExpression(ordinal, substraitType));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<Expression> tryConvertNot(
+            Call call,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals,
+            List<String> columnNames)
+    {
+        List<ConnectorExpression> args = call.getArguments();
+        if (args.size() != 1) {
+            return Optional.empty();
+        }
+
+        ConnectorExpression arg = args.get(0);
+        if (arg instanceof Call innerCall) {
+            Optional<Expression> innerExpr = tryConvertToSubstrait(innerCall, assignments, columnOrdinals, columnNames);
+            if (innerExpr.isPresent()) {
+                return Optional.of(notExpression(innerExpr.get()));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<Expression> tryConvertOr(
+            Call call,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals,
+            List<String> columnNames)
+    {
+        List<ConnectorExpression> args = call.getArguments();
+        if (args.isEmpty()) {
+            return Optional.empty();
+        }
+
+        List<Expression> substraitArgs = new ArrayList<>();
+        for (ConnectorExpression arg : args) {
+            Optional<Expression> converted;
+            if (arg instanceof Call argCall) {
+                converted = tryConvertToSubstrait(argCall, assignments, columnOrdinals, columnNames);
+            }
+            else {
+                return Optional.empty();
+            }
+            if (converted.isEmpty()) {
+                return Optional.empty();
+            }
+            substraitArgs.add(converted.get());
+        }
+        return Optional.of(orExpressions(substraitArgs));
+    }
+
+    private static Optional<Expression> tryConvertComparison(
+            Call call,
+            String functionKey,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals,
+            List<String> columnNames)
+    {
+        List<ConnectorExpression> args = call.getArguments();
+        if (args.size() != 2) {
+            return Optional.empty();
+        }
+
+        ConnectorExpression left = args.get(0);
+        ConnectorExpression right = args.get(1);
+
+        // Handle: column op constant
+        if (left instanceof Variable variable && right instanceof Constant constant) {
+            return tryBuildComparison(variable, constant, functionKey, assignments, columnOrdinals, columnNames);
+        }
+        // Handle: constant op column (reverse operands for symmetric operators)
+        if (left instanceof Constant constant && right instanceof Variable variable) {
+            // Swap the comparison direction for asymmetric operators
+            String reversedKey = reverseComparisonKey(functionKey);
+            if (reversedKey != null) {
+                return tryBuildComparison(variable, constant, reversedKey, assignments, columnOrdinals, columnNames);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<Expression> tryBuildComparison(
+            Variable variable,
+            Constant constant,
+            String functionKey,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals,
+            List<String> columnNames)
+    {
+        String columnName = variable.getName();
+        ColumnHandle columnHandle = assignments.get(columnName);
+        Integer ordinal = columnOrdinals.get(columnName);
+
+        if (columnHandle instanceof LanceColumnHandle lanceColumn && ordinal != null) {
+            io.trino.spi.type.Type trinoType = lanceColumn.trinoType();
+            if (isSupportedType(trinoType)) {
+                Type substraitType = trinoTypeToSubstrait(trinoType);
+                Expression fieldRef = fieldReference(ordinal, substraitType);
+                Expression literal = toLiteral(trinoType, constant.getValue(), substraitType);
+                if (!columnNames.contains(columnName)) {
+                    columnNames.add(columnName);
+                }
+                return Optional.of(scalarFunction(functionKey, R.BOOLEAN, fieldRef, literal));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static String reverseComparisonKey(String key)
+    {
+        return switch (key) {
+            case "equal:any_any", "not_equal:any_any" -> key;  // Symmetric
+            case "lt:any_any" -> "gt:any_any";
+            case "lte:any_any" -> "gte:any_any";
+            case "gt:any_any" -> "lt:any_any";
+            case "gte:any_any" -> "lte:any_any";
+            default -> null;
+        };
+    }
+
+    private static Optional<Expression> tryConvertIn(
+            Call call,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals,
+            List<String> columnNames)
+    {
+        List<ConnectorExpression> args = call.getArguments();
+        if (args.size() != 2) {
+            return Optional.empty();
+        }
+
+        ConnectorExpression columnExpr = args.get(0);
+        ConnectorExpression arrayExpr = args.get(1);
+
+        if (!(columnExpr instanceof Variable variable)) {
+            return Optional.empty();
+        }
+
+        String columnName = variable.getName();
+        ColumnHandle columnHandle = assignments.get(columnName);
+        Integer ordinal = columnOrdinals.get(columnName);
+
+        if (!(columnHandle instanceof LanceColumnHandle lanceColumn) || ordinal == null) {
+            return Optional.empty();
+        }
+
+        io.trino.spi.type.Type trinoType = lanceColumn.trinoType();
+        if (!isSupportedType(trinoType)) {
+            return Optional.empty();
+        }
+
+        // Extract values from $array(...) constructor
+        if (arrayExpr instanceof Call arrayCall &&
+                arrayCall.getFunctionName().getName().equals("$array")) {
+            List<Expression> options = new ArrayList<>();
+            Type substraitType = trinoTypeToSubstrait(trinoType);
+
+            for (ConnectorExpression element : arrayCall.getArguments()) {
+                if (element instanceof Constant constant) {
+                    options.add(toLiteral(trinoType, constant.getValue(), substraitType));
+                }
+                else {
+                    return Optional.empty();
+                }
+            }
+
+            if (options.isEmpty()) {
+                return Optional.empty();
+            }
+
+            Expression fieldRef = fieldReference(ordinal, substraitType);
+            if (!columnNames.contains(columnName)) {
+                columnNames.add(columnName);
+            }
+            return Optional.of(Expression.SingleOrList.builder()
+                    .condition(fieldRef)
+                    .options(options)
+                    .build());
+        }
+        return Optional.empty();
+    }
+
+    private static ConnectorExpression extractLikePredicatesRecursive(
+            ConnectorExpression expression,
+            Map<String, ColumnHandle> assignments,
+            List<LikePredicate> likePredicates)
+    {
+        if (expression instanceof Constant) {
+            return expression;
+        }
+
+        if (!(expression instanceof Call call)) {
+            return expression;
+        }
+
+        // Handle AND - process both sides and combine remaining
+        if (call.getFunctionName().equals(AND_FUNCTION_NAME)) {
+            List<ConnectorExpression> remainingArgs = new ArrayList<>();
+            for (ConnectorExpression arg : call.getArguments()) {
+                ConnectorExpression remaining = extractLikePredicatesRecursive(arg, assignments, likePredicates);
+                if (!isConstantTrue(remaining)) {
+                    remainingArgs.add(remaining);
+                }
+            }
+            if (remainingArgs.isEmpty()) {
+                return Constant.TRUE;
+            }
+            if (remainingArgs.size() == 1) {
+                return remainingArgs.getFirst();
+            }
+            return new Call(call.getType(), AND_FUNCTION_NAME, remainingArgs);
+        }
+
+        // Handle LIKE
+        if (call.getFunctionName().equals(LIKE_FUNCTION_NAME)) {
+            List<ConnectorExpression> args = call.getArguments();
+            // LIKE has 2 arguments: column, pattern (optionally 3 with escape char)
+            if (args.size() >= 2) {
+                ConnectorExpression columnExpr = args.get(0);
+                ConnectorExpression patternExpr = args.get(1);
+
+                if (columnExpr instanceof Variable variable && patternExpr instanceof Constant constant) {
+                    String columnName = variable.getName();
+                    ColumnHandle columnHandle = assignments.get(columnName);
+
+                    if (columnHandle instanceof LanceColumnHandle lanceColumn) {
+                        Object patternValue = constant.getValue();
+                        if (patternValue instanceof Slice slice) {
+                            String pattern = slice.toStringUtf8();
+                            if (isPushableLikePattern(pattern)) {
+                                likePredicates.add(new LikePredicate(columnName, lanceColumn, pattern));
+                                return Constant.TRUE;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Not a pushable expression - return as is
+        return expression;
+    }
+
+    private static Expression notExpression(Expression arg)
+    {
+        SimpleExtension.ScalarFunctionVariant declaration =
+                EXTENSIONS.getScalarFunction(SimpleExtension.FunctionAnchor.of(
+                        DefaultExtensionCatalog.FUNCTIONS_BOOLEAN, "not:bool"));
+        return Expression.ScalarFunctionInvocation.builder()
+                .declaration(declaration)
+                .outputType(R.BOOLEAN)
+                .arguments(List.of(arg))
+                .build();
+    }
+
+    /**
+     * Check if a LIKE pattern is pushable to Lance.
+     * All LIKE patterns are pushable - Lance will filter at the storage layer,
+     * reducing data sent to Trino even if index acceleration isn't used.
+     * Prefix patterns (e.g., 'foo%') can additionally use btree/zonemap indices.
+     */
+    public static boolean isPushableLikePattern(String pattern)
+    {
+        // All non-empty patterns are pushable
+        return pattern != null && !pattern.isEmpty();
+    }
+
+    /**
+     * Creates a Substrait LIKE expression for the given column and pattern.
+     */
+    public static Expression likeExpression(int ordinal, Type substraitType, String pattern)
+    {
+        Expression fieldRef = fieldReference(ordinal, substraitType);
+        Expression patternLiteral = ExpressionCreator.string(false, pattern);
+
+        SimpleExtension.ScalarFunctionVariant declaration =
+                EXTENSIONS.getScalarFunction(SimpleExtension.FunctionAnchor.of(
+                        DefaultExtensionCatalog.FUNCTIONS_STRING, "like:str_str"));
+        return Expression.ScalarFunctionInvocation.builder()
+                .declaration(declaration)
+                .outputType(R.BOOLEAN)
+                .arguments(List.of(fieldRef, patternLiteral))
+                .build();
+    }
+
+    /**
+     * Combines a TupleDomain expression with LIKE predicates into a single Substrait expression.
+     */
+    public static Optional<ByteBuffer> combineExpressionsToSubstrait(
+            Optional<Expression> tupleDomainExpr,
+            List<LikePredicate> likePredicates,
+            List<LanceColumnHandle> allColumns,
+            Map<String, Integer> columnOrdinals)
+    {
+        List<Expression> expressions = new ArrayList<>();
+
+        // Add TupleDomain expression if present
+        tupleDomainExpr.ifPresent(expressions::add);
+
+        // Add LIKE expressions
+        for (LikePredicate likePredicate : likePredicates) {
+            Integer ordinal = columnOrdinals.get(likePredicate.columnName());
+            if (ordinal != null) {
+                Type substraitType = trinoTypeToSubstrait(likePredicate.column().trinoType());
+                expressions.add(likeExpression(ordinal, substraitType, likePredicate.pattern()));
+            }
+        }
+
+        if (expressions.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Expression combined = expressions.size() == 1
+                ? expressions.getFirst()
+                : andExpressions(expressions);
+
+        // Sort columns by field ID to match the schema order
+        List<LanceColumnHandle> sortedColumns = allColumns.stream()
+                .sorted(Comparator.comparingInt(LanceColumnHandle::fieldId))
+                .toList();
+
+        return Optional.of(serializeAsExtendedExpression(combined, sortedColumns));
+    }
+
+    /**
+     * Combines a TupleDomain expression with extracted Substrait expressions into a single Substrait filter.
+     */
+    public static Optional<ByteBuffer> combineAllExpressionsToSubstrait(
+            Optional<Expression> tupleDomainExpr,
+            List<Expression> pushedExpressions,
+            List<LanceColumnHandle> allColumns)
+    {
+        List<Expression> expressions = new ArrayList<>();
+
+        // Add TupleDomain expression if present
+        tupleDomainExpr.ifPresent(expressions::add);
+
+        // Add all pushed expressions
+        expressions.addAll(pushedExpressions);
+
+        if (expressions.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Expression combined = expressions.size() == 1
+                ? expressions.getFirst()
+                : andExpressions(expressions);
+
+        // Sort columns by field ID to match the schema order
+        List<LanceColumnHandle> sortedColumns = allColumns.stream()
+                .sorted(Comparator.comparingInt(LanceColumnHandle::fieldId))
+                .toList();
+
+        return Optional.of(serializeAsExtendedExpression(combined, sortedColumns));
+    }
+
+    private static boolean isConstantTrue(ConnectorExpression expression)
+    {
+        return expression instanceof Constant constant && Boolean.TRUE.equals(constant.getValue());
     }
 }
