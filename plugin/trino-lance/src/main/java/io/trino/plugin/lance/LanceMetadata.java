@@ -68,7 +68,6 @@ import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
 import org.lance.SourcedTransaction;
 import org.lance.Transaction;
-import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.DeclareTableRequest;
