@@ -58,7 +58,7 @@ run:
 
 # Run all code style checks (Trino standard)
 lint:
-	./mvnw checkstyle:check sortpom:verify modernizer:modernizer -Dair.check.skip-enforcer=true
+	./mvnw checkstyle:check sortpom:verify modernizer:modernizer javadoc:jar -Dair.check.skip-enforcer=true -DskipTests
 
 # Format pom.xml files
 format:

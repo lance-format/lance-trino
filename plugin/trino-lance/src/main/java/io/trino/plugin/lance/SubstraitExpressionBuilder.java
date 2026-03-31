@@ -697,7 +697,7 @@ public final class SubstraitExpressionBuilder
 
     /**
      * Extracts all pushable expressions from a ConnectorExpression.
-     * Supports: LIKE, OR, NOT, IS NULL, comparisons (=, <>, <, <=, >, >=), IN.
+     * Supports: LIKE, OR, NOT, IS NULL, comparisons ({@code =, <>, <, <=, >, >=}), IN.
      *
      * @param expression the expression to extract from
      * @param assignments map of variable names to column handles
