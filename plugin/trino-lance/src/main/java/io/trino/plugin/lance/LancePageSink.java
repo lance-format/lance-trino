@@ -27,7 +27,6 @@ import org.lance.Fragment;
 import org.lance.FragmentMetadata;
 import org.lance.WriteFragmentBuilder;
 import org.lance.namespace.LanceNamespace;
-import org.lance.namespace.LanceNamespaceStorageOptionsProvider;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -185,12 +184,11 @@ public class LancePageSink
 
             if (storageOptions != null && !storageOptions.isEmpty()) {
                 if (storageOptions.containsKey("expires_at_millis")) {
-                    // Credentials have expiration - use provider for auto-refresh
-                    LanceNamespaceStorageOptionsProvider storageOptionsProvider =
-                            new LanceNamespaceStorageOptionsProvider(namespace, tableId);
+                    // Credentials have expiration - enable namespace-backed refresh context
                     fragmentWriter = fragmentWriter
                             .storageOptions(storageOptions)
-                            .storageOptionsProvider(storageOptionsProvider);
+                            .namespaceClient(namespace)
+                            .tableId(tableId);
                 }
                 else {
                     // Static credentials - use storage options directly without provider
