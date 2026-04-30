@@ -41,6 +41,7 @@ import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.TimeMicroVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
 import org.apache.arrow.vector.TimeStampMicroVector;
+import org.apache.arrow.vector.UInt4Vector;
 import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
@@ -323,8 +324,14 @@ public class LanceArrowToPageScanner
                     }
                 }
                 else if (type.equals(INTEGER)) {
-                    writeVectorValues(output, vector, index -> type.writeLong(output, ((IntVector) vector).get(index)),
-                            offset, length);
+                    if (vector instanceof UInt4Vector uint4Vector) {
+                        writeVectorValues(output, vector,
+                                index -> type.writeLong(output, Integer.toUnsignedLong(uint4Vector.get(index))), offset, length);
+                    }
+                    else {
+                        writeVectorValues(output, vector, index -> type.writeLong(output, ((IntVector) vector).get(index)),
+                                offset, length);
+                    }
                 }
                 else if (type.equals(DATE)) {
                     writeVectorValues(output, vector,
