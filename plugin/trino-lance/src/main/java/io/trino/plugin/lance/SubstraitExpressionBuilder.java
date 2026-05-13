@@ -39,6 +39,7 @@ import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.predicate.ValueSet;
 import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.DateType;
+import io.trino.spi.type.RowType;
 import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.VarbinaryType;
@@ -532,7 +533,7 @@ public final class SubstraitExpressionBuilder
                 .setNullability(Nullability.NULLABILITY_REQUIRED);
 
         for (LanceColumnHandle column : columns) {
-            schemaBuilder.addNames(column.name());
+            addFieldNames(schemaBuilder, column.name(), column.trinoType());
             structBuilder.addTypes(trinoTypeToProtoType(column.trinoType()));
         }
         schemaBuilder.setStruct(structBuilder.build());
@@ -559,6 +560,23 @@ public final class SubstraitExpressionBuilder
 
         byte[] bytes = extendedExprBuilder.build().toByteArray();
         return ByteBuffer.wrap(bytes);
+    }
+
+    /**
+     * Recursively adds field names to the NamedStruct builder.
+     * Substrait NamedStruct uses a flattened list of names for all fields
+     * including nested struct children.
+     */
+    private static void addFieldNames(NamedStruct.Builder schemaBuilder, String name, io.trino.spi.type.Type type)
+    {
+        schemaBuilder.addNames(name);
+        if (type instanceof RowType rowType) {
+            List<RowType.Field> fields = rowType.getFields();
+            for (RowType.Field field : fields) {
+                String childName = field.getName().orElse("field");
+                addFieldNames(schemaBuilder, childName, field.getType());
+            }
+        }
     }
 
     /**
@@ -623,6 +641,14 @@ public final class SubstraitExpressionBuilder
         else if (trinoType instanceof VarbinaryType) {
             return builder.setBinary(io.substrait.proto.Type.Binary.newBuilder()
                     .setNullability(Nullability.NULLABILITY_NULLABLE)).build();
+        }
+        else if (trinoType instanceof RowType rowType) {
+            io.substrait.proto.Type.Struct.Builder structBuilder = io.substrait.proto.Type.Struct.newBuilder()
+                    .setNullability(Nullability.NULLABILITY_NULLABLE);
+            for (io.trino.spi.type.Type fieldType : rowType.getTypeParameters()) {
+                structBuilder.addTypes(trinoTypeToProtoType(fieldType));
+            }
+            return builder.setStruct(structBuilder.build()).build();
         }
 
         throw new UnsupportedOperationException("Unsupported type for Substrait proto: " + trinoType);

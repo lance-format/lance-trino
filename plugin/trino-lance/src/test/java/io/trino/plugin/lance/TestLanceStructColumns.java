@@ -14,6 +14,7 @@
 package io.trino.plugin.lance;
 
 import io.trino.testing.AbstractTestQueryFramework;
+import io.trino.testing.MaterializedResult;
 import io.trino.testing.QueryRunner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -29,8 +30,7 @@ public class TestLanceStructColumns
     protected QueryRunner createQueryRunner()
             throws Exception
     {
-        return LanceQueryRunner.builder()
-                .setUseTempDirectory(true)
+        return LanceQueryRunner.builderForWriteTests()
                 .build();
     }
 
@@ -151,6 +151,125 @@ public class TestLanceStructColumns
             assertQuery("SELECT column_name, data_type FROM information_schema.columns " +
                             "WHERE table_name = '" + tableName + "' ORDER BY ordinal_position",
                     "VALUES ('id', 'bigint'), ('metadata', 'row(name varchar, value bigint)')");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    // ===== Nested Field Filter Pushdown Tests =====
+
+    @Test
+    public void testFilterOnNestedFieldReturnsCorrectResults()
+    {
+        String tableName = "test_nested_filter_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE TABLE " + tableName +
+                    " AS SELECT * FROM (VALUES " +
+                    "(CAST(1 AS BIGINT), CAST(ROW('alice', 10) AS ROW(name VARCHAR, value BIGINT))), " +
+                    "(CAST(2 AS BIGINT), CAST(ROW('bob', 20) AS ROW(name VARCHAR, value BIGINT))), " +
+                    "(CAST(3 AS BIGINT), CAST(ROW('charlie', 30) AS ROW(name VARCHAR, value BIGINT)))" +
+                    ") AS t(id, metadata)", 3);
+
+            // Filter on nested varchar field
+            assertQuery(
+                    "SELECT id FROM " + tableName + " WHERE metadata.name = 'bob'",
+                    "VALUES (CAST(2 AS BIGINT))");
+
+            // Filter on nested bigint field
+            assertQuery(
+                    "SELECT id FROM " + tableName + " WHERE metadata.value > 15",
+                    "VALUES (CAST(2 AS BIGINT)), (CAST(3 AS BIGINT))");
+
+            // Combined filter on nested and top-level fields
+            assertQuery(
+                    "SELECT metadata.name FROM " + tableName + " WHERE id > 1 AND metadata.value < 25",
+                    "VALUES ('bob')");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testFilterOnDeeplyNestedFieldReturnsCorrectResults()
+    {
+        String tableName = "test_deep_nested_filter_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE TABLE " + tableName +
+                    " AS SELECT * FROM (VALUES " +
+                    "(CAST(1 AS BIGINT), CAST(ROW('outer1', ROW('inner1', 100)) AS ROW(label VARCHAR, nested ROW(label VARCHAR, num BIGINT)))), " +
+                    "(CAST(2 AS BIGINT), CAST(ROW('outer2', ROW('inner2', 200)) AS ROW(label VARCHAR, nested ROW(label VARCHAR, num BIGINT))))" +
+                    ") AS t(id, payload)", 2);
+
+            // Filter on deeply nested field
+            assertQuery(
+                    "SELECT id FROM " + tableName + " WHERE payload.nested.label = 'inner2'",
+                    "VALUES (CAST(2 AS BIGINT))");
+
+            assertQuery(
+                    "SELECT id FROM " + tableName + " WHERE payload.nested.num > 150",
+                    "VALUES (CAST(2 AS BIGINT))");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testNestedFieldFilterNotPushedDown()
+    {
+        String tableName = "test_nested_no_pushdown_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE TABLE " + tableName +
+                    " AS SELECT * FROM (VALUES " +
+                    "(CAST(1 AS BIGINT), CAST(ROW('alice', 10) AS ROW(name VARCHAR, value BIGINT)))" +
+                    ") AS t(id, metadata)", 1);
+
+            // Verify nested field filter is NOT pushed down (no constraint in plan)
+            MaterializedResult explainResult = computeActual(
+                    "EXPLAIN SELECT id FROM " + tableName + " WHERE metadata.name = 'alice'");
+            String explainPlan = (String) explainResult.getMaterializedRows().get(0).getField(0);
+            // The nested field filter should NOT appear as a connector constraint
+            // It should be a FilterNode above the TableScan
+            assertThat(explainPlan).contains("Filter");
+
+            // But a top-level filter SHOULD be pushed down
+            explainResult = computeActual(
+                    "EXPLAIN SELECT id FROM " + tableName + " WHERE id = 1");
+            explainPlan = (String) explainResult.getMaterializedRows().get(0).getField(0);
+            assertThat(explainPlan).containsPattern("constraint.{0,10}id");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testMixedTopLevelAndNestedFieldFilter()
+    {
+        String tableName = "test_mixed_filter_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE TABLE " + tableName +
+                    " AS SELECT * FROM (VALUES " +
+                    "(CAST(1 AS BIGINT), CAST(ROW('alice', 10) AS ROW(name VARCHAR, value BIGINT))), " +
+                    "(CAST(2 AS BIGINT), CAST(ROW('bob', 20) AS ROW(name VARCHAR, value BIGINT))), " +
+                    "(CAST(3 AS BIGINT), CAST(ROW('charlie', 30) AS ROW(name VARCHAR, value BIGINT)))" +
+                    ") AS t(id, metadata)", 3);
+
+            // Top-level filter should be pushed down, nested field filter should remain
+            assertQuery(
+                    "SELECT metadata.name FROM " + tableName + " WHERE id >= 2 AND metadata.value <= 20",
+                    "VALUES ('bob')");
+
+            // EXPLAIN should show top-level filter pushed down and nested filter remaining
+            MaterializedResult explainResult = computeActual(
+                    "EXPLAIN SELECT metadata.name FROM " + tableName + " WHERE id >= 2 AND metadata.value <= 20");
+            String explainPlan = (String) explainResult.getMaterializedRows().get(0).getField(0);
+            // id filter should be in constraint (pushed down)
+            assertThat(explainPlan).containsPattern("constraint.{0,10}id");
+            // nested filter should be in a FilterNode (not pushed down)
+            assertThat(explainPlan).contains("Filter");
         }
         finally {
             assertUpdate("DROP TABLE IF EXISTS " + tableName);

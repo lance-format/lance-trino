@@ -25,12 +25,14 @@ import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.predicate.ValueSet;
+import io.trino.spi.type.RowType;
 import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.VarbinaryType;
 import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -401,5 +403,72 @@ public class TestSubstraitExpressionBuilder
 
         assertThat(result).isPresent();
         assertThat(result.get().remaining()).isGreaterThan(0);
+    }
+
+    // ===== RowType (nested field) tests =====
+
+    @Test
+    public void testRowTypeIsNotSupported()
+    {
+        // RowType (struct) columns should not be supported for filter pushdown
+        RowType rowType = RowType.from(List.of(
+                new RowType.Field(Optional.of("name"), VARCHAR),
+                new RowType.Field(Optional.of("value"), BIGINT)));
+        assertThat(SubstraitExpressionBuilder.isSupportedType(rowType)).isFalse();
+    }
+
+    @Test
+    public void testRowTypeDomainSkippedInTupleDomain()
+    {
+        // A TupleDomain containing only a RowType column should produce no filter
+        RowType rowType = RowType.from(List.of(
+                new RowType.Field(Optional.of("name"), VARCHAR)));
+        LanceColumnHandle structColumn = new LanceColumnHandle("metadata", rowType, true, 4);
+
+        // RowType columns cannot appear in TupleDomain equality directly,
+        // but if they did, they should be filtered out
+        List<LanceColumnHandle> columns = new ArrayList<>(ALL_COLUMNS);
+        columns.add(structColumn);
+        Map<String, Integer> ordinals = Map.of(
+                "id", 0, "big_id", 1, "name", 2, "active", 3, "metadata", 4);
+
+        // Only push down the supported INT column, not the struct
+        TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
+                Map.of(INT_COLUMN, Domain.singleValue(INTEGER, 42L)));
+        Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, columns, ordinals);
+        assertThat(result).isPresent();
+    }
+
+    @Test
+    public void testFieldDereferenceNotExtracted()
+    {
+        // FieldDereference expressions (nested field access like struct.field) should NOT be extracted
+        // They should remain as remaining expressions for Trino to evaluate
+        io.trino.spi.expression.FieldDereference deref = new io.trino.spi.expression.FieldDereference(
+                VARCHAR,
+                new Variable("metadata", RowType.from(List.of(
+                        new RowType.Field(Optional.of("name"), VARCHAR),
+                        new RowType.Field(Optional.of("value"), BIGINT)))),
+                0); // field index 0 = "name"
+
+        // Build a comparison: metadata.name = 'alice'
+        ConnectorExpression comparison = new Call(
+                BOOLEAN,
+                io.trino.spi.expression.StandardFunctions.EQUAL_OPERATOR_FUNCTION_NAME,
+                List.of(deref, new Constant(Slices.utf8Slice("alice"), VARCHAR)));
+
+        RowType rowType = RowType.from(List.of(
+                new RowType.Field(Optional.of("name"), VARCHAR),
+                new RowType.Field(Optional.of("value"), BIGINT)));
+        LanceColumnHandle structColumn = new LanceColumnHandle("metadata", rowType, true, 4);
+        Map<String, ColumnHandle> assignments = Map.of("metadata", structColumn);
+        Map<String, Integer> ordinals = Map.of("metadata", 0);
+
+        SubstraitExpressionBuilder.ExpressionExtractionResult result =
+                SubstraitExpressionBuilder.extractPushableExpressions(comparison, assignments, ordinals);
+
+        // FieldDereference should NOT be extracted - it should remain as the remaining expression
+        assertThat(result.substraitExpressions()).isEmpty();
+        assertThat(result.remainingExpression()).isEqualTo(comparison);
     }
 }
