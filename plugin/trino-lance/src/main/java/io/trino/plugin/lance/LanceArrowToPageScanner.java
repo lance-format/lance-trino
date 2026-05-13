@@ -313,10 +313,15 @@ public class LanceArrowToPageScanner
             }
             else if (javaType == long.class) {
                 if (type.equals(BIGINT)) {
-                    // Handle both signed (BigIntVector) and unsigned (UInt8Vector) 64-bit integers
+                    // Handle both signed (BigIntVector) and unsigned (UInt8Vector) 64-bit integers,
+                    // and unsigned 32-bit integers (UInt4Vector) promoted to BIGINT
                     if (vector instanceof UInt8Vector uint8Vector) {
                         writeVectorValues(output, vector,
                                 index -> type.writeLong(output, uint8Vector.get(index)), offset, length);
+                    }
+                    else if (vector instanceof UInt4Vector uint4Vector) {
+                        writeVectorValues(output, vector,
+                                index -> type.writeLong(output, Integer.toUnsignedLong(uint4Vector.get(index))), offset, length);
                     }
                     else {
                         writeVectorValues(output, vector,

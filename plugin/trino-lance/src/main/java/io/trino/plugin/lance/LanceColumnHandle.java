@@ -161,7 +161,8 @@ public record LanceColumnHandle(
         }
         else if (type instanceof ArrowType.Int intType) {
             if (intType.getBitWidth() == 32) {
-                return INTEGER;
+                // Unsigned int32 can exceed Integer.MAX_VALUE, so map to BIGINT
+                return intType.getIsSigned() ? INTEGER : BIGINT;
             }
             else if (intType.getBitWidth() == 64) {
                 return BIGINT;
