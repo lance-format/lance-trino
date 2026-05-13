@@ -65,7 +65,22 @@ public class LanceSplitManager
         List<Fragment> allFragments = runtime.getFragments(
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
-        // Create one split per fragment
+        // When a LIMIT is set without a filter, coalesce a small number of fragments
+        // into a single split instead of creating one split per fragment.
+        // Without this, each fragment gets its own split and each applies the full LIMIT,
+        // resulting in (numFragments * LIMIT) rows read instead of just LIMIT rows.
+        // For tables with large rows (e.g. 165MB each), this causes OOM on workers.
+        // We cap the number of fragments to avoid excessive metadata loading in the
+        // native scanner while ensuring enough fragments to satisfy the LIMIT.
+        if (lanceTableHandle.getLimit().isPresent() && !lanceTableHandle.hasFilter()) {
+            long limit = lanceTableHandle.getLimit().getAsLong();
+            int maxFragments = (int) Math.min(Math.max(limit, 1), allFragments.size());
+            List<Integer> fragmentIds = allFragments.subList(0, maxFragments).stream()
+                    .map(Fragment::getId).toList();
+            return new FixedSplitSource(List.of(new LanceSplit(fragmentIds)));
+        }
+
+        // Create one split per fragment for full scans and filtered queries
         // Lance will automatically use indexes during scanning when substrait filter is applied
         return new FixedSplitSource(allFragments.stream()
                 .map(frag -> new LanceSplit(Collections.singletonList(frag.getId())))
