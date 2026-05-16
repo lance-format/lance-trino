@@ -26,6 +26,7 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.LargeVarCharVector;
+import org.apache.arrow.vector.UInt4Vector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -45,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT;
@@ -92,6 +94,12 @@ public class TestLanceConnectorTest
             Arrays.asList(
                     Field.nullable("id", new ArrowType.Int(32, true)),
                     Field.nullable("large_text", ArrowType.LargeUtf8.INSTANCE)),
+            null);
+
+    private static final Schema UINT32_SCHEMA = new Schema(
+            Arrays.asList(
+                    Field.nullable("id", new ArrowType.Int(32, true)),
+                    Field.nullable("unsigned_val", new ArrowType.Int(32, false))),
             null);
 
     @Override
@@ -596,6 +604,103 @@ public class TestLanceConnectorTest
                     .describedAs("getTableMetadata should not return null for LargeUtf8 columns")
                     .isNotNull();
             assertThat(tableMetadata.getColumns()).hasSize(2);
+        }
+    }
+
+    @Test
+    public void testToTrinoTypeWithUnsignedInt32()
+    {
+        // Unsigned int32 should map to BIGINT because values can exceed Integer.MAX_VALUE
+        assertThat(LanceColumnHandle.toTrinoType(new ArrowType.Int(32, false)))
+                .isEqualTo(BIGINT);
+
+        // Signed int32 should still map to INTEGER
+        assertThat(LanceColumnHandle.toTrinoType(new ArrowType.Int(32, true)))
+                .isEqualTo(INTEGER);
+    }
+
+    @Test
+    public void testReadUInt4Dataset(@TempDir Path tempDir)
+            throws Exception
+    {
+        String datasetPath = tempDir.resolve("uint4_test.lance").toString();
+
+        try (BufferAllocator allocator = new RootAllocator()) {
+            // Create empty dataset with schema
+            Dataset dataset = Dataset.create(allocator, datasetPath, UINT32_SCHEMA,
+                    new WriteParams.Builder().build());
+            dataset.close();
+
+            // Write data including a value exceeding Integer.MAX_VALUE
+            try (VectorSchemaRoot root = VectorSchemaRoot.create(UINT32_SCHEMA, allocator)) {
+                root.allocateNew();
+                IntVector idVector = (IntVector) root.getVector("id");
+                UInt4Vector uint4Vector = (UInt4Vector) root.getVector("unsigned_val");
+
+                idVector.setSafe(0, 1);
+                uint4Vector.setSafe(0, 42);  // small value
+
+                idVector.setSafe(1, 2);
+                // 3_000_000_000 exceeds Integer.MAX_VALUE (2_147_483_647) but fits in uint32
+                uint4Vector.setSafe(1, (int) 3_000_000_000L);
+
+                root.setRowCount(2);
+
+                List<FragmentMetadata> fragments = Fragment.create(
+                        datasetPath,
+                        allocator,
+                        root,
+                        new WriteParams.Builder().build());
+
+                FragmentOperation.Append appendOp = new FragmentOperation.Append(fragments);
+                try (Dataset appendedDataset = Dataset.commit(allocator, datasetPath, appendOp, Optional.of(1L))) {
+                    assertThat(appendedDataset.countRows()).isEqualTo(2);
+                }
+            }
+
+            // Read back and verify schema mapping
+            LanceConfig config = new LanceConfig().setSingleLevelNs(true);
+            Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
+            LanceRuntime runtime = new LanceRuntime(config, catalogProperties);
+
+            // Verify the unsigned_val column is mapped to BIGINT
+            Map<String, ColumnHandle> columnHandles = runtime.getColumnHandles(null, datasetPath, null, Map.of());
+            assertThat(columnHandles).hasSize(2);
+
+            LanceColumnHandle unsignedHandle = (LanceColumnHandle) columnHandles.get("unsigned_val");
+            assertThat(unsignedHandle).isNotNull();
+            assertThat(unsignedHandle.trinoType()).isEqualTo(BIGINT);
+
+            // Read data through the page source and verify values
+            LanceTableHandle tableHandle = new LanceTableHandle("default", "uint4_test",
+                    datasetPath, List.of("uint4_test"), Map.of());
+            LanceSplitManager splitManager = new LanceSplitManager(runtime);
+            var splitSource = splitManager.getSplits(null, SESSION, tableHandle, null, null);
+            var batch = splitSource.getNextBatch(10).get();
+            LanceSplit split = (LanceSplit) batch.getSplits().get(0);
+
+            List<LanceColumnHandle> columns = runtime.getColumnHandleList(null, datasetPath, null, Map.of());
+            try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(
+                    tableHandle, columns, split.getFragments(), Map.of(), 8192, null, runtime)) {
+                io.trino.spi.Page page = pageSource.getNextPage();
+                assertThat(page).isNotNull();
+                assertThat(page.getPositionCount()).isEqualTo(2);
+
+                // Find the unsigned_val column index
+                int unsignedIdx = -1;
+                for (int i = 0; i < columns.size(); i++) {
+                    if (columns.get(i).name().equals("unsigned_val")) {
+                        unsignedIdx = i;
+                        break;
+                    }
+                }
+                assertThat(unsignedIdx).isGreaterThanOrEqualTo(0);
+
+                // Small value should read correctly
+                assertThat(BIGINT.getLong(page.getBlock(unsignedIdx), 0)).isEqualTo(42L);
+                // Value exceeding Integer.MAX_VALUE should be correctly promoted to unsigned long
+                assertThat(BIGINT.getLong(page.getBlock(unsignedIdx), 1)).isEqualTo(3_000_000_000L);
+            }
         }
     }
 }
