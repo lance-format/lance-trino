@@ -90,8 +90,7 @@ public class TestLanceSplitManager
                 null, TestingConnectorSession.SESSION, withLimit, null, null);
         List<LanceSplit> splits = getAllSplits(splitSource);
 
-        // Fragment 0 holds 2 rows, which alone covers LIMIT 1, so only 1 fragment
-        // is coalesced into the single split.
+        // Fragment 0's 2 rows alone cover LIMIT 1, so only 1 fragment is selected.
         assertThat(splits).hasSize(1);
         assertThat(splits.get(0).getFragments()).hasSize(1);
     }
@@ -103,9 +102,8 @@ public class TestLanceSplitManager
         LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
                 TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
 
-        // LIMIT 2 == fragment 0's full row count. The positional logic would have
-        // grabbed 2 fragments (min(limit, numFragments)); the row-count logic stops
-        // after fragment 0 since it already satisfies the limit.
+        // LIMIT 2 == fragment 0's row count: stops at 1 fragment (old positional
+        // logic would have grabbed 2).
         LanceTableHandle withLimit = tableHandle.withLimit(2);
         ConnectorSplitSource splitSource = splitManager.getSplits(
                 null, TestingConnectorSession.SESSION, withLimit, null, null);
@@ -175,10 +173,8 @@ public class TestLanceSplitManager
     @Test
     public void testCoalesceSkipsDeletionEmptiedFragments()
     {
-        // Fragments 10 and 11 are fully deleted (0 logical rows); the only live rows
-        // are in fragment 12. Positional selection of LIMIT fragments would have
-        // returned [10, 11] and yielded 0 rows — the bug this fixes. Row-count
-        // accumulation keeps walking past the empty fragments to reach fragment 12.
+        // Fragments 10,11 fully deleted (0 rows): positional selection would stop
+        // at [10,11] and yield 0 rows; row-count accumulation walks on to live 12.
         assertThat(LanceSplitManager.coalesceFragmentsForLimit(
                 List.of(10, 11, 12), List.of(0L, 0L, 2L), 2))
                 .containsExactly(10, 11, 12);
@@ -198,8 +194,7 @@ public class TestLanceSplitManager
                 List.of(0, 1), List.of(2L, 2L), 3))
                 .containsExactly(0, 1);
 
-        // Every fragment fully deleted: return them all (table is logically empty,
-        // scan correctly yields fewer rows than the limit).
+        // Every fragment fully deleted: return all (table logically empty).
         assertThat(LanceSplitManager.coalesceFragmentsForLimit(
                 List.of(0, 1), List.of(0L, 0L), 5))
                 .containsExactly(0, 1);

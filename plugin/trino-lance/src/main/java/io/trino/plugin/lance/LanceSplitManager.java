@@ -66,18 +66,11 @@ public class LanceSplitManager
         List<Fragment> allFragments = runtime.getFragments(
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
-        // When a LIMIT is set without a filter, coalesce just enough fragments into a
-        // single split instead of creating one split per fragment. Without this, each
-        // fragment gets its own split and each applies the full LIMIT, reading
-        // (numFragments * LIMIT) rows instead of LIMIT. For tables with large rows
-        // (e.g. 165MB each), this OOMs workers.
-        //
-        // We accumulate per-fragment logical row counts until the LIMIT is reached.
-        // Fragment.metadata().getNumRows() is deletion-aware (physicalRows -
-        // numDeletions), so fragments emptied by deletion vectors contribute 0 and we
-        // keep walking until enough live rows are covered, while a single large
-        // fragment can satisfy a small LIMIT on its own. The counts come from the
-        // manifest already loaded when the dataset was opened, so this adds no IO.
+        // With a LIMIT and no filter, coalesce just enough fragments into one split
+        // instead of one-split-per-fragment (which reads numFragments * LIMIT rows
+        // and OOMs workers on large rows). getNumRows() is deletion-aware, so
+        // fully-deleted fragments contribute 0 and we walk on; it comes from the
+        // already-loaded manifest, so no extra IO.
         if (lanceTableHandle.getLimit().isPresent() && !lanceTableHandle.hasFilter()) {
             long limit = lanceTableHandle.getLimit().getAsLong();
             List<Integer> ids = allFragments.stream().map(Fragment::getId).toList();
@@ -95,19 +88,10 @@ public class LanceSplitManager
     }
 
     /**
-     * Selects the prefix of fragments whose cumulative logical (post-deletion) row
-     * count covers {@code limit}, returning their fragment IDs.
-     *
-     * <p>{@code rowCounts} must already account for deletion vectors (e.g.
-     * {@code Fragment.metadata().getNumRows()}). Fragments emptied by deletions
-     * contribute 0 and are effectively skipped, so the scan still sees enough live
-     * rows; conversely a single large fragment satisfies a small limit on its own.
-     * The result always contains at least one fragment (when any exist) so the scan
-     * is never handed an empty split.
-     *
-     * @param fragmentIds fragment IDs, in scan order
-     * @param rowCounts   parallel list of per-fragment logical row counts
-     * @param limit       the pushed-down LIMIT
+     * Returns the leading fragment IDs whose cumulative post-deletion row count
+     * covers {@code limit}. {@code rowCounts} must be deletion-aware (e.g.
+     * {@code Fragment.metadata().getNumRows()}) so emptied fragments contribute 0.
+     * Always returns at least one fragment when any exist.
      */
     static List<Integer> coalesceFragmentsForLimit(List<Integer> fragmentIds, List<Long> rowCounts, long limit)
     {
