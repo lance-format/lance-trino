@@ -90,9 +90,46 @@ public class TestLanceSplitManager
                 null, TestingConnectorSession.SESSION, withLimit, null, null);
         List<LanceSplit> splits = getAllSplits(splitSource);
 
-        // Should produce a single split with 1 fragment (min of limit=1, totalFragments=2))
+        // Fragment 0 holds 2 rows, which alone covers LIMIT 1, so only 1 fragment
+        // is coalesced into the single split.
         assertThat(splits).hasSize(1);
         assertThat(splits.get(0).getFragments()).hasSize(1);
+    }
+
+    @Test
+    public void testLimitStopsAtFirstFragmentWhenRowsSatisfyLimit()
+            throws ExecutionException, InterruptedException
+    {
+        LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
+                TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
+
+        // LIMIT 2 == fragment 0's full row count. The positional logic would have
+        // grabbed 2 fragments (min(limit, numFragments)); the row-count logic stops
+        // after fragment 0 since it already satisfies the limit.
+        LanceTableHandle withLimit = tableHandle.withLimit(2);
+        ConnectorSplitSource splitSource = splitManager.getSplits(
+                null, TestingConnectorSession.SESSION, withLimit, null, null);
+        List<LanceSplit> splits = getAllSplits(splitSource);
+
+        assertThat(splits).hasSize(1);
+        assertThat(splits.get(0).getFragments()).hasSize(1);
+    }
+
+    @Test
+    public void testLimitSpansFragmentsWhenFirstInsufficient()
+            throws ExecutionException, InterruptedException
+    {
+        LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
+                TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
+
+        // LIMIT 3 exceeds fragment 0's 2 rows, so fragment 1 is pulled in as well.
+        LanceTableHandle withLimit = tableHandle.withLimit(3);
+        ConnectorSplitSource splitSource = splitManager.getSplits(
+                null, TestingConnectorSession.SESSION, withLimit, null, null);
+        List<LanceSplit> splits = getAllSplits(splitSource);
+
+        assertThat(splits).hasSize(1);
+        assertThat(splits.get(0).getFragments()).hasSize(2);
     }
 
     @Test
@@ -102,7 +139,7 @@ public class TestLanceSplitManager
         LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
                 TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
 
-        // Apply LIMIT larger than the number of fragments
+        // Apply a LIMIT larger than the table's total row count (4 rows)
         LanceTableHandle withLimit = tableHandle.withLimit(100);
         ConnectorSplitSource splitSource = splitManager.getSplits(
                 null, TestingConnectorSession.SESSION, withLimit, null, null);
@@ -133,6 +170,49 @@ public class TestLanceSplitManager
         for (LanceSplit split : splits) {
             assertThat(split.getFragments()).hasSize(1);
         }
+    }
+
+    @Test
+    public void testCoalesceSkipsDeletionEmptiedFragments()
+    {
+        // Fragments 10 and 11 are fully deleted (0 logical rows); the only live rows
+        // are in fragment 12. Positional selection of LIMIT fragments would have
+        // returned [10, 11] and yielded 0 rows — the bug this fixes. Row-count
+        // accumulation keeps walking past the empty fragments to reach fragment 12.
+        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
+                List.of(10, 11, 12), List.of(0L, 0L, 2L), 2))
+                .containsExactly(10, 11, 12);
+
+        // A single large fragment satisfies a small limit on its own.
+        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
+                List.of(0, 1), List.of(5L, 5L), 3))
+                .containsExactly(0);
+
+        // Exact-fit: fragment 0's count equals the limit, so fragment 1 is not needed.
+        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
+                List.of(0, 1), List.of(2L, 2L), 2))
+                .containsExactly(0);
+
+        // Limit spills into the next fragment when the first is insufficient.
+        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
+                List.of(0, 1), List.of(2L, 2L), 3))
+                .containsExactly(0, 1);
+
+        // Every fragment fully deleted: return them all (table is logically empty,
+        // scan correctly yields fewer rows than the limit).
+        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
+                List.of(0, 1), List.of(0L, 0L), 5))
+                .containsExactly(0, 1);
+
+        // Never emit an empty split: LIMIT 0 still selects the first fragment.
+        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
+                List.of(7, 8), List.of(2L, 2L), 0))
+                .containsExactly(7);
+
+        // No fragments at all -> empty selection (no split to emit).
+        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
+                List.of(), List.of(), 5))
+                .isEmpty();
     }
 
     private static List<LanceSplit> getAllSplits(ConnectorSplitSource splitSource)

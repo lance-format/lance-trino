@@ -26,6 +26,7 @@ import org.lance.Fragment;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -65,18 +66,24 @@ public class LanceSplitManager
         List<Fragment> allFragments = runtime.getFragments(
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
-        // When a LIMIT is set without a filter, coalesce a small number of fragments
-        // into a single split instead of creating one split per fragment.
-        // Without this, each fragment gets its own split and each applies the full LIMIT,
-        // resulting in (numFragments * LIMIT) rows read instead of just LIMIT rows.
-        // For tables with large rows (e.g. 165MB each), this causes OOM on workers.
-        // We cap the number of fragments to avoid excessive metadata loading in the
-        // native scanner while ensuring enough fragments to satisfy the LIMIT.
+        // When a LIMIT is set without a filter, coalesce just enough fragments into a
+        // single split instead of creating one split per fragment. Without this, each
+        // fragment gets its own split and each applies the full LIMIT, reading
+        // (numFragments * LIMIT) rows instead of LIMIT. For tables with large rows
+        // (e.g. 165MB each), this OOMs workers.
+        //
+        // We accumulate per-fragment logical row counts until the LIMIT is reached.
+        // Fragment.metadata().getNumRows() is deletion-aware (physicalRows -
+        // numDeletions), so fragments emptied by deletion vectors contribute 0 and we
+        // keep walking until enough live rows are covered, while a single large
+        // fragment can satisfy a small LIMIT on its own. The counts come from the
+        // manifest already loaded when the dataset was opened, so this adds no IO.
         if (lanceTableHandle.getLimit().isPresent() && !lanceTableHandle.hasFilter()) {
             long limit = lanceTableHandle.getLimit().getAsLong();
-            int maxFragments = (int) Math.min(Math.max(limit, 1), allFragments.size());
-            List<Integer> fragmentIds = allFragments.subList(0, maxFragments).stream()
-                    .map(Fragment::getId).toList();
+            List<Integer> ids = allFragments.stream().map(Fragment::getId).toList();
+            List<Long> rowCounts = allFragments.stream()
+                    .map(fragment -> fragment.metadata().getNumRows()).toList();
+            List<Integer> fragmentIds = coalesceFragmentsForLimit(ids, rowCounts, limit);
             return new FixedSplitSource(List.of(new LanceSplit(fragmentIds)));
         }
 
@@ -85,6 +92,35 @@ public class LanceSplitManager
         return new FixedSplitSource(allFragments.stream()
                 .map(frag -> new LanceSplit(Collections.singletonList(frag.getId())))
                 .toList());
+    }
+
+    /**
+     * Selects the prefix of fragments whose cumulative logical (post-deletion) row
+     * count covers {@code limit}, returning their fragment IDs.
+     *
+     * <p>{@code rowCounts} must already account for deletion vectors (e.g.
+     * {@code Fragment.metadata().getNumRows()}). Fragments emptied by deletions
+     * contribute 0 and are effectively skipped, so the scan still sees enough live
+     * rows; conversely a single large fragment satisfies a small limit on its own.
+     * The result always contains at least one fragment (when any exist) so the scan
+     * is never handed an empty split.
+     *
+     * @param fragmentIds fragment IDs, in scan order
+     * @param rowCounts   parallel list of per-fragment logical row counts
+     * @param limit       the pushed-down LIMIT
+     */
+    static List<Integer> coalesceFragmentsForLimit(List<Integer> fragmentIds, List<Long> rowCounts, long limit)
+    {
+        List<Integer> selected = new ArrayList<>();
+        long accumulated = 0;
+        for (int i = 0; i < fragmentIds.size() && accumulated < limit; i++) {
+            selected.add(fragmentIds.get(i));
+            accumulated += rowCounts.get(i);
+        }
+        if (selected.isEmpty() && !fragmentIds.isEmpty()) {
+            selected.add(fragmentIds.get(0));
+        }
+        return selected;
     }
 
     /**
