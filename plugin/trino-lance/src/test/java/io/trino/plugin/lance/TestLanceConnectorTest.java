@@ -216,6 +216,43 @@ public class TestLanceConnectorTest
                         "\\)");
     }
 
+    @Test
+    public void testCountAggregationPushdownBoundaries()
+    {
+        // End-to-end checks. Note Trino's SimplifyCountOverConstant rewrites count(<non-null constant>)
+        // to count(*) before pushdown, so these SQL cases reach the connector as count(*) and exercise the
+        // empty-argument path; the constant-argument branch of isRowCountAggregate is covered directly by
+        // TestLanceMetadata. These assertions guard the end-to-end behavior and against optimizer changes.
+        assertQuery("SELECT count(0) FROM region", "SELECT 5");
+        assertExplain("EXPLAIN SELECT count(0) FROM region", "countStar=true");
+
+        assertQuery("SELECT count(0) FROM region WHERE regionkey = 0", "SELECT 1");
+        assertThat((String) computeActual("EXPLAIN SELECT count(0) FROM region WHERE regionkey = 0").getOnlyValue())
+                .doesNotContain("countStar=true");
+
+        assertQuery("SELECT count(DISTINCT 0) FROM region", "SELECT 1");
+        assertThat((String) computeActual("EXPLAIN SELECT count(DISTINCT 0) FROM region").getOnlyValue())
+                .doesNotContain("countStar=true");
+
+        // The original COUNT(*) case must keep taking the fast path after generalizing the predicate.
+        assertQuery("SELECT count(*) FROM region", "SELECT 5");
+        assertExplain("EXPLAIN SELECT count(*) FROM region", "countStar=true");
+
+        // A non-numeric constant argument is also a row-count aggregate (again rewritten to count(*) upstream).
+        assertQuery("SELECT count(true) FROM region", "SELECT 5");
+        assertExplain("EXPLAIN SELECT count(true) FROM region", "countStar=true");
+
+        // GROUP BY must stay on the normal path (one count per group, not a single manifest count).
+        assertQuery("SELECT count(0) FROM region GROUP BY regionkey", "SELECT 1 FROM region");
+        assertThat((String) computeActual("EXPLAIN SELECT count(0) FROM region GROUP BY regionkey").getOnlyValue())
+                .doesNotContain("countStar=true");
+
+        // An aggregate-level FILTER must stay on the normal path.
+        assertQuery("SELECT count(0) FILTER (WHERE regionkey > 0) FROM region", "SELECT 4");
+        assertThat((String) computeActual("EXPLAIN SELECT count(0) FILTER (WHERE regionkey > 0) FROM region").getOnlyValue())
+                .doesNotContain("countStar=true");
+    }
+
     @Override
     protected Optional<DataMappingTestSetup> filterDataMappingSmokeTestData(DataMappingTestSetup dataMappingTestSetup)
     {
