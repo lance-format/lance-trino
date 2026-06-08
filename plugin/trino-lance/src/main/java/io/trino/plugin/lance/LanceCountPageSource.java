@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.trino.spi.type.BigintType.BIGINT;
 
 /**
- * Page source for COUNT(*) queries without filter.
+ * Page source for row-count aggregate queries without filter.
  * Returns count from ManifestSummary (no data scan needed).
  */
 public class LanceCountPageSource
@@ -90,7 +90,7 @@ public class LanceCountPageSource
     private long computeCount()
     {
         ManifestSummary summary = runtime.getManifestSummary(userIdentity, tablePath, datasetVersion, storageOptions);
-        log.debug("COUNT(*) returning manifest count %d", summary.getTotalRows());
+        log.debug("Row-count aggregate returning manifest count %d", summary.getTotalRows());
         return summary.getTotalRows();
     }
 

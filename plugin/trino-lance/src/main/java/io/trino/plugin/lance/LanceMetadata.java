@@ -47,6 +47,7 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
+import io.trino.spi.expression.Constant;
 import io.trino.spi.expression.Variable;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
@@ -482,7 +483,7 @@ public class LanceMetadata
                     summary.getTotalFragments());
 
             // Note: TableStatistics is used for query planning/cost estimation only.
-            // For COUNT(*) optimization, we would need to implement applyAggregation().
+            // The row-count fast path is handled by applyAggregation().
             return TableStatistics.builder()
                     .setRowCount(Estimate.of(summary.getTotalRows()))
                     .build();
@@ -522,36 +523,36 @@ public class LanceMetadata
             return Optional.empty();
         }
 
-        // Don't push COUNT(*) if there's a filter - let Trino aggregate distributed counts
+        // Don't push row-count aggregates if there's a table filter - let Trino aggregate distributed counts
         // We can only return a single row from aggregate pushdown, but with filter we need
         // to count each fragment separately which would return multiple rows
         if (lanceTableHandle.hasFilter()) {
-            log.debug("applyAggregation: not pushing COUNT(*) with filter");
+            log.debug("applyAggregation: not pushing row-count aggregate with filter");
             return Optional.empty();
         }
 
-        // Only support simple COUNT(*) without grouping
+        // Only support simple COUNT(*) or COUNT(non-null constant) without grouping
         if (groupingSets.size() != 1 || !groupingSets.get(0).isEmpty()) {
             return Optional.empty();
         }
 
-        // Only support single COUNT(*) aggregate
+        // Only support single row-count aggregate
         if (aggregates.size() != 1) {
             return Optional.empty();
         }
 
         AggregateFunction aggregate = aggregates.get(0);
-        if (!isCountStar(aggregate)) {
+        if (!isRowCountAggregate(aggregate)) {
             log.debug("applyAggregation: unsupported aggregate function: %s", aggregate.getFunctionName());
             return Optional.empty();
         }
 
-        log.debug("applyAggregation: pushing COUNT(*) for table %s (no filter)",
+        log.debug("applyAggregation: pushing row-count aggregate for table %s (no filter)",
                 lanceTableHandle.getTableName());
 
         LanceTableHandle newHandle = lanceTableHandle.withCountStar();
 
-        // Create synthetic column handle for COUNT(*) result
+        // Create synthetic column handle for the row-count result
         LanceColumnHandle countColumnHandle = new LanceColumnHandle("_count", aggregate.getOutputType(), false, -1);
         Variable variable = new Variable("_count", aggregate.getOutputType());
 
@@ -563,11 +564,22 @@ public class LanceMetadata
                 false));
     }
 
-    private boolean isCountStar(AggregateFunction aggregate)
+    private boolean isRowCountAggregate(AggregateFunction aggregate)
     {
         return "count".equalsIgnoreCase(aggregate.getFunctionName()) &&
-                aggregate.getArguments().isEmpty() &&
+                (aggregate.getArguments().isEmpty() || isCountNonNullConstant(aggregate)) &&
+                aggregate.getSortItems().isEmpty() &&
+                aggregate.getFilter().isEmpty() &&
                 !aggregate.isDistinct();
+    }
+
+    private boolean isCountNonNullConstant(AggregateFunction aggregate)
+    {
+        if (aggregate.getArguments().size() != 1) {
+            return false;
+        }
+        ConnectorExpression argument = aggregate.getArguments().getFirst();
+        return argument instanceof Constant constant && constant.getValue() != null;
     }
 
     @Override
