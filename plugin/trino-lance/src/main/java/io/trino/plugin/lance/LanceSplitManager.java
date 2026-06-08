@@ -26,7 +26,6 @@ import org.lance.Fragment;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -61,50 +60,25 @@ public class LanceSplitManager
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
         String userIdentity = session.getUser();
 
+        // With a LIMIT and no filter, select just enough leading fragments into
+        // one split instead of scheduling one split per fragment.
+        if (lanceTableHandle.getLimit().isPresent() && !lanceTableHandle.hasFilter()) {
+            long limit = lanceTableHandle.getLimit().getAsLong();
+            List<Integer> fragmentIds = runtime.selectPrefixFragmentIdsForLimit(
+                    userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions, limit);
+            return new FixedSplitSource(List.of(new LanceSplit(fragmentIds)));
+        }
+
         // Get all fragments
         // Use the version captured in the table handle for snapshot isolation
         List<Fragment> allFragments = runtime.getFragments(
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
-
-        // With a LIMIT and no filter, coalesce just enough fragments into one split
-        // instead of one-split-per-fragment (which reads numFragments * LIMIT rows
-        // and OOMs workers on large rows). getNumRows() is deletion-aware, so
-        // fully-deleted fragments contribute 0 and we walk on; it comes from the
-        // already-loaded manifest, so no extra IO.
-        if (lanceTableHandle.getLimit().isPresent() && !lanceTableHandle.hasFilter()) {
-            long limit = lanceTableHandle.getLimit().getAsLong();
-            List<Integer> ids = allFragments.stream().map(Fragment::getId).toList();
-            List<Long> rowCounts = allFragments.stream()
-                    .map(fragment -> fragment.metadata().getNumRows()).toList();
-            List<Integer> fragmentIds = coalesceFragmentsForLimit(ids, rowCounts, limit);
-            return new FixedSplitSource(List.of(new LanceSplit(fragmentIds)));
-        }
 
         // Create one split per fragment for full scans and filtered queries
         // Lance will automatically use indexes during scanning when substrait filter is applied
         return new FixedSplitSource(allFragments.stream()
                 .map(frag -> new LanceSplit(Collections.singletonList(frag.getId())))
                 .toList());
-    }
-
-    /**
-     * Returns the leading fragment IDs whose cumulative post-deletion row count
-     * covers {@code limit}. {@code rowCounts} must be deletion-aware (e.g.
-     * {@code Fragment.metadata().getNumRows()}) so emptied fragments contribute 0.
-     * Always returns at least one fragment when any exist.
-     */
-    static List<Integer> coalesceFragmentsForLimit(List<Integer> fragmentIds, List<Long> rowCounts, long limit)
-    {
-        List<Integer> selected = new ArrayList<>();
-        long accumulated = 0;
-        for (int i = 0; i < fragmentIds.size() && accumulated < limit; i++) {
-            selected.add(fragmentIds.get(i));
-            accumulated += rowCounts.get(i);
-        }
-        if (selected.isEmpty() && !fragmentIds.isEmpty()) {
-            selected.add(fragmentIds.get(0));
-        }
-        return selected;
     }
 
     /**
