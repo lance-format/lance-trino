@@ -18,11 +18,14 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.Resources;
 import io.airlift.json.JsonCodec;
+import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ConnectorTableMetadata;
+import io.trino.spi.connector.RetryMode;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.TableNotFoundException;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.FieldType;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -42,10 +45,18 @@ public class TestLanceMetadata
 {
     // Use URL.toString() to match the format used by LanceNamespaceHolder (file:/... vs file:///...)
     private static final String TEST_DB_PATH = Resources.getResource(TestLanceMetadata.class, "/example_db").toString() + "/";
-    private static final LanceTableHandle TEST_TABLE_1_HANDLE = new LanceTableHandle("default", "test_table1",
-            TEST_DB_PATH + "test_table1.lance", List.of("test_table1"), Map.of());
-    private static final LanceTableHandle TEST_TABLE_2_HANDLE = new LanceTableHandle("default", "test_table2",
-            TEST_DB_PATH + "test_table2.lance", List.of("test_table2"), Map.of());
+    private static final LanceTableHandle TEST_TABLE_1_HANDLE = new LanceTableHandle(
+            "default",
+            "test_table1",
+            TEST_DB_PATH + "test_table1.lance",
+            List.of("test_table1"),
+            Map.of());
+    private static final LanceTableHandle TEST_TABLE_2_HANDLE = new LanceTableHandle(
+            "default",
+            "test_table2",
+            TEST_DB_PATH + "test_table2.lance",
+            List.of("test_table2"),
+            Map.of());
 
     // Actual column order in test data: x, y, b, c (field IDs 0, 1, 2, 3)
     private static final ArrowType INT64_TYPE = new ArrowType.Int(64, true);
@@ -67,6 +78,14 @@ public class TestLanceMetadata
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
         metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
+    }
+
+    @AfterEach
+    public void tearDown()
+    {
+        if (runtime != null) {
+            runtime.close();
+        }
     }
 
     @Test
@@ -151,6 +170,51 @@ public class TestLanceMetadata
                 .containsEntry("b", 1)
                 .containsEntry("c", 2)
                 .containsEntry("e", 3);
+    }
+
+    @Test
+    public void testDatasetLeaseSurvivesCacheInvalidation()
+    {
+        LanceTableHandle table = metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table1"), Optional.empty(), Optional.empty());
+
+        try (LanceRuntime.DatasetLease datasetLease = runtime.getDatasetLease(
+                SESSION.getUser(),
+                table.getTablePath(),
+                table.getDatasetVersion(),
+                table.getStorageOptions())) {
+            runtime.invalidate(SESSION.getUser(), table.getTablePath());
+
+            assertThat(datasetLease.getDataset().getSchema().getFields()).isNotEmpty();
+        }
+    }
+
+    @Test
+    public void testExpiringStorageOptionsBypassDatasetCache()
+    {
+        LanceTableHandle table = metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table1"), Optional.empty(), Optional.empty());
+        Map<String, String> expiringStorageOptions = ImmutableMap.of(
+                "expires_at_millis", Long.toString(System.currentTimeMillis() + 60 * 60 * 1000));
+
+        assertThat(runtime.getFragments(
+                SESSION.getUser(),
+                table.getTablePath(),
+                table.getDatasetVersion(),
+                expiringStorageOptions))
+                .isNotEmpty();
+        assertThat(runtime.getCachedDatasetCount()).isZero();
+    }
+
+    @Test
+    public void testCleanupQueryClosesAbandonedTransactionDatasets()
+    {
+        LanceTableHandle table = metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table1"), Optional.empty(), Optional.empty());
+        List<ColumnHandle> columns = List.copyOf(metadata.getColumnHandles(SESSION, table).values());
+
+        metadata.beginInsert(SESSION, table, columns, RetryMode.NO_RETRIES);
+
+        assertThat(metadata.getTransactionDatasetCount()).isEqualTo(1);
+        metadata.cleanupQuery(SESSION);
+        assertThat(metadata.getTransactionDatasetCount()).isZero();
     }
 
     @Test

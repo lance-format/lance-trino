@@ -117,52 +117,57 @@ public class TestLanceConnectorTest
         return switch (connectorBehavior) {
             // Supported write behaviors
             case SUPPORTS_CREATE_TABLE,
-                    SUPPORTS_CREATE_TABLE_WITH_DATA,
-                    SUPPORTS_CREATE_OR_REPLACE_TABLE,
-                    SUPPORTS_INSERT,
-                    SUPPORTS_DELETE,
-                    SUPPORTS_ROW_LEVEL_DELETE,
-                    SUPPORTS_UPDATE,
-                    SUPPORTS_MERGE -> true;
+                 SUPPORTS_CREATE_TABLE_WITH_DATA,
+                 SUPPORTS_CREATE_OR_REPLACE_TABLE,
+                 SUPPORTS_INSERT,
+                 SUPPORTS_DELETE,
+                 SUPPORTS_ROW_LEVEL_DELETE,
+                 SUPPORTS_UPDATE,
+                 SUPPORTS_MERGE -> true;
 
             // Complex types - ROW and MAP not fully supported for writes
             case SUPPORTS_ROW_TYPE,
-                    SUPPORTS_MAP_TYPE -> false;
+                 SUPPORTS_MAP_TYPE -> false;
 
             // Schema operations - not supported in single-level mode (which builderForWriteTests uses)
             // CASCADE is not supported for DROP SCHEMA
             case SUPPORTS_CREATE_SCHEMA,
-                    SUPPORTS_RENAME_SCHEMA,
-                    SUPPORTS_DROP_SCHEMA_CASCADE -> false;
+                 SUPPORTS_RENAME_SCHEMA,
+                 SUPPORTS_DROP_SCHEMA_CASCADE -> false;
 
             // Table modification operations - not supported
             case SUPPORTS_RENAME_TABLE,
-                    SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
-                    SUPPORTS_ADD_COLUMN,
-                    SUPPORTS_ADD_COLUMN_WITH_COMMENT,
-                    SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT,
-                    SUPPORTS_DROP_COLUMN,
-                    SUPPORTS_RENAME_COLUMN,
-                    SUPPORTS_SET_COLUMN_TYPE -> false;
+                 SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
+                 SUPPORTS_ADD_COLUMN,
+                 SUPPORTS_ADD_COLUMN_WITH_COMMENT,
+                 SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT,
+                 SUPPORTS_DROP_COLUMN,
+                 SUPPORTS_RENAME_COLUMN,
+                 SUPPORTS_SET_COLUMN_TYPE -> false;
+
+            case SUPPORTS_DEFAULT_COLUMN_VALUE,
+                 SUPPORTS_SET_DEFAULT_COLUMN_VALUE,
+                 SUPPORTS_DROP_DEFAULT_COLUMN_VALUE -> false;
 
             // Truncate is not supported
             case SUPPORTS_TRUNCATE -> false;
 
             // View operations - not supported
             case SUPPORTS_CREATE_VIEW,
-                    SUPPORTS_COMMENT_ON_VIEW_COLUMN,
-                    SUPPORTS_CREATE_MATERIALIZED_VIEW,
-                    SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN -> false;
+                 SUPPORTS_COMMENT_ON_VIEW_COLUMN,
+                 SUPPORTS_CREATE_MATERIALIZED_VIEW,
+                 SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN -> false;
 
             // Comment operations - not supported
             case SUPPORTS_COMMENT_ON_TABLE,
-                    SUPPORTS_COMMENT_ON_COLUMN -> false;
+                 SUPPORTS_COMMENT_ON_COLUMN -> false;
 
             // Constraint operations - not supported
             case SUPPORTS_NOT_NULL_CONSTRAINT -> false;
 
             // Pushdown operations - not currently supported
-            case SUPPORTS_TOPN_PUSHDOWN -> false;
+            case SUPPORTS_LIMIT_PUSHDOWN,
+                 SUPPORTS_TOPN_PUSHDOWN -> false;
 
             // Date handling - negative dates may not be supported
             case SUPPORTS_NEGATIVE_DATE -> false;
@@ -184,11 +189,11 @@ public class TestLanceConnectorTest
         // Lance supports time travel, so we expect specific error messages instead of "not supported"
         assertThat(e).hasMessageMatching(
                 "Lance connector does not support start version for time travel|" +
-                "Lance version number must be positive: .*|" +
-                "Lance version does not exist: .*|" +
-                "Unsupported type for Lance version: .*\\..*|" +
-                "Unsupported type for Lance temporal version: .*|" +
-                "No Lance version found at or before timestamp: .*");
+                        "Lance version number must be positive: .*|" +
+                        "Lance version does not exist: .*|" +
+                        "Unsupported type for Lance version: .*\\..*|" +
+                        "Unsupported type for Lance temporal version: .*|" +
+                        "No Lance version found at or before timestamp: .*");
     }
 
     @Test
@@ -491,7 +496,10 @@ public class TestLanceConnectorTest
         // Step 1: Create a Lance dataset with LargeUtf8 column using the Java SDK
         try (BufferAllocator allocator = new RootAllocator()) {
             // Create empty dataset with schema
-            Dataset dataset = Dataset.create(allocator, datasetPath, LARGE_UTF8_SCHEMA,
+            Dataset dataset = Dataset.create(
+                    allocator,
+                    datasetPath,
+                    LARGE_UTF8_SCHEMA,
                     new WriteParams.Builder().build());
             dataset.close();
 
@@ -525,33 +533,33 @@ public class TestLanceConnectorTest
             // Use single-level mode since we're using a flat directory structure
             LanceConfig config = new LanceConfig().setSingleLevelNs(true);
             Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
-            LanceRuntime runtime = new LanceRuntime(config, catalogProperties);
+            try (LanceRuntime runtime = new LanceRuntime(config, catalogProperties)) {
+                // Get column handles using the table path
+                String tablePath = datasetPath;
+                Map<String, ColumnHandle> columnHandles = runtime.getColumnHandles(null, tablePath, null, Map.of());
+                assertThat(columnHandles).hasSize(2);
 
-            // Get column handles using the table path
-            String tablePath = datasetPath;
-            Map<String, ColumnHandle> columnHandles = runtime.getColumnHandles(null, tablePath, null, Map.of());
-            assertThat(columnHandles).hasSize(2);
+                // Verify the large_text column is mapped to VARCHAR
+                LanceColumnHandle largeTextHandle = (LanceColumnHandle) columnHandles.get("large_text");
+                assertThat(largeTextHandle).isNotNull();
+                assertThat(largeTextHandle.trinoType()).isEqualTo(VarcharType.VARCHAR);
 
-            // Verify the large_text column is mapped to VARCHAR
-            LanceColumnHandle largeTextHandle = (LanceColumnHandle) columnHandles.get("large_text");
-            assertThat(largeTextHandle).isNotNull();
-            assertThat(largeTextHandle.trinoType()).isEqualTo(VarcharType.VARCHAR);
+                // Verify id column
+                LanceColumnHandle idHandle = (LanceColumnHandle) columnHandles.get("id");
+                assertThat(idHandle).isNotNull();
+                assertThat(idHandle.trinoType()).isEqualTo(INTEGER);
 
-            // Verify id column
-            LanceColumnHandle idHandle = (LanceColumnHandle) columnHandles.get("id");
-            assertThat(idHandle).isNotNull();
-            assertThat(idHandle.trinoType()).isEqualTo(INTEGER);
+                // Step 3: Verify table metadata using the table path
+                List<ColumnMetadata> columnsMetadata = runtime.getColumnMetadata(null, tablePath, null, Map.of());
+                assertThat(columnsMetadata).hasSize(2);
 
-            // Step 3: Verify table metadata using the table path
-            List<ColumnMetadata> columnsMetadata = runtime.getColumnMetadata(null, tablePath, null, Map.of());
-            assertThat(columnsMetadata).hasSize(2);
-
-            // Find the large_text column metadata
-            ColumnMetadata largeTextMetadata = columnsMetadata.stream()
-                    .filter(cm -> cm.getName().equals("large_text"))
-                    .findFirst()
-                    .orElseThrow();
-            assertThat(largeTextMetadata.getType()).isEqualTo(VarcharType.VARCHAR);
+                // Find the large_text column metadata
+                ColumnMetadata largeTextMetadata = columnsMetadata.stream()
+                        .filter(cm -> cm.getName().equals("large_text"))
+                        .findFirst()
+                        .orElseThrow();
+                assertThat(largeTextMetadata.getType()).isEqualTo(VarcharType.VARCHAR);
+            }
         }
     }
 
@@ -562,7 +570,10 @@ public class TestLanceConnectorTest
 
         try (BufferAllocator allocator = new RootAllocator()) {
             // Create and populate dataset
-            Dataset dataset = Dataset.create(allocator, datasetPath, LARGE_UTF8_SCHEMA,
+            Dataset dataset = Dataset.create(
+                    allocator,
+                    datasetPath,
+                    LARGE_UTF8_SCHEMA,
                     new WriteParams.Builder().build());
             dataset.close();
 
@@ -575,7 +586,10 @@ public class TestLanceConnectorTest
                 textVector.setSafe(0, "test".getBytes(StandardCharsets.UTF_8));
                 root.setRowCount(1);
 
-                List<FragmentMetadata> fragments = Fragment.create(datasetPath, allocator, root,
+                List<FragmentMetadata> fragments = Fragment.create(
+                        datasetPath,
+                        allocator,
+                        root,
                         new WriteParams.Builder().build());
                 FragmentOperation.Append appendOp = new FragmentOperation.Append(fragments);
                 Dataset.commit(allocator, datasetPath, appendOp, Optional.of(1L)).close();
@@ -585,25 +599,26 @@ public class TestLanceConnectorTest
             // Use single-level mode since we're using a flat directory structure
             LanceConfig config = new LanceConfig().setSingleLevelNs(true);
             Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
-            LanceRuntime runtime = new LanceRuntime(config, catalogProperties);
-            JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
-            JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-            LanceMetadata metadata = new LanceMetadata(runtime, config, commitTaskDataCodec, mergeCommitDataCodec);
+            try (LanceRuntime runtime = new LanceRuntime(config, catalogProperties)) {
+                JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
+                JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
+                LanceMetadata metadata = new LanceMetadata(runtime, config, commitTaskDataCodec, mergeCommitDataCodec);
 
-            // Get table handle - this should NOT return null anymore
-            LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
-                    SESSION,
-                    new SchemaTableName("default", "metadata_test"),
-                    Optional.empty(),
-                    Optional.empty());
-            assertThat(tableHandle).isNotNull();
+                // Get table handle - this should NOT return null anymore
+                LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
+                        SESSION,
+                        new SchemaTableName("default", "metadata_test"),
+                        Optional.empty(),
+                        Optional.empty());
+                assertThat(tableHandle).isNotNull();
 
-            // Get table metadata - this should NOT return null anymore
-            var tableMetadata = metadata.getTableMetadata(SESSION, tableHandle);
-            assertThat(tableMetadata)
-                    .describedAs("getTableMetadata should not return null for LargeUtf8 columns")
-                    .isNotNull();
-            assertThat(tableMetadata.getColumns()).hasSize(2);
+                // Get table metadata - this should NOT return null anymore
+                var tableMetadata = metadata.getTableMetadata(SESSION, tableHandle);
+                assertThat(tableMetadata)
+                        .describedAs("getTableMetadata should not return null for LargeUtf8 columns")
+                        .isNotNull();
+                assertThat(tableMetadata.getColumns()).hasSize(2);
+            }
         }
     }
 
@@ -627,7 +642,10 @@ public class TestLanceConnectorTest
 
         try (BufferAllocator allocator = new RootAllocator()) {
             // Create empty dataset with schema
-            Dataset dataset = Dataset.create(allocator, datasetPath, UINT32_SCHEMA,
+            Dataset dataset = Dataset.create(
+                    allocator,
+                    datasetPath,
+                    UINT32_SCHEMA,
                     new WriteParams.Builder().build());
             dataset.close();
 
@@ -661,45 +679,49 @@ public class TestLanceConnectorTest
             // Read back and verify schema mapping
             LanceConfig config = new LanceConfig().setSingleLevelNs(true);
             Map<String, String> catalogProperties = ImmutableMap.of("lance.root", tempDir.toString());
-            LanceRuntime runtime = new LanceRuntime(config, catalogProperties);
+            try (LanceRuntime runtime = new LanceRuntime(config, catalogProperties)) {
+                // Verify the unsigned_val column is mapped to BIGINT
+                Map<String, ColumnHandle> columnHandles = runtime.getColumnHandles(null, datasetPath, null, Map.of());
+                assertThat(columnHandles).hasSize(2);
 
-            // Verify the unsigned_val column is mapped to BIGINT
-            Map<String, ColumnHandle> columnHandles = runtime.getColumnHandles(null, datasetPath, null, Map.of());
-            assertThat(columnHandles).hasSize(2);
+                LanceColumnHandle unsignedHandle = (LanceColumnHandle) columnHandles.get("unsigned_val");
+                assertThat(unsignedHandle).isNotNull();
+                assertThat(unsignedHandle.trinoType()).isEqualTo(BIGINT);
 
-            LanceColumnHandle unsignedHandle = (LanceColumnHandle) columnHandles.get("unsigned_val");
-            assertThat(unsignedHandle).isNotNull();
-            assertThat(unsignedHandle.trinoType()).isEqualTo(BIGINT);
+                // Read data through the page source and verify values
+                LanceTableHandle tableHandle = new LanceTableHandle(
+                        "default",
+                        "uint4_test",
+                        datasetPath,
+                        List.of("uint4_test"),
+                        Map.of());
+                LanceSplitManager splitManager = new LanceSplitManager(runtime);
+                var splitSource = splitManager.getSplits(null, SESSION, tableHandle, null, null);
+                var batch = splitSource.getNextBatch(10).get();
+                LanceSplit split = (LanceSplit) batch.getSplits().get(0);
 
-            // Read data through the page source and verify values
-            LanceTableHandle tableHandle = new LanceTableHandle("default", "uint4_test",
-                    datasetPath, List.of("uint4_test"), Map.of());
-            LanceSplitManager splitManager = new LanceSplitManager(runtime);
-            var splitSource = splitManager.getSplits(null, SESSION, tableHandle, null, null);
-            var batch = splitSource.getNextBatch(10).get();
-            LanceSplit split = (LanceSplit) batch.getSplits().get(0);
+                List<LanceColumnHandle> columns = runtime.getColumnHandleList(null, datasetPath, null, Map.of());
+                try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(
+                        tableHandle, columns, split.getFragments(), Map.of(), 8192, null, runtime)) {
+                    io.trino.spi.Page page = pageSource.getNextSourcePage().getPage();
+                    assertThat(page).isNotNull();
+                    assertThat(page.getPositionCount()).isEqualTo(2);
 
-            List<LanceColumnHandle> columns = runtime.getColumnHandleList(null, datasetPath, null, Map.of());
-            try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(
-                    tableHandle, columns, split.getFragments(), Map.of(), 8192, null, runtime)) {
-                io.trino.spi.Page page = pageSource.getNextPage();
-                assertThat(page).isNotNull();
-                assertThat(page.getPositionCount()).isEqualTo(2);
-
-                // Find the unsigned_val column index
-                int unsignedIdx = -1;
-                for (int i = 0; i < columns.size(); i++) {
-                    if (columns.get(i).name().equals("unsigned_val")) {
-                        unsignedIdx = i;
-                        break;
+                    // Find the unsigned_val column index
+                    int unsignedIdx = -1;
+                    for (int i = 0; i < columns.size(); i++) {
+                        if (columns.get(i).name().equals("unsigned_val")) {
+                            unsignedIdx = i;
+                            break;
+                        }
                     }
-                }
-                assertThat(unsignedIdx).isGreaterThanOrEqualTo(0);
+                    assertThat(unsignedIdx).isGreaterThanOrEqualTo(0);
 
-                // Small value should read correctly
-                assertThat(BIGINT.getLong(page.getBlock(unsignedIdx), 0)).isEqualTo(42L);
-                // Value exceeding Integer.MAX_VALUE should be correctly promoted to unsigned long
-                assertThat(BIGINT.getLong(page.getBlock(unsignedIdx), 1)).isEqualTo(3_000_000_000L);
+                    // Small value should read correctly
+                    assertThat(BIGINT.getLong(page.getBlock(unsignedIdx), 0)).isEqualTo(42L);
+                    // Value exceeding Integer.MAX_VALUE should be correctly promoted to unsigned long
+                    assertThat(BIGINT.getLong(page.getBlock(unsignedIdx), 1)).isEqualTo(3_000_000_000L);
+                }
             }
         }
     }

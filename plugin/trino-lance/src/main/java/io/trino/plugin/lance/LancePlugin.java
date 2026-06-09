@@ -34,6 +34,7 @@ public class LancePlugin
 
     public LancePlugin(Optional<Module> extension)
     {
+        LanceRuntime.configureArrowAllocationManager();
         this.extension = requireNonNull(extension, "extension is null");
     }
 

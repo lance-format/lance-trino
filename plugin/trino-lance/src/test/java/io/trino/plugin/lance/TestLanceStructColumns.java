@@ -148,9 +148,10 @@ public class TestLanceStructColumns
             assertUpdate("CREATE TABLE " + tableName +
                     " (id BIGINT, metadata ROW(name VARCHAR, value BIGINT))");
 
-            assertQuery("SELECT column_name, data_type FROM information_schema.columns " +
+            assertQuery(
+                    "SELECT column_name, data_type FROM information_schema.columns " +
                             "WHERE table_name = '" + tableName + "' ORDER BY ordinal_position",
-                    "VALUES ('id', 'bigint'), ('metadata', 'row(name varchar, value bigint)')");
+                    "VALUES ('id', 'bigint'), ('metadata', 'row(\"name\" varchar, \"value\" bigint)')");
         }
         finally {
             assertUpdate("DROP TABLE IF EXISTS " + tableName);

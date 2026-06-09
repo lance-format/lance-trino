@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.airlift</groupId>
         <artifactId>airbase</artifactId>
-        <version>264</version>
+        <version>375</version>
     </parent>
 
     <groupId>org.lance</groupId>
@@ -55,26 +55,30 @@
     </distributionManagement>
 
     <properties>
-        <trino.version>476</trino.version>
+        <trino.version>481</trino.version>
 
-        <project.build.targetJdk>23</project.build.targetJdk>
+        <project.build.targetJdk>25</project.build.targetJdk>
         <air.check.skip-spotbugs>true</air.check.skip-spotbugs>
         <air.check.skip-pmd>true</air.check.skip-pmd>
         <air.check.skip-jacoco>true</air.check.skip-jacoco>
-        <air.java.version>23.0.0</air.java.version>
-        <air.modernizer.java-version>8</air.modernizer.java-version>
+        <air.java.version>25.0.1</air.java.version>
+        <air.modernizer.java-version>${project.build.targetJdk}</air.modernizer.java-version>
         <air.test.jvmsize>3g</air.test.jvmsize>
         <air.test.jvm.additional-arguments.default>-XX:G1HeapRegionSize=32M
             -XX:+UnlockDiagnosticVMOptions
-            -XX:+EnableDynamicAgentLoading
             ${extraJavaVectorArgs}
-            -Djava.security.manager=allow</air.test.jvm.additional-arguments.default>
+            --sun-misc-unsafe-memory-access=allow
+            -Dairlift.quiet=true</air.test.jvm.additional-arguments.default>
         <air.test.jvm.additional-arguments>${air.test.jvm.additional-arguments.default}</air.test.jvm.additional-arguments>
 
-        <dep.airlift.version>336</dep.airlift.version>
+        <dep.airlift.version>424</dep.airlift.version>
         <dep.antlr.version>4.13.2</dep.antlr.version>
-        <dep.kafka-clients.version>3.9.0</dep.kafka-clients.version>
-        <dep.protobuf.version>3.25.5</dep.protobuf.version>
+        <dep.avro.version>1.12.1</dep.avro.version>
+        <dep.grpc.version>1.76.3</dep.grpc.version>
+        <dep.kafka-clients.version>4.2.0</dep.kafka-clients.version>
+        <dep.netty.version>4.2.12.Final</dep.netty.version>
+        <dep.protobuf.version>4.34.1</dep.protobuf.version>
+        <dep.tcnative.version>2.0.77.Final</dep.tcnative.version>
 
         <extraJavaVectorArgs>--add-modules=jdk.incubator.vector</extraJavaVectorArgs>
         <provisio.fallbackTargetFileNameMode>GA</provisio.fallbackTargetFileNameMode>
@@ -91,17 +95,107 @@
             </dependency>
 
             <dependency>
-                <groupId>io.netty</groupId>
-                <artifactId>netty-bom</artifactId>
-                <version>4.1.119.Final</version>
+                <groupId>io.grpc</groupId>
+                <artifactId>grpc-bom</artifactId>
+                <version>${dep.grpc.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
 
             <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${dep.netty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>linux-x86_64</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>linux-x86_64-fedora</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>linux-aarch_64-fedora</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>osx-aarch_64</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>osx-x86_64</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative-boringssl-static</artifactId>
+                <version>${dep.tcnative.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative-boringssl-static</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>linux-x86_64</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative-boringssl-static</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>linux-aarch_64</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative-boringssl-static</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>osx-x86_64</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative-boringssl-static</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>osx-aarch_64</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative-boringssl-static</artifactId>
+                <version>${dep.tcnative.version}</version>
+                <classifier>windows-x86_64</classifier>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-tcnative-classes</artifactId>
+                <version>${dep.tcnative.version}</version>
+            </dependency>
+
+            <dependency>
                 <groupId>org.apache.arrow</groupId>
                 <artifactId>arrow-bom</artifactId>
-                <version>18.3.0</version>
+                <version>19.0.0</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -109,7 +203,7 @@
             <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
-                <version>1.20.4</version>
+                <version>2.0.5</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -117,7 +211,7 @@
             <dependency>
                 <groupId>software.amazon.awssdk</groupId>
                 <artifactId>bom</artifactId>
-                <version>2.29.29</version>
+                <version>2.44.0</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -174,20 +268,7 @@
 
             <dependency>
                 <groupId>io.trino</groupId>
-                <artifactId>trino-spi</artifactId>
-                <version>${trino.version}</version>
-                <type>test-jar</type>
-            </dependency>
-
-            <dependency>
-                <groupId>io.trino</groupId>
                 <artifactId>trino-testing</artifactId>
-                <version>${trino.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>io.trino</groupId>
-                <artifactId>trino-testing-kafka</artifactId>
                 <version>${trino.version}</version>
             </dependency>
 
@@ -212,13 +293,13 @@
             <dependency>
                 <groupId>org.apache.avro</groupId>
                 <artifactId>avro</artifactId>
-                <version>1.12.0</version>
+                <version>${dep.avro.version}</version>
             </dependency>
 
             <dependency>
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-lang3</artifactId>
-                <version>3.17.0</version>
+                <version>3.20.0</version>
             </dependency>
 
             <dependency>
@@ -230,14 +311,9 @@
             <dependency>
                 <groupId>org.jetbrains</groupId>
                 <artifactId>annotations</artifactId>
-                <version>26.0.1</version>
+                <version>26.1.0</version>
             </dependency>
 
-            <dependency>
-                <groupId>org.openjdk.jol</groupId>
-                <artifactId>jol-core</artifactId>
-                <version>0.17</version>
-            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -262,6 +338,25 @@
                                 </conflictingDependencies>
                                 <resources>
                                     <resource>mozilla/public-suffix-list.txt</resource>
+                                </resources>
+                            </exception>
+                            <exception>
+                                <conflictingDependencies>
+                                    <dependency>
+                                        <groupId>org.alluxio</groupId>
+                                        <artifactId>alluxio-core-client-fs</artifactId>
+                                    </dependency>
+                                    <dependency>
+                                        <groupId>org.alluxio</groupId>
+                                        <artifactId>alluxio-core-common</artifactId>
+                                    </dependency>
+                                    <dependency>
+                                        <groupId>org.alluxio</groupId>
+                                        <artifactId>alluxio-core-transport</artifactId>
+                                    </dependency>
+                                </conflictingDependencies>
+                                <resources>
+                                    <resource>git.properties</resource>
                                 </resources>
                             </exception>
                         </exceptions>
@@ -310,7 +405,7 @@
             <plugin>
                 <groupId>io.trino</groupId>
                 <artifactId>trino-maven-plugin</artifactId>
-                <version>15</version>
+                <version>20</version>
                 <extensions>true</extensions>
             </plugin>
 

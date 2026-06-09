@@ -24,6 +24,7 @@ import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.type.ArrayType;
 import io.trino.testing.TestingConnectorSession;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -115,11 +116,19 @@ public class TestLanceArrowToPageScanner
 
         try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(
                 lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap(), 8192, null, runtime)) {
-            page = pageSource.getNextPage();
+            page = pageSource.getNextSourcePage().getPage();
         }
 
         assertThat(page).isNotNull();
         assertThat(page.getPositionCount()).isEqualTo(2);
+    }
+
+    @AfterEach
+    public void tearDown()
+    {
+        if (runtime != null) {
+            runtime.close();
+        }
     }
 
     @Test

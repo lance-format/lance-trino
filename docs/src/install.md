@@ -2,8 +2,8 @@
 
 ## Requirements
 
-- Java 23 or later
-- Trino 476 or compatible version
+- Java 25 or later
+- Trino 481 or compatible version
 
 ## Download from GitHub Releases
 
@@ -15,7 +15,7 @@ Each release includes a `trino-lance-<version>-trino<trino_version>.tar.gz` arch
     ```bash
     # Set variables
     VERSION="0.3.0"
-    TRINO_VERSION="476"
+    TRINO_VERSION="481"
     PLUGIN_DIR="/usr/lib/trino/plugin"
 
     # Download and extract
@@ -26,11 +26,11 @@ Each release includes a `trino-lance-<version>-trino<trino_version>.tar.gz` arch
 
 === "Docker"
     ```dockerfile
-    FROM trinodb/trino:476
+    FROM trinodb/trino:481
 
     # Download and install Lance connector
     ARG VERSION=0.3.0
-    ARG TRINO_VERSION=476
+    ARG TRINO_VERSION=481
 
     RUN curl -fsSL "https://github.com/lancedb/lance-trino/releases/download/v${VERSION}/trino-lance-${VERSION}-trino${TRINO_VERSION}.tar.gz" \
         | tar -xz -C /usr/lib/trino/plugin/ \

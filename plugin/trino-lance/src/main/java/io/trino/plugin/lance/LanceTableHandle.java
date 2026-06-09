@@ -81,7 +81,12 @@ public class LanceTableHandle
             @JsonProperty("countStar") Boolean countStar,
             @JsonProperty("datasetVersion") Long datasetVersion)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter,
+        this(schemaName,
+                tableName,
+                tablePath,
+                tableId,
+                storageOptions,
+                substraitFilter,
                 filterColumns != null ? filterColumns : List.of(),
                 limit != null ? OptionalLong.of(limit) : OptionalLong.empty(),
                 countStar != null && countStar,

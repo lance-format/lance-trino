@@ -15,13 +15,10 @@ package io.trino.plugin.lance;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import io.trino.spi.connector.ConnectorSplit;
 
 import java.util.List;
-import java.util.Map;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static io.airlift.slice.SizeOf.estimatedSizeOf;
@@ -32,7 +29,6 @@ import static java.util.Objects.requireNonNull;
 public class LanceSplit
         implements ConnectorSplit
 {
-    private static final Joiner JOINER = Joiner.on(",");
     private static final int INSTANCE_SIZE = instanceSize(LanceSplit.class);
 
     private final List<Integer> fragments;
@@ -56,14 +52,8 @@ public class LanceSplit
     }
 
     @Override
-    public Map<String, String> getSplitInfo()
-    {
-        return ImmutableMap.of("fragments", JOINER.join(fragments));
-    }
-
-    @Override
     public long getRetainedSizeInBytes()
     {
-        return INSTANCE_SIZE + estimatedSizeOf(fragments, e -> sizeOf(Integer.SIZE));
+        return INSTANCE_SIZE + estimatedSizeOf(fragments, _ -> sizeOf(Integer.SIZE));
     }
 }

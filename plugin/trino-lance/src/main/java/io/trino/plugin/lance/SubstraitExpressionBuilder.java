@@ -116,7 +116,7 @@ public final class SubstraitExpressionBuilder
                 .sorted(Comparator.comparingInt(LanceColumnHandle::fieldId))
                 .toList();
 
-        return Optional.of(serializeAsExtendedExpression(expression.get(), sortedColumns));
+        return Optional.of(serializeAsExtendedExpression(expression.orElseThrow(), sortedColumns));
     }
 
     /**
@@ -779,7 +779,7 @@ public final class SubstraitExpressionBuilder
         // Try to convert entire expression to Substrait
         Optional<Expression> substraitExpr = tryConvertToSubstrait(call, assignments, columnOrdinals, columnNames);
         if (substraitExpr.isPresent()) {
-            substraitExprs.add(substraitExpr.get());
+            substraitExprs.add(substraitExpr.orElseThrow());
             return Constant.TRUE;
         }
 
@@ -926,7 +926,7 @@ public final class SubstraitExpressionBuilder
         if (arg instanceof Call innerCall) {
             Optional<Expression> innerExpr = tryConvertToSubstrait(innerCall, assignments, columnOrdinals, columnNames);
             if (innerExpr.isPresent()) {
-                return Optional.of(notExpression(innerExpr.get()));
+                return Optional.of(notExpression(innerExpr.orElseThrow()));
             }
         }
         return Optional.empty();
@@ -955,7 +955,7 @@ public final class SubstraitExpressionBuilder
             if (converted.isEmpty()) {
                 return Optional.empty();
             }
-            substraitArgs.add(converted.get());
+            substraitArgs.add(converted.orElseThrow());
         }
         return Optional.of(orExpressions(substraitArgs));
     }

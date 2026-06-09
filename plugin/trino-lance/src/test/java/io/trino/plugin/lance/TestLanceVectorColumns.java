@@ -57,7 +57,8 @@ public class TestLanceVectorColumns
         String tableName = "test_vector_ctas_" + System.currentTimeMillis();
         try {
             // Create table with vector column via CTAS
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (vector_columns = 'embedding:3') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, ARRAY[1.0E0, 2.0E0, 3.0E0] as embedding",
                     1);
@@ -77,7 +78,8 @@ public class TestLanceVectorColumns
         String tableName = "test_vector_insert_" + System.currentTimeMillis();
         try {
             // Create table with vector column
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (vector_columns = 'embedding:3') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, ARRAY[1.0E0, 2.0E0, 3.0E0] as embedding",
                     1);
@@ -121,7 +123,8 @@ public class TestLanceVectorColumns
         String tableName = "test_multi_vector_" + System.currentTimeMillis();
         try {
             // Create table with multiple vector columns
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (vector_columns = 'embedding1:2, embedding2:3') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, " +
                             "       ARRAY[1.0E0, 2.0E0] as embedding1, " +
@@ -142,7 +145,8 @@ public class TestLanceVectorColumns
         String tableName = "test_vector_double_" + System.currentTimeMillis();
         try {
             // Create table with ARRAY(DOUBLE) vector column
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (vector_columns = 'embedding:3') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, " +
                             "       CAST(ARRAY[1.0E0, 2.0E0, 3.0E0] AS ARRAY(DOUBLE)) as embedding",
@@ -162,7 +166,8 @@ public class TestLanceVectorColumns
         String tableName = "test_vector_mixed_" + System.currentTimeMillis();
         try {
             // Create table with mix of vector and non-vector columns
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (vector_columns = 'vector_col:3') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, " +
                             "       'regular text' as text_content, " +
@@ -185,7 +190,8 @@ public class TestLanceVectorColumns
         String tableName = "test_blob_vector_combined_" + System.currentTimeMillis();
         try {
             // Create table with both blob and vector columns
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (blob_columns = 'content', vector_columns = 'embedding:3') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, " +
                             "       X'48454C4C4F' as content, " +

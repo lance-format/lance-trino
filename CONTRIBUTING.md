@@ -59,5 +59,5 @@ This starts a Trino server on port 8080 with the Lance connector configured.
 
 ### Requirements
 
-- Java 23 or later
-- Trino 476 or compatible version
+- Java 25 or later
+- Trino 481 or compatible version

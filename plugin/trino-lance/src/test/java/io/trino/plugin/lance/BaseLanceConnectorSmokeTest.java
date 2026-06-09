@@ -56,26 +56,29 @@ public abstract class BaseLanceConnectorSmokeTest
         return switch (connectorBehavior) {
             // Supported behaviors
             case SUPPORTS_CREATE_TABLE,
-                    SUPPORTS_CREATE_TABLE_WITH_DATA,
-                    SUPPORTS_INSERT,
-                    SUPPORTS_DELETE,
-                    SUPPORTS_ROW_LEVEL_DELETE,
-                    SUPPORTS_UPDATE,
-                    SUPPORTS_MERGE -> true;
+                 SUPPORTS_CREATE_TABLE_WITH_DATA,
+                 SUPPORTS_INSERT,
+                 SUPPORTS_DELETE,
+                 SUPPORTS_ROW_LEVEL_DELETE,
+                 SUPPORTS_UPDATE,
+                 SUPPORTS_MERGE -> true;
 
             // Schema operations - depends on namespace configuration
             case SUPPORTS_CREATE_SCHEMA -> getNamespaceTestConfig().supportsCreateSchema();
 
             // Not supported behaviors
             case SUPPORTS_DROP_SCHEMA_CASCADE,
-                    SUPPORTS_RENAME_SCHEMA,
-                    SUPPORTS_RENAME_TABLE,
-                    SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
-                    SUPPORTS_TRUNCATE,
-                    SUPPORTS_CREATE_VIEW,
-                    SUPPORTS_COMMENT_ON_VIEW_COLUMN,
-                    SUPPORTS_CREATE_MATERIALIZED_VIEW,
-                    SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN -> false;
+                 SUPPORTS_RENAME_SCHEMA,
+                 SUPPORTS_RENAME_TABLE,
+                 SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
+                 SUPPORTS_DEFAULT_COLUMN_VALUE,
+                 SUPPORTS_SET_DEFAULT_COLUMN_VALUE,
+                 SUPPORTS_DROP_DEFAULT_COLUMN_VALUE,
+                 SUPPORTS_TRUNCATE,
+                 SUPPORTS_CREATE_VIEW,
+                 SUPPORTS_COMMENT_ON_VIEW_COLUMN,
+                 SUPPORTS_CREATE_MATERIALIZED_VIEW,
+                 SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN -> false;
 
             default -> super.hasBehavior(connectorBehavior);
         };
