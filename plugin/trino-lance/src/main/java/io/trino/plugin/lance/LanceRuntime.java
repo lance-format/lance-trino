@@ -52,6 +52,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -80,6 +82,9 @@ public class LanceRuntime
     public static final String DEFAULT_SCHEMA = "default";
     public static final String TABLE_PATH_SUFFIX = ".lance";
 
+    private static final String ARROW_ALLOCATION_MANAGER_TYPE = "arrow.allocation.manager.type";
+    private static final String ARROW_ALLOCATION_MANAGER_TYPE_ENV = "ARROW_ALLOCATION_MANAGER_TYPE";
+    private static final String ARROW_ALLOCATION_MANAGER_UNSAFE = "Unsafe";
     private static final String ANONYMOUS_USER = "__anonymous__";
 
     // Core resources
@@ -93,14 +98,16 @@ public class LanceRuntime
     private final Map<String, String> namespaceStorageOptions;
 
     // Caches
-    private final Cache<String, Session> sessionCache;
-    private final Cache<DatasetCacheKey, Dataset> datasetCache;
+    private final Cache<String, CachedSession> sessionCache;
+    private final Cache<DatasetCacheKey, CachedDataset> datasetCache;
     private final Long sessionIndexCacheSizeBytes;
     private final Long sessionMetadataCacheSizeBytes;
 
     @Inject
     public LanceRuntime(LanceConfig config, @LanceNamespaceProperties Map<String, String> namespaceProperties)
     {
+        configureArrowAllocationManager();
+
         // Initialize allocator first - it's needed for namespace initialization
         this.allocator = new RootAllocator(
                 RootAllocator.configBuilder()
@@ -151,11 +158,11 @@ public class LanceRuntime
         this.sessionCache = CacheBuilder.newBuilder()
                 .maximumSize(config.getCacheSessionMaxEntries())
                 .expireAfterAccess(config.getCacheSessionTtlMinutes(), TimeUnit.MINUTES)
-                .removalListener((RemovalListener<String, Session>) notification -> {
-                    Session session = notification.getValue();
-                    if (session != null && !session.isClosed()) {
-                        log.debug("Closing expired session for user: %s", notification.getKey());
-                        session.close();
+                .removalListener((RemovalListener<String, CachedSession>) notification -> {
+                    CachedSession session = notification.getValue();
+                    if (session != null) {
+                        log.debug("Retiring expired session for user: %s", notification.getKey());
+                        session.retire();
                     }
                 })
                 .build();
@@ -163,21 +170,30 @@ public class LanceRuntime
         this.datasetCache = CacheBuilder.newBuilder()
                 .maximumSize(config.getCacheDatasetMaxEntries())
                 .expireAfterAccess(config.getCacheDatasetTtlMinutes(), TimeUnit.MINUTES)
-                .removalListener((RemovalListener<DatasetCacheKey, Dataset>) notification -> {
-                    Dataset dataset = notification.getValue();
+                .removalListener((RemovalListener<DatasetCacheKey, CachedDataset>) notification -> {
+                    CachedDataset dataset = notification.getValue();
                     if (dataset != null) {
-                        try {
-                            dataset.close();
-                        }
-                        catch (Exception e) {
-                            log.warn(e, "Failed to close cached dataset");
-                        }
+                        dataset.retire();
                     }
                 })
                 .build();
 
         log.info("LanceRuntime initialized: impl=%s, root=%s, singleLevelNs=%s, maxSessions=%d, maxDatasets=%d",
-                impl, root, singleLevelNs, config.getCacheSessionMaxEntries(), config.getCacheDatasetMaxEntries());
+                impl,
+                root,
+                singleLevelNs,
+                config.getCacheSessionMaxEntries(),
+                config.getCacheDatasetMaxEntries());
+    }
+
+    static void configureArrowAllocationManager()
+    {
+        // Arrow 19's Netty allocator is incompatible with Netty 4.2 on Java 25. Prefer
+        // Unsafe unless the process was explicitly configured with another Arrow allocator.
+        if (System.getProperty(ARROW_ALLOCATION_MANAGER_TYPE) == null &&
+                System.getenv(ARROW_ALLOCATION_MANAGER_TYPE_ENV) == null) {
+            System.setProperty(ARROW_ALLOCATION_MANAGER_TYPE, ARROW_ALLOCATION_MANAGER_UNSAFE);
+        }
     }
 
     // ================== Core Accessors ==================
@@ -259,26 +275,36 @@ public class LanceRuntime
 
     // ================== Session Management ==================
 
-    private Session getOrCreateSession(String userIdentity)
+    private SessionLease getOrCreateSessionLease(String userIdentity)
     {
         String key = normalizeUserIdentity(userIdentity);
-        try {
-            return sessionCache.get(key, () -> {
-                log.debug("Creating new session for user: %s", key);
-                Session.Builder builder = Session.builder();
-                if (sessionIndexCacheSizeBytes != null) {
-                    builder.indexCacheSizeBytes(sessionIndexCacheSizeBytes);
+        while (true) {
+            try {
+                CachedSession cachedSession = sessionCache.get(key, () -> new CachedSession(createSession(key)));
+                SessionLease lease = cachedSession.tryAcquire();
+                if (lease != null) {
+                    return lease;
                 }
-                if (sessionMetadataCacheSizeBytes != null) {
-                    builder.metadataCacheSizeBytes(sessionMetadataCacheSizeBytes);
-                }
-                return builder.build();
-            });
+                sessionCache.invalidate(key);
+            }
+            catch (ExecutionException e) {
+                log.error(e, "Failed to create session for user: %s", key);
+                throw new RuntimeException("Failed to create Lance session", e);
+            }
         }
-        catch (ExecutionException e) {
-            log.error(e, "Failed to create session for user: %s", key);
-            throw new RuntimeException("Failed to create Lance session", e);
+    }
+
+    private Session createSession(String key)
+    {
+        log.debug("Creating new session for user: %s", key);
+        Session.Builder builder = Session.builder();
+        if (sessionIndexCacheSizeBytes != null) {
+            builder.indexCacheSizeBytes(sessionIndexCacheSizeBytes);
         }
+        if (sessionMetadataCacheSizeBytes != null) {
+            builder.metadataCacheSizeBytes(sessionMetadataCacheSizeBytes);
+        }
+        return builder.build();
     }
 
     public long getActiveSessionCount()
@@ -298,30 +324,75 @@ public class LanceRuntime
 
     // ================== Dataset Access ==================
 
-    public Dataset getDataset(String userIdentity, String tablePath, Long version,
+    DatasetLease getDatasetLease(
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
-        DatasetCacheKey key = new DatasetCacheKey(userIdentity, tablePath, version);
+        if (!isDatasetCacheable(storageOptions)) {
+            return openDatasetDirectLease(userIdentity, tablePath, version, storageOptions);
+        }
+
+        DatasetCacheKey key = new DatasetCacheKey(userIdentity, tablePath, version, storageOptions);
+        while (true) {
+            try {
+                CachedDataset cachedDataset = datasetCache.get(
+                        key,
+                        () -> openCachedDataset(userIdentity, tablePath, version, storageOptions));
+                DatasetLease lease = cachedDataset.tryAcquire();
+                if (lease != null) {
+                    return lease;
+                }
+                datasetCache.invalidate(key);
+            }
+            catch (ExecutionException e) {
+                throw new RuntimeException("Failed to open dataset: " + tablePath, e);
+            }
+        }
+    }
+
+    private CachedDataset openCachedDataset(
+            String userIdentity,
+            String tablePath,
+            Long version,
+            Map<String, String> storageOptions)
+    {
+        SessionLease sessionLease = getOrCreateSessionLease(userIdentity);
         try {
-            return datasetCache.get(key, () -> openDataset(userIdentity, tablePath, version, storageOptions));
+            return new CachedDataset(openDataset(sessionLease.getSession(), userIdentity, tablePath, version, storageOptions), sessionLease);
         }
-        catch (ExecutionException e) {
-            throw new RuntimeException("Failed to open dataset: " + tablePath, e);
+        catch (RuntimeException | Error e) {
+            sessionLease.close();
+            throw e;
         }
     }
 
-    public Dataset openDatasetDirect(String userIdentity, String tablePath, Long version,
+    DatasetLease openDatasetDirectLease(
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
-        return openDataset(userIdentity, tablePath, version, storageOptions);
+        SessionLease sessionLease = getOrCreateSessionLease(userIdentity);
+        try {
+            Dataset dataset = openDataset(sessionLease.getSession(), userIdentity, tablePath, version, storageOptions);
+            return DatasetLease.direct(dataset, sessionLease);
+        }
+        catch (RuntimeException | Error e) {
+            sessionLease.close();
+            throw e;
+        }
     }
 
-    private Dataset openDataset(String userIdentity, String tablePath, Long version,
+    private Dataset openDataset(
+            Session session,
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
         log.debug("Opening dataset: path=%s, version=%s, user=%s", tablePath, version, userIdentity);
-
-        Session session = getOrCreateSession(userIdentity);
 
         ReadOptions.Builder optionsBuilder = new ReadOptions.Builder()
                 .setSession(session);
@@ -342,25 +413,31 @@ public class LanceRuntime
 
     public long getLatestVersion(String userIdentity, String tablePath, Map<String, String> storageOptions)
     {
-        try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
-            return dataset.version();
+        try (DatasetLease datasetLease = openDatasetDirectLease(userIdentity, tablePath, null, storageOptions)) {
+            return datasetLease.getDataset().version();
         }
     }
 
-    public boolean versionExists(String userIdentity, String tablePath,
-            long version, Map<String, String> storageOptions)
+    public boolean versionExists(
+            String userIdentity,
+            String tablePath,
+            long version,
+            Map<String, String> storageOptions)
     {
-        try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
-            List<Version> versions = dataset.listVersions();
+        try (DatasetLease datasetLease = openDatasetDirectLease(userIdentity, tablePath, null, storageOptions)) {
+            List<Version> versions = datasetLease.getDataset().listVersions();
             return versions.stream().anyMatch(v -> v.getId() == version);
         }
     }
 
-    public Optional<Long> getVersionAtTimestamp(String userIdentity, String tablePath,
-            long timestampMillis, Map<String, String> storageOptions)
+    public Optional<Long> getVersionAtTimestamp(
+            String userIdentity,
+            String tablePath,
+            long timestampMillis,
+            Map<String, String> storageOptions)
     {
-        try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
-            List<Version> versions = dataset.listVersions();
+        try (DatasetLease datasetLease = openDatasetDirectLease(userIdentity, tablePath, null, storageOptions)) {
+            List<Version> versions = datasetLease.getDataset().listVersions();
 
             Version bestMatch = null;
             for (Version version : versions) {
@@ -373,7 +450,8 @@ public class LanceRuntime
             }
 
             if (bestMatch != null) {
-                log.debug("Found version %d at timestamp %s for requested time %s",
+                log.debug(
+                        "Found version %d at timestamp %s for requested time %s",
                         bestMatch.getId(),
                         bestMatch.getDataTime(),
                         Instant.ofEpochMilli(timestampMillis));
@@ -387,37 +465,57 @@ public class LanceRuntime
 
     // ================== Fragment Access ==================
 
-    public List<Fragment> getFragments(String userIdentity, String tablePath, Long version,
+    public List<Fragment> getFragments(
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
-        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
-        return dataset.getFragments();
+        try (DatasetLease datasetLease = getDatasetLease(userIdentity, tablePath, version, storageOptions)) {
+            return datasetLease.getDataset().getFragments();
+        }
     }
 
-    public Fragment getFragment(String userIdentity, String tablePath, Long version,
-            int fragmentId, Map<String, String> storageOptions)
+    public Fragment getFragment(
+            String userIdentity,
+            String tablePath,
+            Long version,
+            int fragmentId,
+            Map<String, String> storageOptions)
     {
-        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
-        return dataset.getFragment(fragmentId);
+        try (DatasetLease datasetLease = getDatasetLease(userIdentity, tablePath, version, storageOptions)) {
+            return datasetLease.getDataset().getFragment(fragmentId);
+        }
     }
 
     // ================== Schema Access ==================
 
-    public Schema getSchema(String userIdentity, String tablePath, Long version,
+    public Schema getSchema(
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
-        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
-        return dataset.getSchema();
+        try (DatasetLease datasetLease = getDatasetLease(userIdentity, tablePath, version, storageOptions)) {
+            return datasetLease.getDataset().getSchema();
+        }
     }
 
-    public LanceSchema getLanceSchema(String userIdentity, String tablePath, Long version,
+    public LanceSchema getLanceSchema(
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
-        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
-        return dataset.getLanceSchema();
+        try (DatasetLease datasetLease = getDatasetLease(userIdentity, tablePath, version, storageOptions)) {
+            return datasetLease.getDataset().getLanceSchema();
+        }
     }
 
-    public Map<String, ColumnHandle> getColumnHandles(String userIdentity, String tablePath, Long version,
+    public Map<String, ColumnHandle> getColumnHandles(
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
         LanceSchema lanceSchema = getLanceSchema(userIdentity, tablePath, version, storageOptions);
@@ -462,7 +560,10 @@ public class LanceRuntime
         return result;
     }
 
-    public List<LanceColumnHandle> getColumnHandleList(String userIdentity, String tablePath, Long version,
+    public List<LanceColumnHandle> getColumnHandleList(
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
         LanceSchema lanceSchema = getLanceSchema(userIdentity, tablePath, version, storageOptions);
@@ -512,7 +613,10 @@ public class LanceRuntime
                 .collect(Collectors.toSet());
     }
 
-    public List<ColumnMetadata> getColumnMetadata(String userIdentity, String tablePath, Long version,
+    public List<ColumnMetadata> getColumnMetadata(
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
         Map<String, ColumnHandle> columnHandles = getColumnHandles(userIdentity, tablePath, version, storageOptions);
@@ -521,11 +625,15 @@ public class LanceRuntime
                 .collect(toImmutableList());
     }
 
-    public ManifestSummary getManifestSummary(String userIdentity, String tablePath, Long version,
+    public ManifestSummary getManifestSummary(
+            String userIdentity,
+            String tablePath,
+            Long version,
             Map<String, String> storageOptions)
     {
-        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
-        return dataset.getVersion().getManifestSummary();
+        try (DatasetLease datasetLease = getDatasetLease(userIdentity, tablePath, version, storageOptions)) {
+            return datasetLease.getDataset().getVersion().getManifestSummary();
+        }
     }
 
     // ================== Cache Invalidation ==================
@@ -536,22 +644,24 @@ public class LanceRuntime
 
         String normalizedUser = normalizeUserIdentity(userIdentity);
 
-        datasetCache.asMap().keySet().removeIf(key ->
-                Objects.equals(key.userIdentity, normalizedUser) &&
-                        Objects.equals(key.tablePath, tablePath));
+        List<DatasetCacheKey> matchingKeys = datasetCache.asMap().keySet().stream()
+                .filter(key -> Objects.equals(key.userIdentity, normalizedUser) &&
+                        Objects.equals(key.tablePath, tablePath))
+                .toList();
+        datasetCache.invalidateAll(matchingKeys);
     }
 
     // ================== Scanner Operations ==================
 
-    public LanceScanner openDatasetScanner(String userIdentity, String tablePath, Long version,
-            List<Integer> fragmentIds, ScanOptions scanOptions, Map<String, String> storageOptions)
+    LanceScanner openDatasetScanner(
+            DatasetLease datasetLease,
+            List<Integer> fragmentIds,
+            ScanOptions scanOptions)
     {
-        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
-
         ScanOptions.Builder scanBuilder = new ScanOptions.Builder(scanOptions)
                 .fragmentIds(fragmentIds);
 
-        return dataset.newScan(scanBuilder.build());
+        return datasetLease.getDataset().newScan(scanBuilder.build());
     }
 
     // ================== Lifecycle ==================
@@ -562,26 +672,14 @@ public class LanceRuntime
     {
         log.info("Closing LanceRuntime: %d sessions, %d datasets", sessionCache.size(), datasetCache.size());
 
-        // Close datasets first
-        datasetCache.asMap().forEach((key, dataset) -> {
-            if (dataset != null) {
-                try {
-                    dataset.close();
-                }
-                catch (Exception e) {
-                    log.warn(e, "Failed to close dataset during shutdown");
-                }
-            }
-        });
+        // Retire currently cached datasets before closing sessions they depend on.
         datasetCache.invalidateAll();
+        datasetCache.cleanUp();
 
         // Close sessions
-        sessionCache.asMap().forEach((key, session) -> {
-            if (session != null && !session.isClosed()) {
-                session.close();
-            }
-        });
+        sessionCache.asMap().forEach((_, session) -> session.retire());
         sessionCache.invalidateAll();
+        sessionCache.cleanUp();
 
         // Close namespace
         if (namespace instanceof Closeable closeable) {
@@ -593,9 +691,211 @@ public class LanceRuntime
             }
         }
 
-        // Note: We intentionally do NOT close the allocator here.
-        // Page sources may still be using the allocator asynchronously.
-        // Arrow allocators just manage memory and will be cleaned up on JVM exit.
+        try {
+            allocator.close();
+        }
+        catch (Exception e) {
+            log.warn(e, "Failed to close Arrow allocator");
+        }
+    }
+
+    private static boolean isDatasetCacheable(Map<String, String> storageOptions)
+    {
+        return storageOptions == null || !storageOptions.containsKey("expires_at_millis");
+    }
+
+    private static void closeDataset(Dataset dataset, SessionLease sessionLease)
+    {
+        try {
+            dataset.close();
+        }
+        catch (Exception e) {
+            log.warn(e, "Failed to close dataset");
+        }
+        finally {
+            sessionLease.close();
+        }
+    }
+
+    private static final class CachedSession
+    {
+        private final Session session;
+        private final AtomicInteger references = new AtomicInteger();
+        private final AtomicBoolean retired = new AtomicBoolean();
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        private CachedSession(Session session)
+        {
+            this.session = session;
+        }
+
+        private SessionLease tryAcquire()
+        {
+            while (true) {
+                if (retired.get() || closed.get()) {
+                    return null;
+                }
+
+                int currentReferences = references.get();
+                if (references.compareAndSet(currentReferences, currentReferences + 1)) {
+                    if (retired.get() || closed.get()) {
+                        release();
+                        return null;
+                    }
+                    return new SessionLease(session, this::release);
+                }
+            }
+        }
+
+        private void release()
+        {
+            int remainingReferences = references.decrementAndGet();
+            if (remainingReferences < 0) {
+                throw new IllegalStateException("Session reference count is negative");
+            }
+            closeIfUnused();
+        }
+
+        private void retire()
+        {
+            retired.set(true);
+            closeIfUnused();
+        }
+
+        private void closeIfUnused()
+        {
+            if (retired.get() && references.get() == 0 && closed.compareAndSet(false, true) && !session.isClosed()) {
+                closeSession(session);
+            }
+        }
+    }
+
+    private static final class CachedDataset
+    {
+        private final Dataset dataset;
+        private final SessionLease sessionLease;
+        private final AtomicInteger references = new AtomicInteger();
+        private final AtomicBoolean retired = new AtomicBoolean();
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        private CachedDataset(Dataset dataset, SessionLease sessionLease)
+        {
+            this.dataset = dataset;
+            this.sessionLease = sessionLease;
+        }
+
+        private DatasetLease tryAcquire()
+        {
+            while (true) {
+                if (retired.get() || closed.get()) {
+                    return null;
+                }
+
+                int currentReferences = references.get();
+                if (references.compareAndSet(currentReferences, currentReferences + 1)) {
+                    if (retired.get() || closed.get()) {
+                        release();
+                        return null;
+                    }
+                    return new DatasetLease(dataset, this::release);
+                }
+            }
+        }
+
+        private void release()
+        {
+            int remainingReferences = references.decrementAndGet();
+            if (remainingReferences < 0) {
+                throw new IllegalStateException("Dataset reference count is negative");
+            }
+            closeIfUnused();
+        }
+
+        private void retire()
+        {
+            retired.set(true);
+            closeIfUnused();
+        }
+
+        private void closeIfUnused()
+        {
+            if (retired.get() && references.get() == 0 && closed.compareAndSet(false, true)) {
+                closeDataset(dataset, sessionLease);
+            }
+        }
+    }
+
+    static final class DatasetLease
+            implements Closeable
+    {
+        private final Dataset dataset;
+        private final Runnable release;
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        private DatasetLease(Dataset dataset, Runnable release)
+        {
+            this.dataset = dataset;
+            this.release = release;
+        }
+
+        private static DatasetLease direct(Dataset dataset, SessionLease sessionLease)
+        {
+            return new DatasetLease(dataset, () -> closeDataset(dataset, sessionLease));
+        }
+
+        Dataset getDataset()
+        {
+            if (closed.get()) {
+                throw new IllegalStateException("Dataset lease is closed");
+            }
+            return dataset;
+        }
+
+        @Override
+        public void close()
+        {
+            if (closed.compareAndSet(false, true)) {
+                release.run();
+            }
+        }
+    }
+
+    private static final class SessionLease
+            implements Closeable
+    {
+        private final Session session;
+        private final Runnable release;
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        private SessionLease(Session session, Runnable release)
+        {
+            this.session = session;
+            this.release = release;
+        }
+
+        private Session getSession()
+        {
+            if (closed.get()) {
+                throw new IllegalStateException("Session lease is closed");
+            }
+            return session;
+        }
+
+        @Override
+        public void close()
+        {
+            if (closed.compareAndSet(false, true)) {
+                release.run();
+            }
+        }
+    }
+
+    private static Map<String, String> copyStorageOptions(Map<String, String> storageOptions)
+    {
+        if (storageOptions == null || storageOptions.isEmpty()) {
+            return Map.of();
+        }
+        return Map.copyOf(storageOptions);
     }
 
     // ================== Cache Key ==================
@@ -605,12 +905,14 @@ public class LanceRuntime
         private final String userIdentity;
         private final String tablePath;
         private final Long version;
+        private final Map<String, String> storageOptions;
 
-        DatasetCacheKey(String userIdentity, String tablePath, Long version)
+        DatasetCacheKey(String userIdentity, String tablePath, Long version, Map<String, String> storageOptions)
         {
             this.userIdentity = normalizeUserIdentity(userIdentity);
             this.tablePath = tablePath;
             this.version = version;
+            this.storageOptions = copyStorageOptions(storageOptions);
         }
 
         @Override
@@ -622,13 +924,26 @@ public class LanceRuntime
             DatasetCacheKey that = (DatasetCacheKey) o;
             return Objects.equals(userIdentity, that.userIdentity) &&
                     Objects.equals(tablePath, that.tablePath) &&
-                    Objects.equals(version, that.version);
+                    Objects.equals(version, that.version) &&
+                    Objects.equals(storageOptions, that.storageOptions);
         }
 
         @Override
         public int hashCode()
         {
-            return Objects.hash(userIdentity, tablePath, version);
+            return Objects.hash(userIdentity, tablePath, version, storageOptions);
+        }
+    }
+
+    private static void closeSession(Session session)
+    {
+        if (!session.isClosed()) {
+            try {
+                session.close();
+            }
+            catch (Exception e) {
+                log.warn(e, "Failed to close session");
+            }
         }
     }
 }

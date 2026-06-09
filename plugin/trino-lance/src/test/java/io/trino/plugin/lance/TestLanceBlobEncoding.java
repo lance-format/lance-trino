@@ -57,7 +57,8 @@ public class TestLanceBlobEncoding
         String tableName = "test_blob_ctas_" + System.currentTimeMillis();
         try {
             // Create table with blob encoding via CTAS
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (blob_columns = 'content') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, X'48454C4C4F' as content",
                     1);
@@ -77,7 +78,8 @@ public class TestLanceBlobEncoding
         String tableName = "test_blob_insert_" + System.currentTimeMillis();
         try {
             // Create table with blob encoding
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (blob_columns = 'content') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, X'48454C4C4F' as content",
                     1);
@@ -110,7 +112,8 @@ public class TestLanceBlobEncoding
         String tableName = "test_multi_blob_" + System.currentTimeMillis();
         try {
             // Create table with multiple blob columns
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (blob_columns = 'content1, content2') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, X'41' as content1, X'42' as content2",
                     1);
@@ -129,7 +132,8 @@ public class TestLanceBlobEncoding
         String tableName = "test_blob_mixed_" + System.currentTimeMillis();
         try {
             // Create table with mix of blob and non-blob columns
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (blob_columns = 'blob_content') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, " +
                             "       'regular text' as text_content, " +
@@ -152,7 +156,8 @@ public class TestLanceBlobEncoding
         String tableName = "test_blob_virtual_select_" + System.currentTimeMillis();
         try {
             // Create table with blob encoding
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (blob_columns = 'content') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, X'48454C4C4F' as content",
                     1);
@@ -178,7 +183,8 @@ public class TestLanceBlobEncoding
         String tableName = "test_multi_blob_virtual_" + System.currentTimeMillis();
         try {
             // Create table with multiple blob columns
-            assertUpdate("CREATE TABLE " + tableName + " " +
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
                             "WITH (blob_columns = 'data1, data2') AS " +
                             "SELECT CAST(1 AS BIGINT) as id, X'41' as data1, X'424344' as data2",
                     1);

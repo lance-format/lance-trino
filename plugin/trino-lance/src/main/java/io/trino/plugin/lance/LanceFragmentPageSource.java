@@ -15,7 +15,6 @@ package io.trino.plugin.lance;
 
 import io.airlift.log.Logger;
 import org.apache.arrow.memory.BufferAllocator;
-import org.lance.Dataset;
 import org.lance.ipc.LanceScanner;
 import org.lance.ipc.ScanOptions;
 
@@ -87,7 +86,7 @@ public class LanceFragmentPageSource
         private final boolean includeRowAddress;
         private final int readBatchSize;
         private final LanceRuntime runtime;
-        private Dataset lanceDataset;
+        private LanceRuntime.DatasetLease datasetLease;
         private LanceScanner lanceScanner;
 
         public FragmentScannerFactory(List<Integer> fragmentIds, boolean includeRowAddress, int readBatchSize, LanceRuntime runtime)
@@ -99,9 +98,15 @@ public class LanceFragmentPageSource
         }
 
         @Override
-        public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns,
-                Map<String, String> storageOptions, Optional<ByteBuffer> substraitFilter, OptionalLong limit,
-                String userIdentity, Long datasetVersion)
+        public LanceScanner open(
+                String tablePath,
+                BufferAllocator allocator,
+                List<String> columns,
+                Map<String, String> storageOptions,
+                Optional<ByteBuffer> substraitFilter,
+                OptionalLong limit,
+                String userIdentity,
+                Long datasetVersion)
         {
             ScanOptions.Builder optionsBuilder = new ScanOptions.Builder();
             if (!columns.isEmpty()) {
@@ -116,7 +121,8 @@ public class LanceFragmentPageSource
                 optionsBuilder.withRowAddress(true);
             }
 
-            log.debug("Opening dataset scanner for %d fragments with batchSize: %d, substraitFilter: %s, limit: %s, withRowAddress: %s, user: %s, version: %s",
+            log.debug(
+                    "Opening dataset scanner for %d fragments with batchSize: %d, substraitFilter: %s, limit: %s, withRowAddress: %s, user: %s, version: %s",
                     fragmentIds.size(),
                     readBatchSize,
                     substraitFilter.isPresent() ? "present" : "none",
@@ -125,14 +131,18 @@ public class LanceFragmentPageSource
                     userIdentity,
                     datasetVersion);
 
-            // Use dataset-level scan with fragment filtering to respect deletion vectors
-            // When scanning multiple fragments with a substrait filter, Lance will automatically
-            // use scalar indexes (btree, bitmap) if they cover the filter columns
-            // Dataset is cached, so we don't close it here - the cache manages its lifecycle
-            this.lanceDataset = runtime.getDataset(userIdentity, tablePath, datasetVersion, storageOptions);
-            this.lanceScanner = runtime.openDatasetScanner(
-                    userIdentity, tablePath, datasetVersion, fragmentIds, optionsBuilder.build(), storageOptions);
-            return lanceScanner;
+            datasetLease = runtime.getDatasetLease(userIdentity, tablePath, datasetVersion, storageOptions);
+            try {
+                // Use dataset-level scan with fragment filtering to respect deletion vectors.
+                // Keep the dataset lease until close because the scanner depends on the dataset.
+                lanceScanner = runtime.openDatasetScanner(datasetLease, fragmentIds, optionsBuilder.build());
+                return lanceScanner;
+            }
+            catch (RuntimeException | Error e) {
+                datasetLease.close();
+                datasetLease = null;
+                throw e;
+            }
         }
 
         @Override
@@ -146,8 +156,12 @@ public class LanceFragmentPageSource
             catch (Exception e) {
                 log.warn("error while closing lance scanner, Exception: %s", e.getMessage());
             }
-            // Don't close the dataset - it's managed by the cache
-            // The cache will close it when it's evicted or on shutdown
+            finally {
+                if (datasetLease != null) {
+                    datasetLease.close();
+                    datasetLease = null;
+                }
+            }
         }
     }
 }

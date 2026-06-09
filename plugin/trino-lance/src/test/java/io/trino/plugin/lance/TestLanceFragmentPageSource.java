@@ -22,6 +22,7 @@ import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.testing.TestingConnectorSession;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -64,6 +65,14 @@ public class TestLanceFragmentPageSource
         this.splitManager = new LanceSplitManager(runtime);
     }
 
+    @AfterEach
+    public void tearDown()
+    {
+        if (runtime != null) {
+            runtime.close();
+        }
+    }
+
     @Test
     public void testFragmentScan()
             throws ExecutionException, InterruptedException
@@ -77,7 +86,7 @@ public class TestLanceFragmentPageSource
         List<LanceColumnHandle> columns = runtime.getColumnHandleList(null, lanceTableHandle.getTablePath(), null, Collections.emptyMap());
         // testing split 0 is enough
         try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap(), 8192, null, runtime)) {
-            Page page = pageSource.getNextPage();
+            Page page = pageSource.getNextSourcePage().getPage();
             // assert row/column count
             assertThat(page.getChannelCount()).isEqualTo(4);
             assertThat(page.getPositionCount()).isEqualTo(2);
@@ -87,8 +96,7 @@ public class TestLanceFragmentPageSource
             block = page.getBlock(1);
             assertThat(BIGINT.getLong(block, 1)).isEqualTo(2L);
             // assert no second page. it should come from the other split
-            page = pageSource.getNextPage();
-            assertThat(page).isNull();
+            assertThat(pageSource.getNextSourcePage()).isNull();
             // assert that page is now finish
             assertThat(pageSource.isFinished()).isTrue();
         }
@@ -123,7 +131,7 @@ public class TestLanceFragmentPageSource
                 8192,
                 null,
                 runtime)) {
-            Page page = pageSource.getNextPage();
+            Page page = pageSource.getNextSourcePage().getPage();
 
             assertThat(page.getChannelCount()).isEqualTo(2);
             assertThat(page.getPositionCount()).isEqualTo(2);
@@ -167,7 +175,7 @@ public class TestLanceFragmentPageSource
                 8192,
                 null,
                 runtime)) {
-            Page page = pageSource.getNextPage();
+            Page page = pageSource.getNextSourcePage().getPage();
 
             // assert only 2 columns returned
             assertThat(page.getChannelCount()).isEqualTo(2);

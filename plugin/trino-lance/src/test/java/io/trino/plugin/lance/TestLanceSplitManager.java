@@ -20,6 +20,7 @@ import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.testing.TestingConnectorSession;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -40,6 +41,7 @@ public class TestLanceSplitManager
 
     private LanceMetadata metadata;
     private LanceSplitManager splitManager;
+    private LanceRuntime runtime;
 
     @BeforeEach
     public void setUp()
@@ -52,11 +54,19 @@ public class TestLanceSplitManager
         LanceConfig lanceConfig = new LanceConfig()
                 .setSingleLevelNs(true);
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
-        LanceRuntime runtime = new LanceRuntime(lanceConfig, catalogProperties);
+        runtime = new LanceRuntime(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
         this.metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
         this.splitManager = new LanceSplitManager(runtime);
+    }
+
+    @AfterEach
+    public void tearDown()
+    {
+        if (runtime != null) {
+            runtime.close();
+        }
     }
 
     @Test

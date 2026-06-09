@@ -143,7 +143,7 @@ public final class LanceTableProperties
         if (!VALID_STORAGE_VERSIONS.contains(version)) {
             throw new TrinoException(INVALID_TABLE_PROPERTY,
                     "Invalid file_format_version: '" + value + "'. " +
-                    "Valid values are: legacy, 0.1, 2.0, 2.1, 2.2, stable, next");
+                            "Valid values are: legacy, 0.1, 2.0, 2.1, 2.2, stable, next");
         }
         return version;
     }

@@ -78,7 +78,7 @@ public class TestSubstraitExpressionBuilder
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         // The result should be a false literal
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -88,7 +88,7 @@ public class TestSubstraitExpressionBuilder
                 Map.of(INT_COLUMN, Domain.singleValue(INTEGER, 42L)));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -98,7 +98,7 @@ public class TestSubstraitExpressionBuilder
                 Map.of(VARCHAR_COLUMN, Domain.singleValue(VARCHAR, Slices.utf8Slice("test"))));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -108,7 +108,7 @@ public class TestSubstraitExpressionBuilder
                 Map.of(BOOLEAN_COLUMN, Domain.singleValue(BOOLEAN, true)));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -118,7 +118,7 @@ public class TestSubstraitExpressionBuilder
                 Map.of(INT_COLUMN, Domain.multipleValues(INTEGER, java.util.List.of(1L, 2L, 3L))));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -129,7 +129,7 @@ public class TestSubstraitExpressionBuilder
                         ValueSet.ofRanges(Range.greaterThan(INTEGER, 10L)), false)));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -140,7 +140,7 @@ public class TestSubstraitExpressionBuilder
                         ValueSet.ofRanges(Range.range(INTEGER, 10L, true, 100L, true)), false)));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -150,7 +150,7 @@ public class TestSubstraitExpressionBuilder
                 Map.of(INT_COLUMN, Domain.onlyNull(INTEGER)));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -160,7 +160,7 @@ public class TestSubstraitExpressionBuilder
                 Map.of(INT_COLUMN, Domain.notNull(INTEGER)));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -172,7 +172,7 @@ public class TestSubstraitExpressionBuilder
                         VARCHAR_COLUMN, Domain.singleValue(VARCHAR, Slices.utf8Slice("test"))));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, ALL_COLUMNS, COLUMN_ORDINALS);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -183,7 +183,7 @@ public class TestSubstraitExpressionBuilder
         Optional<Expression> result = SubstraitExpressionBuilder.tupleDomainToExpression(domain, COLUMN_ORDINALS);
         assertThat(result).isPresent();
         // Verify it's a scalar function invocation (equality)
-        assertThat(result.get()).isInstanceOf(Expression.ScalarFunctionInvocation.class);
+        assertThat(result.orElseThrow()).isInstanceOf(Expression.ScalarFunctionInvocation.class);
     }
 
     @Test
@@ -220,7 +220,7 @@ public class TestSubstraitExpressionBuilder
                 Map.of(tsColumn, Domain.singleValue(TIMESTAMP_MICROS, epochMicros)));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, columns, ordinals);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -237,7 +237,7 @@ public class TestSubstraitExpressionBuilder
                 Map.of(tsColumn, Domain.singleValue(TIMESTAMP_MILLIS, epochMicros)));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, columns, ordinals);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -254,7 +254,7 @@ public class TestSubstraitExpressionBuilder
                         ValueSet.ofRanges(Range.range(TIMESTAMP_MICROS, startMicros, true, endMicros, false)), false)));
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, columns, ordinals);
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -388,7 +388,7 @@ public class TestSubstraitExpressionBuilder
                 tupleDomainExpr, likePredicates, ALL_COLUMNS, COLUMN_ORDINALS);
 
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     @Test
@@ -402,7 +402,7 @@ public class TestSubstraitExpressionBuilder
                 Optional.empty(), likePredicates, ALL_COLUMNS, COLUMN_ORDINALS);
 
         assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result.orElseThrow().remaining()).isGreaterThan(0);
     }
 
     // ===== RowType (nested field) tests =====

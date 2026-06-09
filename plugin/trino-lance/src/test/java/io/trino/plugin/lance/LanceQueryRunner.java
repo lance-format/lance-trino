@@ -256,7 +256,7 @@ public final class LanceQueryRunner
         {
             // Apply namespace test config if specified
             if (namespaceTestConfig.isPresent()) {
-                LanceNamespaceTestConfig config = namespaceTestConfig.get();
+                LanceNamespaceTestConfig config = namespaceTestConfig.orElseThrow();
                 // Only apply if not S3 config (S3 properties are set separately in builderForS3)
                 if (!config.isS3Config() && useTempDirectory) {
                     Path tempDir = Files.createTempDirectory("lance-trino-test");
@@ -277,7 +277,7 @@ public final class LanceQueryRunner
             }
 
             // Create S3 bucket if using S3 configuration
-            if (namespaceTestConfig.isPresent() && namespaceTestConfig.get().isS3Config()) {
+            if (namespaceTestConfig.isPresent() && namespaceTestConfig.orElseThrow().isS3Config()) {
                 String endpoint = connectorProperties.get("lance.storage.aws_endpoint");
                 String root = connectorProperties.get("lance.root");
                 if (endpoint != null && root != null && root.startsWith("s3://")) {
@@ -299,14 +299,14 @@ public final class LanceQueryRunner
                         Boolean.parseBoolean(connectorProperties.get("lance.single_level_ns"));
 
                 // Check if we have a parent namespace configuration
-                boolean hasParent = namespaceTestConfig.isPresent() && namespaceTestConfig.get().hasParent();
+                boolean hasParent = namespaceTestConfig.isPresent() && namespaceTestConfig.orElseThrow().hasParent();
 
                 if (hasParent) {
                     // For configurations with parent namespaces, we need to create the parent
                     // namespaces first. We do this by temporarily creating the catalog without
                     // the parent setting, creating the parent namespaces, then recreating with
                     // the parent setting.
-                    LanceNamespaceTestConfig config = namespaceTestConfig.get();
+                    LanceNamespaceTestConfig config = namespaceTestConfig.orElseThrow();
                     List<String> parentLevels = config.getParentLevels();
 
                     log.info("Creating parent namespaces: %s", parentLevels);

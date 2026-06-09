@@ -17,6 +17,7 @@ import io.airlift.slice.Slice;
 import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
+import io.trino.spi.block.RowBlock;
 import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.DateType;
@@ -56,6 +57,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
@@ -239,7 +241,8 @@ public final class LancePageToArrowConverter
                 if (!(column.getType() instanceof VarbinaryType)) {
                     throw new TrinoException(NOT_SUPPORTED,
                             format("Blob column '%s' must have VARBINARY type, found: %s",
-                                    column.getName(), column.getType()));
+                                    column.getName(),
+                                    column.getType()));
                 }
             }
         }
@@ -256,13 +259,15 @@ public final class LancePageToArrowConverter
                 if (!(type instanceof ArrayType arrayType)) {
                     throw new TrinoException(NOT_SUPPORTED,
                             format("Vector column '%s' must have ARRAY type, found: %s",
-                                    column.getName(), type));
+                                    column.getName(),
+                                    type));
                 }
                 Type elementType = arrayType.getElementType();
                 if (!elementType.equals(REAL) && !elementType.equals(DOUBLE)) {
                     throw new TrinoException(NOT_SUPPORTED,
                             format("Vector column '%s' must have ARRAY(REAL) or ARRAY(DOUBLE) type, found: ARRAY(%s)",
-                                    column.getName(), elementType));
+                                    column.getName(),
+                                    elementType));
                 }
             }
         }
@@ -640,7 +645,8 @@ public final class LancePageToArrowConverter
                 Block arrayBlock = arrayType.getObject(block, i);
                 int arrayLength = arrayBlock.getPositionCount();
                 if (arrayLength != listSize) {
-                    throw new TrinoException(NOT_SUPPORTED,
+                    throw new TrinoException(
+                            NOT_SUPPORTED,
                             format("FixedSizeList expects %d elements but got %d", listSize, arrayLength));
                 }
                 int elementOffset = (rowOffset + i) * listSize;
@@ -653,8 +659,32 @@ public final class LancePageToArrowConverter
 
     private static void writeRowBlock(Block block, StructVector vector, RowType rowType, int rowCount, int offset)
     {
-        // For now, ROW type write is not fully implemented
-        // This requires more complex handling of SqlRow objects
-        throw new TrinoException(NOT_SUPPORTED, "ROW type write is not yet implemented");
+        List<RowType.Field> fields = rowType.getFields();
+        List<Block> fieldBlocks = RowBlock.getRowFieldsFromBlock(block);
+        if (fieldBlocks.size() != fields.size()) {
+            throw new TrinoException(
+                    GENERIC_INTERNAL_ERROR,
+                    format("ROW field count mismatch: expected %s, found %s", fields.size(), fieldBlocks.size()));
+        }
+
+        for (int fieldIndex = 0; fieldIndex < fields.size(); fieldIndex++) {
+            RowType.Field field = fields.get(fieldIndex);
+            String fieldName = field.getName().orElse("field" + fieldIndex);
+            FieldVector childVector = vector.getChild(fieldName);
+            if (childVector == null) {
+                throw new TrinoException(GENERIC_INTERNAL_ERROR, format("Missing Arrow child vector for ROW field: %s", fieldName));
+            }
+            writeBlockToVectorAtOffset(fieldBlocks.get(fieldIndex), childVector, field.getType(), rowCount, offset);
+        }
+
+        for (int i = 0; i < rowCount; i++) {
+            if (block.isNull(i)) {
+                vector.setNull(offset + i);
+            }
+            else {
+                vector.setIndexDefined(offset + i);
+            }
+        }
+        vector.setValueCount(offset + rowCount);
     }
 }
