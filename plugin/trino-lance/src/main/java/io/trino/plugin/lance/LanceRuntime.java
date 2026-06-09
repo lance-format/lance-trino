@@ -52,6 +52,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.ToIntFunction;
+import java.util.function.ToLongFunction;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -392,6 +394,40 @@ public class LanceRuntime
     {
         Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
         return dataset.getFragments();
+    }
+
+    /**
+     * Returns leading fragment IDs whose deletion-aware row count covers an
+     * unfiltered limit, or all fragments when the limit cannot be reached.
+     * Zero-row fragments are preserved while walking the prefix, and LIMIT 0
+     * still selects the first fragment when any exist.
+     */
+    public List<Integer> selectPrefixFragmentIdsForLimit(String userIdentity, String tablePath, Long version,
+            Map<String, String> storageOptions, long limit)
+    {
+        return selectPrefixFragmentIdsForLimit(
+                getFragments(userIdentity, tablePath, version, storageOptions),
+                Fragment::getId,
+                fragment -> fragment.metadata().getNumRows(),
+                limit);
+    }
+
+    static <T> List<Integer> selectPrefixFragmentIdsForLimit(
+            Iterable<T> fragments,
+            ToIntFunction<T> fragmentId,
+            ToLongFunction<T> rowCount,
+            long limit)
+    {
+        List<Integer> selected = new ArrayList<>();
+        long accumulated = 0;
+        for (T fragment : fragments) {
+            selected.add(fragmentId.applyAsInt(fragment));
+            accumulated += rowCount.applyAsLong(fragment);
+            if (accumulated >= limit) {
+                break;
+            }
+        }
+        return selected;
     }
 
     public Fragment getFragment(String userIdentity, String tablePath, Long version,

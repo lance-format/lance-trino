@@ -216,6 +216,22 @@ public class TestLanceConnectorTest
                         "\\)");
     }
 
+    @Test
+    public void testLimitQueriesArePushedIntoTableHandle()
+    {
+        assertThat(computeActual("SELECT name FROM region LIMIT 1").getRowCount())
+                .isLessThanOrEqualTo(1);
+        assertExplain("EXPLAIN SELECT name FROM region LIMIT 1", "limit.{0,10}OptionalLong\\[1\\]");
+
+        assertThat(computeActual("SELECT name FROM region LIMIT 10").getRowCount())
+                .isLessThanOrEqualTo(10);
+        assertExplain("EXPLAIN SELECT name FROM region LIMIT 10", "limit.{0,10}OptionalLong\\[10\\]");
+
+        assertThat(computeActual("SELECT name FROM region LIMIT 100").getRowCount())
+                .isLessThanOrEqualTo(100);
+        assertExplain("EXPLAIN SELECT name FROM region LIMIT 100", "limit.{0,10}OptionalLong\\[100\\]");
+    }
+
     @Override
     protected Optional<DataMappingTestSetup> filterDataMappingSmokeTestData(DataMappingTestSetup dataMappingTestSetup)
     {

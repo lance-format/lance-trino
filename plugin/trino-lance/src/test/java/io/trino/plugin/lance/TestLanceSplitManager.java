@@ -72,9 +72,8 @@ public class TestLanceSplitManager
 
         // test_table1 has 2 fragments, each should get its own split
         assertThat(splits).hasSize(2);
-        for (LanceSplit split : splits) {
-            assertThat(split.getFragments()).hasSize(1);
-        }
+        assertThat(splits.stream().map(LanceSplit::getFragments).toList())
+                .containsExactly(List.of(0), List.of(1));
     }
 
     @Test
@@ -92,7 +91,7 @@ public class TestLanceSplitManager
 
         // Fragment 0's 2 rows alone cover LIMIT 1, so only 1 fragment is selected.
         assertThat(splits).hasSize(1);
-        assertThat(splits.get(0).getFragments()).hasSize(1);
+        assertThat(splits.get(0).getFragments()).containsExactly(0);
     }
 
     @Test
@@ -110,7 +109,7 @@ public class TestLanceSplitManager
         List<LanceSplit> splits = getAllSplits(splitSource);
 
         assertThat(splits).hasSize(1);
-        assertThat(splits.get(0).getFragments()).hasSize(1);
+        assertThat(splits.get(0).getFragments()).containsExactly(0);
     }
 
     @Test
@@ -127,7 +126,7 @@ public class TestLanceSplitManager
         List<LanceSplit> splits = getAllSplits(splitSource);
 
         assertThat(splits).hasSize(1);
-        assertThat(splits.get(0).getFragments()).hasSize(2);
+        assertThat(splits.get(0).getFragments()).containsExactly(0, 1);
     }
 
     @Test
@@ -145,7 +144,7 @@ public class TestLanceSplitManager
 
         // Should produce a single split containing all fragments
         assertThat(splits).hasSize(1);
-        assertThat(splits.get(0).getFragments()).hasSize(2);
+        assertThat(splits.get(0).getFragments()).containsExactly(0, 1);
     }
 
     @Test
@@ -165,49 +164,71 @@ public class TestLanceSplitManager
 
         // With a filter present, each fragment gets its own split
         assertThat(splits).hasSize(2);
-        for (LanceSplit split : splits) {
-            assertThat(split.getFragments()).hasSize(1);
-        }
+        assertThat(splits.stream().map(LanceSplit::getFragments).toList())
+                .containsExactly(List.of(0), List.of(1));
     }
 
     @Test
-    public void testCoalesceSkipsDeletionEmptiedFragments()
+    public void testPrefixFragmentSelectionSkipsDeletionEmptiedFragments()
     {
         // Fragments 10,11 fully deleted (0 rows): positional selection would stop
         // at [10,11] and yield 0 rows; row-count accumulation walks on to live 12.
-        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
-                List.of(10, 11, 12), List.of(0L, 0L, 2L), 2))
+        assertThat(selectPrefixFragmentIdsForLimit(
+                List.of(new TestFragment(10, 0), new TestFragment(11, 0), new TestFragment(12, 2)), 2))
                 .containsExactly(10, 11, 12);
 
         // A single large fragment satisfies a small limit on its own.
-        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
-                List.of(0, 1), List.of(5L, 5L), 3))
+        assertThat(selectPrefixFragmentIdsForLimit(
+                List.of(new TestFragment(0, 5), new TestFragment(1, 5)), 3))
                 .containsExactly(0);
 
         // Exact-fit: fragment 0's count equals the limit, so fragment 1 is not needed.
-        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
-                List.of(0, 1), List.of(2L, 2L), 2))
+        assertThat(selectPrefixFragmentIdsForLimit(
+                List.of(new TestFragment(0, 2), new TestFragment(1, 2)), 2))
                 .containsExactly(0);
 
         // Limit spills into the next fragment when the first is insufficient.
-        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
-                List.of(0, 1), List.of(2L, 2L), 3))
+        assertThat(selectPrefixFragmentIdsForLimit(
+                List.of(new TestFragment(0, 2), new TestFragment(1, 2)), 3))
                 .containsExactly(0, 1);
 
         // Every fragment fully deleted: return all (table logically empty).
-        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
-                List.of(0, 1), List.of(0L, 0L), 5))
+        assertThat(selectPrefixFragmentIdsForLimit(
+                List.of(new TestFragment(0, 0), new TestFragment(1, 0)), 5))
                 .containsExactly(0, 1);
 
         // Never emit an empty split: LIMIT 0 still selects the first fragment.
-        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
-                List.of(7, 8), List.of(2L, 2L), 0))
+        assertThat(selectPrefixFragmentIdsForLimit(
+                List.of(new TestFragment(7, 2), new TestFragment(8, 2)), 0))
                 .containsExactly(7);
 
-        // No fragments at all -> empty selection (no split to emit).
-        assertThat(LanceSplitManager.coalesceFragmentsForLimit(
-                List.of(), List.of(), 5))
+        // No fragments at all -> empty selection. The caller decides how to wrap it.
+        assertThat(selectPrefixFragmentIdsForLimit(List.<TestFragment>of(), 5))
                 .isEmpty();
+    }
+
+    @Test
+    public void testPrefixFragmentSelectionSupportsArbitraryLimitValues()
+    {
+        List<TestFragment> fragments = List.of(
+                new TestFragment(1, 5),
+                new TestFragment(2, 20),
+                new TestFragment(3, 500),
+                new TestFragment(4, 1_000));
+
+        assertThat(selectPrefixFragmentIdsForLimit(fragments, 10))
+                .containsExactly(1, 2);
+
+        assertThat(selectPrefixFragmentIdsForLimit(fragments, 100))
+                .containsExactly(1, 2, 3);
+
+        assertThat(selectPrefixFragmentIdsForLimit(fragments, 1_000))
+                .containsExactly(1, 2, 3, 4);
+    }
+
+    private static List<Integer> selectPrefixFragmentIdsForLimit(List<TestFragment> fragments, long limit)
+    {
+        return LanceRuntime.selectPrefixFragmentIdsForLimit(fragments, TestFragment::id, TestFragment::rowCount, limit);
     }
 
     private static List<LanceSplit> getAllSplits(ConnectorSplitSource splitSource)
@@ -218,4 +239,6 @@ public class TestLanceSplitManager
                 .map(LanceSplit.class::cast)
                 .toList();
     }
+
+    private record TestFragment(int id, long rowCount) {}
 }
