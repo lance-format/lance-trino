@@ -20,6 +20,7 @@ import io.trino.spi.Page;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.testing.TestingConnectorSession;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -58,6 +59,14 @@ public class TestLanceCountPageSource
         this.metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
     }
 
+    @AfterEach
+    public void tearDown()
+    {
+        if (runtime != null) {
+            runtime.close();
+        }
+    }
+
     @Test
     public void testCountStarWithoutFilter()
     {
@@ -75,7 +84,7 @@ public class TestLanceCountPageSource
                 runtime)) {
             assertThat(pageSource.isFinished()).isFalse();
 
-            Page page = pageSource.getNextPage();
+            Page page = pageSource.getNextSourcePage().getPage();
             assertThat(page).isNotNull();
             assertThat(page.getChannelCount()).isEqualTo(1);
             assertThat(page.getPositionCount()).isEqualTo(1);
@@ -85,7 +94,7 @@ public class TestLanceCountPageSource
             assertThat(count).isEqualTo(4L);
 
             // Second call should return null
-            assertThat(pageSource.getNextPage()).isNull();
+            assertThat(pageSource.getNextSourcePage()).isNull();
             assertThat(pageSource.isFinished()).isTrue();
         }
     }

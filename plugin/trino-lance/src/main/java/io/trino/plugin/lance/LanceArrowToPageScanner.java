@@ -158,53 +158,37 @@ public class LanceArrowToPageScanner
             }
         }
 
-        LanceScanner openedScanner = null;
-        ArrowReader openedReader = null;
+        LanceScanner openedScanner = scannerFactory.open(
+                path,
+                allocator,
+                projectionColumns,
+                storageOptions,
+                substraitFilter,
+                limit,
+                userIdentity,
+                datasetVersion);
+        ArrowReader openedReader;
         try {
-            openedScanner = scannerFactory.open(path, allocator, projectionColumns, storageOptions, substraitFilter, limit, userIdentity, datasetVersion);
             openedReader = openedScanner.scanBatches();
-            VectorSchemaRoot openedRoot = openedReader.getVectorSchemaRoot();
-            this.lanceScanner = openedScanner;
-            this.arrowReader = openedReader;
-            this.vectorSchemaRoot = openedRoot;
         }
-        catch (IOException e) {
-            RuntimeException failure = new RuntimeException("Unable to get vector schema root", e);
-            closeSuppressing(openedReader, failure);
-            closeFactorySuppressing(scannerFactory, failure);
-            throw failure;
-        }
-        catch (RuntimeException e) {
-            closeSuppressing(openedReader, e);
-            closeFactorySuppressing(scannerFactory, e);
+        catch (RuntimeException | Error e) {
+            closeScannerFactory(e, scannerFactory);
             throw e;
         }
-    }
-
-    private static void closeSuppressing(AutoCloseable closeable, RuntimeException failure)
-    {
-        if (closeable == null) {
-            return;
-        }
         try {
-            closeable.close();
+            this.vectorSchemaRoot = openedReader.getVectorSchemaRoot();
         }
-        catch (Exception closeFailure) {
-            failure.addSuppressed(closeFailure);
+        catch (Throwable t) {
+            closeArrowReader(t, openedReader);
+            closeScannerFactory(t, scannerFactory);
+            if (t instanceof IOException) {
+                throw new RuntimeException("Unable to get vector schema root", t);
+            }
+            throwIfUnchecked(t);
+            throw new RuntimeException(t);
         }
-    }
-
-    private static void closeFactorySuppressing(ScannerFactory scannerFactory, RuntimeException failure)
-    {
-        if (scannerFactory == null) {
-            return;
-        }
-        try {
-            scannerFactory.close();
-        }
-        catch (RuntimeException closeFailure) {
-            failure.addSuppressed(closeFailure);
-        }
+        this.lanceScanner = openedScanner;
+        this.arrowReader = openedReader;
     }
 
     private long lastBatchBytes;
@@ -231,8 +215,10 @@ public class LanceArrowToPageScanner
         catch (IllegalStateException e) {
             // Handle allocator closed during concurrent operations
             if (e.getMessage() != null && e.getMessage().contains("allocator")) {
-                throw new TrinoException(TRANSACTION_CONFLICT,
-                        "Concurrent operation conflict: allocator was closed during read", e);
+                throw new TrinoException(
+                        TRANSACTION_CONFLICT,
+                        "Concurrent operation conflict: allocator was closed during read",
+                        e);
             }
             throw e;
         }
@@ -290,8 +276,12 @@ public class LanceArrowToPageScanner
                 if (projectedVector == null) {
                     throw new TrinoException(GENERIC_INTERNAL_ERROR, "Projected column not found in Lance scan: " + colHandle.path());
                 }
-                convertType(pageBuilder.getBlockBuilder(column), columnTypes.get(column), projectedVector.vector(), 0,
-                        rowCount, projectedVector.nullChecker());
+                convertType(pageBuilder.getBlockBuilder(column),
+                        columnTypes.get(column),
+                        projectedVector.vector(),
+                        0,
+                        rowCount,
+                        projectedVector.nullChecker());
             }
         }
         vectorSchemaRoot.clear();
@@ -401,53 +391,84 @@ public class LanceArrowToPageScanner
         Class<?> javaType = type.getJavaType();
         try {
             if (javaType == boolean.class) {
-                writeVectorValues(output, nullChecker,
-                        index -> type.writeBoolean(output, ((BitVector) vector).get(index) == 1), offset, length);
+                writeVectorValues(
+                        output,
+                        nullChecker,
+                        index -> type.writeBoolean(output, ((BitVector) vector).get(index) == 1),
+                        offset,
+                        length);
             }
             else if (javaType == long.class) {
                 if (type.equals(BIGINT)) {
                     // Handle both signed (BigIntVector) and unsigned (UInt8Vector) 64-bit integers,
                     // and unsigned 32-bit integers (UInt4Vector) promoted to BIGINT
                     if (vector instanceof UInt8Vector uint8Vector) {
-                        writeVectorValues(output, nullChecker,
-                                index -> type.writeLong(output, uint8Vector.get(index)), offset, length);
+                        writeVectorValues(
+                                output,
+                                nullChecker,
+                                index -> type.writeLong(output, uint8Vector.get(index)),
+                                offset,
+                                length);
                     }
                     else if (vector instanceof UInt4Vector uint4Vector) {
-                        writeVectorValues(output, nullChecker,
-                                index -> type.writeLong(output, Integer.toUnsignedLong(uint4Vector.get(index))), offset, length);
+                        writeVectorValues(
+                                output,
+                                nullChecker,
+                                index -> type.writeLong(output, Integer.toUnsignedLong(uint4Vector.get(index))),
+                                offset,
+                                length);
                     }
                     else {
-                        writeVectorValues(output, nullChecker,
-                                index -> type.writeLong(output, ((BigIntVector) vector).get(index)), offset, length);
+                        writeVectorValues(
+                                output,
+                                nullChecker,
+                                index -> type.writeLong(output, ((BigIntVector) vector).get(index)),
+                                offset,
+                                length);
                     }
                 }
                 else if (type.equals(INTEGER)) {
                     if (vector instanceof UInt4Vector uint4Vector) {
-                        writeVectorValues(output, nullChecker,
-                                index -> type.writeLong(output, Integer.toUnsignedLong(uint4Vector.get(index))), offset, length);
+                        writeVectorValues(
+                                output,
+                                nullChecker,
+                                index -> type.writeLong(output, Integer.toUnsignedLong(uint4Vector.get(index))),
+                                offset,
+                                length);
                     }
                     else {
-                        writeVectorValues(output, nullChecker, index -> type.writeLong(output, ((IntVector) vector).get(index)),
-                                offset, length);
+                        writeVectorValues(
+                                output,
+                                nullChecker,
+                                index -> type.writeLong(output, ((IntVector) vector).get(index)),
+                                offset,
+                                length);
                     }
                 }
                 else if (type.equals(DATE)) {
-                    writeVectorValues(output, nullChecker,
-                            index -> type.writeLong(output, ((DateDayVector) vector).get(index)), offset, length);
+                    writeVectorValues(
+                            output,
+                            nullChecker,
+                            index -> type.writeLong(output, ((DateDayVector) vector).get(index)),
+                            offset,
+                            length);
                 }
                 else if (type.equals(TIME_MICROS)) {
-                    writeVectorValues(output, nullChecker, index -> type.writeLong(output,
+                    writeVectorValues(output, nullChecker, index -> type.writeLong(
+                            output,
                             ((TimeMicroVector) vector).get(index) * PICOSECONDS_PER_MICROSECOND), offset, length);
                 }
                 else if (type.equals(REAL)) {
                     // REAL stores float bits as int which is widened to long
                     if (vector instanceof Float2Vector f2v) {
                         // Widen float16 to float32 since Trino has no float16 type
-                        writeVectorValues(output, nullChecker, index -> type.writeLong(output,
+                        writeVectorValues(output, nullChecker, index -> type.writeLong(
+                                output,
                                 Float.floatToIntBits(f2v.getValueAsFloat(index))), offset, length);
                     }
                     else {
-                        writeVectorValues(output, nullChecker, index -> type.writeLong(output,
+                        writeVectorValues(output, nullChecker, index -> type.writeLong(
+                                output,
                                 Float.floatToIntBits(((Float4Vector) vector).get(index))), offset, length);
                     }
                 }
@@ -470,34 +491,49 @@ public class LanceArrowToPageScanner
                         }, offset, length);
                     }
                     else {
-                        throw new TrinoException(GENERIC_INTERNAL_ERROR,
+                        throw new TrinoException(
+                                GENERIC_INTERNAL_ERROR,
                                 format("Expected TimeStampMicroTZVector but got: %s", vector.getClass().getSimpleName()));
                     }
                 }
                 else if (type instanceof TimestampType) {
                     // Timestamp without timezone - stored as microseconds in Arrow
                     if (vector instanceof TimeStampMicroVector tsVector) {
-                        writeVectorValues(output, nullChecker, index -> type.writeLong(output, tsVector.get(index)),
-                                offset, length);
+                        writeVectorValues(
+                                output,
+                                nullChecker,
+                                index -> type.writeLong(output, tsVector.get(index)),
+                                offset,
+                                length);
                     }
                     else if (vector instanceof TimeStampMicroTZVector tsVector) {
                         // Handle case where Arrow has TZ but Trino doesn't need it
-                        writeVectorValues(output, nullChecker, index -> type.writeLong(output, tsVector.get(index)),
-                                offset, length);
+                        writeVectorValues(
+                                output,
+                                nullChecker,
+                                index -> type.writeLong(output, tsVector.get(index)),
+                                offset,
+                                length);
                     }
                     else {
-                        throw new TrinoException(GENERIC_INTERNAL_ERROR,
+                        throw new TrinoException(
+                                GENERIC_INTERNAL_ERROR,
                                 format("Expected TimeStampMicroVector but got: %s", vector.getClass().getSimpleName()));
                     }
                 }
                 else {
-                    throw new TrinoException(GENERIC_INTERNAL_ERROR,
+                    throw new TrinoException(
+                            GENERIC_INTERNAL_ERROR,
                             format("Unhandled type for %s: %s", javaType.getSimpleName(), type));
                 }
             }
             else if (javaType == double.class) {
-                writeVectorValues(output, nullChecker, index -> type.writeDouble(output, ((Float8Vector) vector).get(index)),
-                        offset, length);
+                writeVectorValues(
+                        output,
+                        nullChecker,
+                        index -> type.writeDouble(output, ((Float8Vector) vector).get(index)),
+                        offset,
+                        length);
             }
             else if (javaType == Slice.class) {
                 writeVectorValues(output, nullChecker, index -> writeSlice(output, type, vector, index), offset, length);
@@ -505,36 +541,59 @@ public class LanceArrowToPageScanner
             else if (type instanceof ArrayType arrayType) {
                 // Handle both ListVector and FixedSizeListVector
                 if (vector instanceof FixedSizeListVector) {
-                    writeVectorValues(output, nullChecker, index -> writeFixedSizeArrayBlock(output, arrayType, vector, index), offset,
+                    writeVectorValues(
+                            output,
+                            nullChecker,
+                            index -> writeFixedSizeArrayBlock(output, arrayType, vector, index),
+                            offset,
                             length);
                 }
                 else {
-                    writeVectorValues(output, nullChecker, index -> writeArrayBlock(output, arrayType, vector, index), offset,
+                    writeVectorValues(
+                            output,
+                            nullChecker,
+                            index -> writeArrayBlock(output, arrayType, vector, index),
+                            offset,
                             length);
                 }
             }
             else if (type instanceof RowType rowType) {
-                writeVectorValues(output, nullChecker, index -> writeRowBlock(output, rowType, vector, index), offset,
+                writeVectorValues(
+                        output,
+                        nullChecker,
+                        index -> writeRowBlock(output, rowType, vector, index),
+                        offset,
                         length);
             }
             else {
-                throw new TrinoException(GENERIC_INTERNAL_ERROR,
+                throw new TrinoException(
+                        GENERIC_INTERNAL_ERROR,
                         format("Unhandled type for %s: %s", javaType.getSimpleName(), type));
             }
         }
         catch (ClassCastException ex) {
-            throw new TrinoException(GENERIC_INTERNAL_ERROR,
-                    format("Unhandled type for %s: %s", javaType.getSimpleName(), type), ex);
+            throw new TrinoException(
+                    GENERIC_INTERNAL_ERROR,
+                    format("Unhandled type for %s: %s", javaType.getSimpleName(), type),
+                    ex);
         }
     }
 
-    private void writeVectorValues(BlockBuilder output, FieldVector vector, Consumer<Integer> consumer, int offset,
+    private void writeVectorValues(
+            BlockBuilder output,
+            FieldVector vector,
+            Consumer<Integer> consumer,
+            int offset,
             int length)
     {
         writeVectorValues(output, vector::isNull, consumer, offset, length);
     }
 
-    private void writeVectorValues(BlockBuilder output, IntPredicate nullChecker, Consumer<Integer> consumer, int offset,
+    private void writeVectorValues(
+            BlockBuilder output,
+            IntPredicate nullChecker,
+            Consumer<Integer> consumer,
+            int offset,
             int length)
     {
         for (int i = offset; i < offset + length; i++) {
@@ -640,13 +699,62 @@ public class LanceArrowToPageScanner
     @Override
     public void close()
     {
-        vectorSchemaRoot.close();
+        Throwable failure = null;
+        try {
+            vectorSchemaRoot.close();
+        }
+        catch (Throwable t) {
+            failure = t;
+        }
+
+        failure = closeArrowReader(failure, arrowReader);
+        failure = closeScannerFactory(failure, scannerFactory);
+
+        if (failure != null) {
+            throwIfUnchecked(failure);
+            throw new RuntimeException(failure);
+        }
+    }
+
+    private static Throwable closeArrowReader(Throwable failure, ArrowReader arrowReader)
+    {
         try {
             arrowReader.close();
         }
-        catch (IOException ioe) {
-            // ignore for now.
+        catch (Throwable t) {
+            if (failure == null) {
+                failure = t;
+            }
+            else {
+                failure.addSuppressed(t);
+            }
         }
-        scannerFactory.close();
+        return failure;
+    }
+
+    private static Throwable closeScannerFactory(Throwable failure, ScannerFactory scannerFactory)
+    {
+        try {
+            scannerFactory.close();
+        }
+        catch (Throwable t) {
+            if (failure == null) {
+                failure = t;
+            }
+            else {
+                failure.addSuppressed(t);
+            }
+        }
+        return failure;
+    }
+
+    private static void throwIfUnchecked(Throwable failure)
+    {
+        if (failure instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
     }
 }

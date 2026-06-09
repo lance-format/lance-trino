@@ -48,8 +48,12 @@ public class LancePageSourceProvider
     }
 
     @Override
-    public ConnectorPageSource createPageSource(ConnectorTransactionHandle transactionHandle, ConnectorSession session,
-            ConnectorSplit split, ConnectorTableHandle tableHandle, List<ColumnHandle> columns,
+    public ConnectorPageSource createPageSource(
+            ConnectorTransactionHandle transactionHandle,
+            ConnectorSession session,
+            ConnectorSplit split,
+            ConnectorTableHandle tableHandle,
+            List<ColumnHandle> columns,
             DynamicFilter dynamicFilter)
     {
         requireNonNull(split, "split is null");

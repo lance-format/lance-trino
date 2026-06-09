@@ -32,7 +32,7 @@ public final class BlobUtils
     {
         NONE,
         POSITION,
-        SIZE
+        SIZE,
     }
 
     private BlobUtils() {}

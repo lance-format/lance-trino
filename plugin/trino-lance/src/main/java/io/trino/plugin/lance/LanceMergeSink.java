@@ -118,7 +118,7 @@ public class LanceMergeSink
                         int fragmentId = RowAddress.fragmentId(rowAddress);
                         int rowIndex = RowAddress.rowIndex(rowAddress);
                         log.debug("DELETE: rowAddress=%d, fragmentId=%d, rowIndex=%d", rowAddress, fragmentId, rowIndex);
-                        deletedRows.computeIfAbsent(fragmentId, k -> new ArrayList<>())
+                        deletedRows.computeIfAbsent(fragmentId, _ -> new ArrayList<>())
                                 .add(rowIndex);
                         deletePositions.add(position);
                         rowsDeleted++;
@@ -139,8 +139,11 @@ public class LanceMergeSink
             insertPageSink.appendPage(insertPage);
         }
 
-        log.debug("storeMergedRows: processed %d rows, deleted=%d, inserted=%d",
-                page.getPositionCount(), deletePositions.size(), insertPositions.size());
+        log.debug(
+                "storeMergedRows: processed %d rows, deleted=%d, inserted=%d",
+                page.getPositionCount(),
+                deletePositions.size(),
+                insertPositions.size());
     }
 
     /**
@@ -161,8 +164,11 @@ public class LanceMergeSink
     @Override
     public CompletableFuture<Collection<Slice>> finish()
     {
-        log.debug("finish: completing merge with %d deletions across %d fragments, %d inserts",
-                rowsDeleted, deletedRows.size(), rowsInserted);
+        log.debug(
+                "finish: completing merge with %d deletions across %d fragments, %d inserts",
+                rowsDeleted,
+                deletedRows.size(),
+                rowsInserted);
 
         Collection<Slice> insertResults = insertPageSink.finish().join();
 

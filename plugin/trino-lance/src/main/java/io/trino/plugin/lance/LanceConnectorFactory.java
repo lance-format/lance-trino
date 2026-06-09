@@ -21,6 +21,7 @@ import com.google.inject.Module;
 import com.google.inject.TypeLiteral;
 import io.airlift.bootstrap.Bootstrap;
 import io.airlift.json.JsonModule;
+import io.trino.plugin.base.ConnectorContextModule;
 import io.trino.plugin.base.TypeDeserializerModule;
 import io.trino.plugin.base.jmx.MBeanServerModule;
 import io.trino.spi.connector.Connector;
@@ -82,8 +83,9 @@ public class LanceConnectorFactory
 
         ImmutableList.Builder<Module> modulesBuilder =
                 ImmutableList.<Module>builder().add(new JsonModule()).add(new MBeanModule())
-                        .add(new MBeanServerModule()).add(new TypeDeserializerModule(context.getTypeManager()))
+                        .add(new MBeanServerModule()).add(new TypeDeserializerModule())
                         .add(new LanceModule())
+                        .add(new ConnectorContextModule(catalogName, context))
                         // Bind the raw namespace properties map for free-form property access
                         .add(binder -> binder.bind(new TypeLiteral<Map<String, String>>() {})
                                 .annotatedWith(LanceNamespaceProperties.class)
