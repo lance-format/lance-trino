@@ -78,7 +78,7 @@ public class LancePageSourceProvider
                 lanceTableHandle,
                 lanceColumns,
                 filterProjectionColumns,
-                lanceSplit.getFragments(),
+                lanceSplit,
                 storageOptions,
                 lanceConfig.getReadBatchSize(),
                 userIdentity,

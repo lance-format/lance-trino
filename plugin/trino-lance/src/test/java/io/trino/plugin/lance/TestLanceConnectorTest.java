@@ -286,6 +286,26 @@ public class TestLanceConnectorTest
     }
 
     @Test
+    public void testFilteredLimitQueries()
+    {
+        assertThat(computeScalar("SELECT name FROM region WHERE regionkey = 2 LIMIT 10"))
+                .isEqualTo("ASIA");
+        assertThat(computeActual("SELECT name FROM region WHERE regionkey >= 0 LIMIT 1").getRowCount())
+                .isEqualTo(1);
+        assertThat(computeActual("SELECT name FROM region WHERE regionkey >= 0 LIMIT 10").getRowCount())
+                .isEqualTo(5);
+        assertThat(computeActual("SELECT name FROM region WHERE regionkey >= 0 LIMIT 100").getRowCount())
+                .isEqualTo(5);
+    }
+
+    @Test
+    public void testCountWithFilterAndLimitIsNotLimitShortCircuited()
+    {
+        assertThat(computeScalar("SELECT count(name) FROM region WHERE name > '' LIMIT 1"))
+                .isEqualTo(computeScalar("SELECT count(name) FROM region WHERE name > ''"));
+    }
+
+    @Test
     @Override
     public void testCharVarcharComparison()
     {
