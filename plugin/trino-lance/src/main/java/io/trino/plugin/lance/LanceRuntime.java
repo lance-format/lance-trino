@@ -580,7 +580,8 @@ public class LanceRuntime
                 scanOptions.getBatchReadahead(),
                 scanOptions.getColumnOrderings().map(List::copyOf),
                 scanOptions.isUseScalarIndex(),
-                scanOptions.getSubstraitAggregate().map(ByteBuffer::duplicate));
+                scanOptions.getSubstraitAggregate().map(ByteBuffer::duplicate),
+                scanOptions.isCollectStats());
     }
 
     // ================== Lifecycle ==================
