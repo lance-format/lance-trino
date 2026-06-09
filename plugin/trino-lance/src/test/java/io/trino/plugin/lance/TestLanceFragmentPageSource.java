@@ -18,15 +18,26 @@ import com.google.common.io.Resources;
 import io.airlift.json.JsonCodec;
 import io.trino.spi.Page;
 import io.trino.spi.block.Block;
+import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
+import io.trino.spi.predicate.Domain;
+import io.trino.spi.predicate.Range;
+import io.trino.spi.predicate.TupleDomain;
+import io.trino.spi.predicate.ValueSet;
 import io.trino.testing.TestingConnectorSession;
+import org.apache.arrow.vector.ipc.ArrowReader;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.lance.Fragment;
+import org.lance.ipc.LanceScanner;
+import org.lance.ipc.ScanOptions;
 
+import java.io.IOException;
 import java.net.URL;
+import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +56,7 @@ public class TestLanceFragmentPageSource
     private LanceMetadata metadata;
     private LanceSplitManager splitManager;
     private LanceRuntime runtime;
+    private LanceConfig lanceConfig;
 
     @BeforeEach
     public void setUp()
@@ -54,7 +66,7 @@ public class TestLanceFragmentPageSource
         assertThat(lanceURL)
                 .describedAs("example db is null")
                 .isNotNull();
-        LanceConfig lanceConfig = new LanceConfig()
+        lanceConfig = new LanceConfig()
                 .setSingleLevelNs(true);  // example_db is flat (tables at root)
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
         runtime = new LanceRuntime(lanceConfig, catalogProperties);
@@ -62,6 +74,91 @@ public class TestLanceFragmentPageSource
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
         this.metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
         this.splitManager = new LanceSplitManager(runtime);
+    }
+
+    @Test
+    public void testDatasetScanWithoutFragmentIdsRespectsLimit()
+            throws Exception
+    {
+        LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
+                TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
+        ScanOptions scanOptions = new ScanOptions.Builder()
+                .limit(3)
+                .build();
+
+        try (LanceScanner scanner = runtime.openDatasetScanner(
+                TestingConnectorSession.SESSION.getUser(),
+                tableHandle.getTablePath(),
+                tableHandle.getDatasetVersion(),
+                Optional.empty(),
+                scanOptions,
+                Collections.emptyMap())) {
+            assertThat(readAllRows(scanner)).isEqualTo(3);
+        }
+    }
+
+    @Test
+    public void testDatasetScanWithoutFragmentIdsClearsScanOptionsFragmentIds()
+            throws Exception
+    {
+        LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
+                TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
+        List<Fragment> fragments = runtime.getFragments(
+                TestingConnectorSession.SESSION.getUser(),
+                tableHandle.getTablePath(),
+                tableHandle.getDatasetVersion(),
+                Collections.emptyMap());
+        ScanOptions scanOptions = new ScanOptions.Builder()
+                .fragmentIds(List.of(fragments.get(0).getId()))
+                .build();
+
+        try (LanceScanner scanner = runtime.openDatasetScanner(
+                TestingConnectorSession.SESSION.getUser(),
+                tableHandle.getTablePath(),
+                tableHandle.getDatasetVersion(),
+                Optional.empty(),
+                scanOptions,
+                Collections.emptyMap())) {
+            assertThat(readAllRows(scanner)).isEqualTo(4);
+        }
+    }
+
+    @Test
+    public void testAllFragmentsSplitAppliesFilterAndLimitThroughPageSource()
+            throws Exception
+    {
+        LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
+                TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
+        List<LanceColumnHandle> allColumns = runtime.getColumnHandleList(
+                TestingConnectorSession.SESSION.getUser(),
+                tableHandle.getTablePath(),
+                tableHandle.getDatasetVersion(),
+                Collections.emptyMap());
+        LanceColumnHandle colX = allColumns.stream()
+                .filter(column -> column.name().equals("x"))
+                .findFirst()
+                .orElseThrow();
+        LanceTableHandle filteredLimitHandle = tableHandle
+                .withLimit(1)
+                .withSubstraitFilter(greaterThanOrEqualFilter(allColumns, colX, 2), List.of(colX.name()));
+        LancePageSourceProvider pageSourceProvider = new LancePageSourceProvider(runtime, lanceConfig);
+
+        try (ConnectorPageSource pageSource = pageSourceProvider.createPageSource(
+                null,
+                TestingConnectorSession.SESSION,
+                LanceSplit.allFragments(),
+                filteredLimitHandle,
+                List.of(colX),
+                null)) {
+            Page page = pageSource.getNextPage();
+            assertThat(page).isNotNull();
+            assertThat(page.getChannelCount()).isEqualTo(1);
+            assertThat(page.getPositionCount()).isEqualTo(1);
+            assertThat(BIGINT.getLong(page.getBlock(0), 0)).isGreaterThanOrEqualTo(2L);
+
+            assertThat(pageSource.getNextPage()).isNull();
+            assertThat(pageSource.isFinished()).isTrue();
+        }
     }
 
     @Test
@@ -183,5 +280,31 @@ public class TestLanceFragmentPageSource
             assertThat(BIGINT.getLong(xBlock, 0)).isEqualTo(0L);
             assertThat(BIGINT.getLong(xBlock, 1)).isEqualTo(1L);
         }
+    }
+
+    private static long readAllRows(LanceScanner scanner)
+            throws IOException
+    {
+        long rows = 0;
+        try (ArrowReader reader = scanner.scanBatches()) {
+            while (reader.loadNextBatch()) {
+                rows += reader.getVectorSchemaRoot().getRowCount();
+            }
+        }
+        return rows;
+    }
+
+    private static byte[] greaterThanOrEqualFilter(List<LanceColumnHandle> allColumns, LanceColumnHandle column, long value)
+    {
+        TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
+                Map.of(column, Domain.create(
+                        ValueSet.ofRanges(Range.greaterThanOrEqual(column.trinoType(), value)), false)));
+        ByteBuffer buffer = SubstraitExpressionBuilder.tupleDomainToSubstrait(
+                        domain, allColumns, LanceMetadata.buildPositionalOrdinals(allColumns))
+                .orElseThrow();
+        ByteBuffer copy = buffer.duplicate();
+        byte[] bytes = new byte[copy.remaining()];
+        copy.get(bytes);
+        return bytes;
     }
 }

@@ -39,6 +39,7 @@ import org.lance.schema.LanceField;
 import org.lance.schema.LanceSchema;
 
 import java.io.Closeable;
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -56,6 +57,7 @@ import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.spi.type.BigintType.BIGINT;
+import static java.util.Objects.requireNonNull;
 
 /**
  * Central runtime component for Lance connector.
@@ -546,12 +548,39 @@ public class LanceRuntime
     public LanceScanner openDatasetScanner(String userIdentity, String tablePath, Long version,
             List<Integer> fragmentIds, ScanOptions scanOptions, Map<String, String> storageOptions)
     {
+        return openDatasetScanner(userIdentity, tablePath, version, Optional.of(fragmentIds), scanOptions, storageOptions);
+    }
+
+    public LanceScanner openDatasetScanner(String userIdentity, String tablePath, Long version,
+            Optional<List<Integer>> fragmentIds, ScanOptions scanOptions, Map<String, String> storageOptions)
+    {
         Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
 
-        ScanOptions.Builder scanBuilder = new ScanOptions.Builder(scanOptions)
-                .fragmentIds(fragmentIds);
+        return dataset.newScan(scanOptionsWithFragmentIds(scanOptions, fragmentIds));
+    }
 
-        return dataset.newScan(scanBuilder.build());
+    private static ScanOptions scanOptionsWithFragmentIds(ScanOptions scanOptions, Optional<List<Integer>> fragmentIds)
+    {
+        requireNonNull(scanOptions, "scanOptions is null");
+        requireNonNull(fragmentIds, "fragmentIds is null");
+
+        return new ScanOptions(
+                fragmentIds.map(List::copyOf),
+                scanOptions.getBatchSize(),
+                scanOptions.getColumns().map(List::copyOf),
+                scanOptions.getFilter(),
+                scanOptions.getSubstraitFilter().map(ByteBuffer::duplicate),
+                scanOptions.getLimit(),
+                scanOptions.getOffset(),
+                scanOptions.getNearest(),
+                scanOptions.getFullTextQuery(),
+                scanOptions.isPrefilter(),
+                scanOptions.isWithRowId(),
+                scanOptions.isWithRowAddress(),
+                scanOptions.getBatchReadahead(),
+                scanOptions.getColumnOrderings().map(List::copyOf),
+                scanOptions.isUseScalarIndex(),
+                scanOptions.getSubstraitAggregate().map(ByteBuffer::duplicate));
     }
 
     // ================== Lifecycle ==================

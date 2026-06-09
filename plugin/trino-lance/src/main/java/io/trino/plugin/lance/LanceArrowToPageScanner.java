@@ -156,13 +156,52 @@ public class LanceArrowToPageScanner
             }
         }
 
-        lanceScanner = scannerFactory.open(path, allocator, projectionColumns, storageOptions, substraitFilter, limit, userIdentity, datasetVersion);
-        this.arrowReader = lanceScanner.scanBatches();
+        LanceScanner openedScanner = null;
+        ArrowReader openedReader = null;
         try {
-            this.vectorSchemaRoot = arrowReader.getVectorSchemaRoot();
+            openedScanner = scannerFactory.open(path, allocator, projectionColumns, storageOptions, substraitFilter, limit, userIdentity, datasetVersion);
+            openedReader = openedScanner.scanBatches();
+            VectorSchemaRoot openedRoot = openedReader.getVectorSchemaRoot();
+            this.lanceScanner = openedScanner;
+            this.arrowReader = openedReader;
+            this.vectorSchemaRoot = openedRoot;
         }
         catch (IOException e) {
-            throw new RuntimeException("Unable to get vector schema root", e);
+            RuntimeException failure = new RuntimeException("Unable to get vector schema root", e);
+            closeSuppressing(openedReader, failure);
+            closeFactorySuppressing(scannerFactory, failure);
+            throw failure;
+        }
+        catch (RuntimeException e) {
+            closeSuppressing(openedReader, e);
+            closeFactorySuppressing(scannerFactory, e);
+            throw e;
+        }
+    }
+
+    private static void closeSuppressing(AutoCloseable closeable, RuntimeException failure)
+    {
+        if (closeable == null) {
+            return;
+        }
+        try {
+            closeable.close();
+        }
+        catch (Exception closeFailure) {
+            failure.addSuppressed(closeFailure);
+        }
+    }
+
+    private static void closeFactorySuppressing(ScannerFactory scannerFactory, RuntimeException failure)
+    {
+        if (scannerFactory == null) {
+            return;
+        }
+        try {
+            scannerFactory.close();
+        }
+        catch (RuntimeException closeFailure) {
+            failure.addSuppressed(closeFailure);
         }
     }
 

@@ -23,14 +23,17 @@ import io.trino.testing.TestingConnectorSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.lance.Fragment;
 
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_METHOD;
 
 @TestInstance(PER_METHOD)
@@ -40,6 +43,7 @@ public class TestLanceSplitManager
 
     private LanceMetadata metadata;
     private LanceSplitManager splitManager;
+    private TrackingLanceRuntime runtime;
 
     @BeforeEach
     public void setUp()
@@ -52,7 +56,7 @@ public class TestLanceSplitManager
         LanceConfig lanceConfig = new LanceConfig()
                 .setSingleLevelNs(true);
         Map<String, String> catalogProperties = ImmutableMap.of("lance.root", lanceURL.toString());
-        LanceRuntime runtime = new LanceRuntime(lanceConfig, catalogProperties);
+        runtime = new TrackingLanceRuntime(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
         this.metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
@@ -149,13 +153,12 @@ public class TestLanceSplitManager
     }
 
     @Test
-    public void testLimitWithFilterDoesNotCoalesce()
+    public void testLimitWithFilterUsesAllFragmentsSplit()
             throws ExecutionException, InterruptedException
     {
         LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
                 TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
 
-        // Apply both a LIMIT and a filter — coalescing should NOT apply
         LanceTableHandle withLimitAndFilter = tableHandle
                 .withLimit(1)
                 .withSubstraitFilter(new byte[] {0x01}, List.of("x"));
@@ -163,11 +166,81 @@ public class TestLanceSplitManager
                 null, TestingConnectorSession.SESSION, withLimitAndFilter, null, null);
         List<LanceSplit> splits = getAllSplits(splitSource);
 
-        // With a filter present, each fragment gets its own split
-        assertThat(splits).hasSize(2);
-        for (LanceSplit split : splits) {
-            assertThat(split.getFragments()).hasSize(1);
-        }
+        assertThat(splits).hasSize(1);
+        assertThat(splits.get(0).isAllFragments()).isTrue();
+        assertThat(splits.get(0).getFragments()).isEmpty();
+    }
+
+    @Test
+    public void testFilteredLimitDoesNotEnumerateFragments()
+            throws ExecutionException, InterruptedException
+    {
+        LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(
+                TestingConnectorSession.SESSION, TEST_TABLE_1, Optional.empty(), Optional.empty());
+
+        LanceTableHandle withLimitAndFilter = tableHandle
+                .withLimit(10)
+                .withSubstraitFilter(new byte[] {0x01}, List.of("x"));
+        runtime.failOnGetFragments();
+
+        ConnectorSplitSource splitSource = splitManager.getSplits(
+                null, TestingConnectorSession.SESSION, withLimitAndFilter, null, null);
+        List<LanceSplit> splits = getAllSplits(splitSource);
+
+        assertThat(splits).hasSize(1);
+        assertThat(splits.get(0).isAllFragments()).isTrue();
+    }
+
+    @Test
+    public void testAllFragmentsSplit()
+    {
+        LanceSplit split = LanceSplit.allFragments();
+
+        assertThat(split.isAllFragments()).isTrue();
+        assertThat(split.getFragments()).isEmpty();
+        assertThat(split.getSplitInfo()).containsEntry("fragments", "ALL");
+
+        JsonCodec<LanceSplit> codec = JsonCodec.jsonCodec(LanceSplit.class);
+        String json = codec.toJson(split);
+        assertThat(json)
+                .contains("\"fragments\"")
+                .contains("null")
+                .contains("\"allFragments\"")
+                .contains("true")
+                .doesNotContain("[]");
+
+        LanceSplit copy = codec.fromJson(json);
+        assertThat(copy.isAllFragments()).isTrue();
+        assertThat(copy.getFragments()).isEmpty();
+    }
+
+    @Test
+    public void testLanceSplitJsonCompatibility()
+    {
+        JsonCodec<LanceSplit> codec = JsonCodec.jsonCodec(LanceSplit.class);
+
+        LanceSplit legacySplit = codec.fromJson("{\"fragments\":[1,2]}");
+        assertThat(legacySplit.isAllFragments()).isFalse();
+        assertThat(legacySplit.getFragments()).containsExactly(1, 2);
+        assertThat(codec.toJson(legacySplit))
+                .contains("\"fragments\"")
+                .contains("1")
+                .contains("2")
+                .doesNotContain("allFragments");
+
+        LanceSplit allFragmentsSplit = codec.fromJson("{\"fragments\":null,\"allFragments\":true}");
+        assertThat(allFragmentsSplit.isAllFragments()).isTrue();
+        assertThat(allFragmentsSplit.getFragments()).isEmpty();
+
+        assertThatThrownBy(() -> new LanceSplit((List<Integer>) null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("fragments is null");
+        assertThatThrownBy(() -> codec.fromJson("{}"))
+                .hasRootCauseMessage("fragments is null");
+        assertThatThrownBy(() -> codec.fromJson("{\"fragments\":null}"))
+                .hasRootCauseMessage("fragments is null");
+        assertThatThrownBy(() -> codec.fromJson("{\"fragments\":[1],\"allFragments\":true}"))
+                .hasRootCauseMessage("allFragments split cannot include explicit fragments");
     }
 
     @Test
@@ -213,9 +286,41 @@ public class TestLanceSplitManager
     private static List<LanceSplit> getAllSplits(ConnectorSplitSource splitSource)
             throws ExecutionException, InterruptedException
     {
-        ConnectorSplitSource.ConnectorSplitBatch batch = splitSource.getNextBatch(100).get();
-        return batch.getSplits().stream()
-                .map(LanceSplit.class::cast)
-                .toList();
+        List<LanceSplit> splits = new ArrayList<>();
+        boolean lastBatch;
+        do {
+            ConnectorSplitSource.ConnectorSplitBatch batch = splitSource.getNextBatch(100).get();
+            batch.getSplits().stream()
+                    .map(LanceSplit.class::cast)
+                    .forEach(splits::add);
+            lastBatch = batch.isNoMoreSplits();
+        }
+        while (!lastBatch);
+        return splits;
+    }
+
+    private static class TrackingLanceRuntime
+            extends LanceRuntime
+    {
+        private boolean failOnGetFragments;
+
+        public TrackingLanceRuntime(LanceConfig config, Map<String, String> namespaceProperties)
+        {
+            super(config, namespaceProperties);
+        }
+
+        public void failOnGetFragments()
+        {
+            failOnGetFragments = true;
+        }
+
+        @Override
+        public List<Fragment> getFragments(String userIdentity, String tablePath, Long version, Map<String, String> storageOptions)
+        {
+            if (failOnGetFragments) {
+                throw new AssertionError("filtered LIMIT split generation should not enumerate fragments");
+            }
+            return super.getFragments(userIdentity, tablePath, version, storageOptions);
+        }
     }
 }

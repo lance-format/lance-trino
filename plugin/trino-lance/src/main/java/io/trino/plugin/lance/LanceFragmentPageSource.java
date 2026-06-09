@@ -42,7 +42,17 @@ public class LanceFragmentPageSource
 
     public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, List<Integer> fragments, Map<String, String> storageOptions, int readBatchSize, String userIdentity, LanceRuntime runtime)
     {
-        super(tableHandle, prepareColumns(columns), filterProjectionColumns, createScannerFactory(fragments, hasRowAddressColumn(columns), readBatchSize, runtime), storageOptions, userIdentity, runtime.getAllocator());
+        this(tableHandle, columns, filterProjectionColumns, Optional.of(fragments), storageOptions, readBatchSize, userIdentity, runtime);
+    }
+
+    public LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, LanceSplit split, Map<String, String> storageOptions, int readBatchSize, String userIdentity, LanceRuntime runtime)
+    {
+        this(tableHandle, columns, filterProjectionColumns, split.getFragmentIdsForScan(), storageOptions, readBatchSize, userIdentity, runtime);
+    }
+
+    private LanceFragmentPageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, Optional<List<Integer>> fragmentIds, Map<String, String> storageOptions, int readBatchSize, String userIdentity, LanceRuntime runtime)
+    {
+        super(tableHandle, prepareColumns(columns), filterProjectionColumns, createScannerFactory(fragmentIds, hasRowAddressColumn(columns), readBatchSize, runtime), storageOptions, userIdentity, runtime.getAllocator());
     }
 
     /**
@@ -69,9 +79,9 @@ public class LanceFragmentPageSource
         return columns.stream().anyMatch(col -> LANCE_ROW_ADDRESS.equals(col.name()));
     }
 
-    private static ScannerFactory createScannerFactory(List<Integer> fragments, boolean includeRowAddress, int readBatchSize, LanceRuntime runtime)
+    private static ScannerFactory createScannerFactory(Optional<List<Integer>> fragmentIds, boolean includeRowAddress, int readBatchSize, LanceRuntime runtime)
     {
-        return new FragmentScannerFactory(fragments, includeRowAddress, readBatchSize, runtime);
+        return new FragmentScannerFactory(fragmentIds, includeRowAddress, readBatchSize, runtime);
     }
 
     /**
@@ -83,7 +93,7 @@ public class LanceFragmentPageSource
     public static class FragmentScannerFactory
             implements ScannerFactory
     {
-        private final List<Integer> fragmentIds;
+        private final Optional<List<Integer>> fragmentIds;
         private final boolean includeRowAddress;
         private final int readBatchSize;
         private final LanceRuntime runtime;
@@ -92,7 +102,12 @@ public class LanceFragmentPageSource
 
         public FragmentScannerFactory(List<Integer> fragmentIds, boolean includeRowAddress, int readBatchSize, LanceRuntime runtime)
         {
-            this.fragmentIds = fragmentIds;
+            this(Optional.of(fragmentIds), includeRowAddress, readBatchSize, runtime);
+        }
+
+        public FragmentScannerFactory(Optional<List<Integer>> fragmentIds, boolean includeRowAddress, int readBatchSize, LanceRuntime runtime)
+        {
+            this.fragmentIds = fragmentIds.map(List::copyOf);
             this.includeRowAddress = includeRowAddress;
             this.readBatchSize = readBatchSize;
             this.runtime = runtime;
@@ -116,8 +131,8 @@ public class LanceFragmentPageSource
                 optionsBuilder.withRowAddress(true);
             }
 
-            log.debug("Opening dataset scanner for %d fragments with batchSize: %d, substraitFilter: %s, limit: %s, withRowAddress: %s, user: %s, version: %s",
-                    fragmentIds.size(),
+            log.debug("Opening dataset scanner for %s fragments with batchSize: %d, substraitFilter: %s, limit: %s, withRowAddress: %s, user: %s, version: %s",
+                    fragmentIds.map(ids -> Integer.toString(ids.size())).orElse("all"),
                     readBatchSize,
                     substraitFilter.isPresent() ? "present" : "none",
                     limit.isPresent() ? limit.getAsLong() : "none",

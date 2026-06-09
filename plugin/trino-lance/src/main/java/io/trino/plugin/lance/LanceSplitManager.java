@@ -57,6 +57,10 @@ public class LanceSplitManager
             return new FixedSplitSource(List.of(new LanceSplit(Collections.emptyList())));
         }
 
+        if (lanceTableHandle.getLimit().isPresent() && lanceTableHandle.hasFilter()) {
+            return new FixedSplitSource(List.of(LanceSplit.allFragments()));
+        }
+
         // Use storage options from handle, refreshing if expired
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
         String userIdentity = session.getUser();
