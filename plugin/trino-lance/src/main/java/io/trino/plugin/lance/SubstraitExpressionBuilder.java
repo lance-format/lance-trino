@@ -1291,14 +1291,11 @@ public final class SubstraitExpressionBuilder
 
     /**
      * Check if a LIKE pattern is pushable to Lance.
-     * All LIKE patterns are pushable - Lance will filter at the storage layer,
-     * reducing data sent to Trino even if index acceleration isn't used.
-     * Prefix patterns (e.g., 'foo%') can additionally use btree/zonemap indices.
      */
     public static boolean isPushableLikePattern(String pattern)
     {
-        // All non-empty patterns are pushable
-        return pattern != null && !pattern.isEmpty();
+        // Keep LIKE in Trino until Lance LIKE Substrait semantics are verified end to end.
+        return false;
     }
 
     /**
@@ -1350,6 +1347,9 @@ public final class SubstraitExpressionBuilder
 
         // Add LIKE expressions
         for (LikePredicate likePredicate : likePredicates) {
+            if (!isPushableLikePattern(likePredicate.pattern())) {
+                continue;
+            }
             resolveColumnReference(likePredicate.column(), columnOrdinals)
                     .map(columnReference -> likeExpression(columnReference, likePredicate.pattern()))
                     .ifPresent(expressions::add);

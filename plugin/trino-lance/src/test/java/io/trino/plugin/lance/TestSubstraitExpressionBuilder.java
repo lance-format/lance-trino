@@ -272,15 +272,12 @@ public class TestSubstraitExpressionBuilder
     @Test
     public void testIsPushableLikePattern()
     {
-        // All non-empty patterns should be pushable (Lance filters at storage layer)
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo%")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%bar")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("_foo%")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("exact")).isTrue();
-
-        // Only empty/null patterns are not pushable
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo%")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%bar")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("_foo%")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("exact")).isFalse();
         assertThat(SubstraitExpressionBuilder.isPushableLikePattern("")).isFalse();
         assertThat(SubstraitExpressionBuilder.isPushableLikePattern(null)).isFalse();
     }
@@ -301,10 +298,8 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.LikePredicateExtractionResult result =
                 SubstraitExpressionBuilder.extractLikePredicates(likeExpr, assignments);
 
-        assertThat(result.likePredicates()).hasSize(1);
-        assertThat(result.likePredicates().getFirst().columnName()).isEqualTo("name");
-        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("foo%");
-        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
+        assertThat(result.likePredicates()).isEmpty();
+        assertThat(result.remainingExpression()).isEqualTo(likeExpr);
     }
 
     @Test
@@ -324,10 +319,8 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.LikePredicateExtractionResult result =
                 SubstraitExpressionBuilder.extractLikePredicates(likeExpr, assignments);
 
-        // All patterns are now pushable
-        assertThat(result.likePredicates()).hasSize(1);
-        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("%foo");
-        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
+        assertThat(result.likePredicates()).isEmpty();
+        assertThat(result.remainingExpression()).isEqualTo(likeExpr);
     }
 
     @Test
@@ -358,11 +351,8 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.LikePredicateExtractionResult result =
                 SubstraitExpressionBuilder.extractLikePredicates(andExpr, assignments);
 
-        // LIKE should be extracted, other predicate should remain
-        assertThat(result.likePredicates()).hasSize(1);
-        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("foo%");
-        // The remaining expression should be the > predicate
-        assertThat(result.remainingExpression()).isEqualTo(otherExpr);
+        assertThat(result.likePredicates()).isEmpty();
+        assertThat(result.remainingExpression()).isEqualTo(andExpr);
     }
 
     @Test
@@ -401,8 +391,7 @@ public class TestSubstraitExpressionBuilder
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.combineExpressionsToSubstrait(
                 Optional.empty(), likePredicates, ALL_COLUMNS, COLUMN_ORDINALS);
 
-        assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result).isEmpty();
     }
 
     // ===== RowType (nested field) tests =====
