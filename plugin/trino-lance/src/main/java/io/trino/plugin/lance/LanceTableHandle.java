@@ -235,7 +235,7 @@ public class LanceTableHandle
     }
 
     /**
-     * Check if this is a COUNT(*) aggregate query.
+     * Check if this handle uses the manifest-backed row-count aggregate fast path.
      */
     @JsonProperty("countStar")
     public boolean isCountStar()
@@ -278,7 +278,7 @@ public class LanceTableHandle
     }
 
     /**
-     * Create a new handle for COUNT(*) aggregate.
+     * Create a new handle for the manifest-backed row-count aggregate fast path.
      */
     public LanceTableHandle withCountStar()
     {

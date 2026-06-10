@@ -51,7 +51,7 @@ public class LanceSplitManager
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
 
-        // For COUNT(*) without filter, return a single empty split
+        // For row-count aggregates without filter, return a single empty split
         // The count will be retrieved from ManifestSummary without scanning data
         if (lanceTableHandle.isCountStar() && !lanceTableHandle.hasFilter()) {
             return new FixedSplitSource(List.of(new LanceSplit(Collections.emptyList())));

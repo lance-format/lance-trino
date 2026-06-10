@@ -216,6 +216,21 @@ public class TestLanceConnectorTest
                         "\\)");
     }
 
+    @Test
+    public void testCountNonNullConstantPushdown()
+    {
+        assertQuery("SELECT count(0) FROM region", "SELECT 5");
+        assertExplain("EXPLAIN SELECT count(0) FROM region", "countStar=true");
+
+        assertQuery("SELECT count(0) FROM region WHERE regionkey = 0", "SELECT 1");
+        assertThat((String) computeActual("EXPLAIN SELECT count(0) FROM region WHERE regionkey = 0").getOnlyValue())
+                .doesNotContain("countStar=true");
+
+        assertQuery("SELECT count(DISTINCT 0) FROM region", "SELECT 1");
+        assertThat((String) computeActual("EXPLAIN SELECT count(DISTINCT 0) FROM region").getOnlyValue())
+                .doesNotContain("countStar=true");
+    }
+
     @Override
     protected Optional<DataMappingTestSetup> filterDataMappingSmokeTestData(DataMappingTestSetup dataMappingTestSetup)
     {

@@ -65,7 +65,7 @@ public class LancePageSourceProvider
 
         String userIdentity = session.getUser();
 
-        // For COUNT(*) queries, use the count page source
+        // For row-count aggregate queries, use the count page source
         if (lanceTableHandle.isCountStar()) {
             return new LanceCountPageSource(lanceTableHandle, storageOptions, userIdentity, runtime);
         }
