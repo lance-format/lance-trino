@@ -32,6 +32,7 @@ import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.expression.Call;
 import io.trino.spi.expression.ConnectorExpression;
 import io.trino.spi.expression.Constant;
+import io.trino.spi.expression.FieldDereference;
 import io.trino.spi.expression.Variable;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
@@ -106,7 +107,7 @@ public final class SubstraitExpressionBuilder
             List<LanceColumnHandle> allColumns,
             Map<String, Integer> columnOrdinals)
     {
-        Optional<Expression> expression = tupleDomainToExpression(tupleDomain, columnOrdinals);
+        Optional<Expression> expression = extractTupleDomain(tupleDomain, columnOrdinals).expression();
         if (expression.isEmpty()) {
             return Optional.empty();
         }
@@ -126,49 +127,72 @@ public final class SubstraitExpressionBuilder
             TupleDomain<LanceColumnHandle> tupleDomain,
             Map<String, Integer> columnOrdinals)
     {
+        return extractTupleDomain(tupleDomain, columnOrdinals).expression();
+    }
+
+    public static TupleDomainExtractionResult extractTupleDomain(
+            TupleDomain<LanceColumnHandle> tupleDomain,
+            Map<String, Integer> columnOrdinals)
+    {
         if (tupleDomain.isAll()) {
-            return Optional.empty();
+            return new TupleDomainExtractionResult(Optional.empty(), TupleDomain.all(), TupleDomain.all());
         }
         if (tupleDomain.isNone()) {
-            // Return a false expression: false AND true = false
-            return Optional.of(ExpressionCreator.bool(false, false));
+            return new TupleDomainExtractionResult(Optional.of(ExpressionCreator.bool(false, false)), TupleDomain.none(), TupleDomain.all());
         }
 
         Map<LanceColumnHandle, Domain> domains = tupleDomain.getDomains().orElse(Map.of());
         if (domains.isEmpty()) {
-            return Optional.empty();
+            return new TupleDomainExtractionResult(Optional.empty(), TupleDomain.all(), TupleDomain.all());
         }
 
         List<Expression> columnExpressions = new ArrayList<>();
+        Map<LanceColumnHandle, Domain> pushedDomains = new java.util.LinkedHashMap<>();
+        Map<LanceColumnHandle, Domain> remainingDomains = new java.util.LinkedHashMap<>();
         for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
             LanceColumnHandle column = entry.getKey();
             Domain domain = entry.getValue();
-            Integer ordinal = columnOrdinals.get(column.name());
-            if (ordinal == null) {
+            if (column.fieldId() < 0 ||
+                    !isSupportedType(column.trinoType()) ||
+                    !isDomainPushable(domain)) {
+                remainingDomains.put(column, domain);
                 continue;
             }
 
-            Optional<Expression> columnExpr = domainToExpression(column.name(), column.trinoType(), domain, ordinal);
-            columnExpr.ifPresent(columnExpressions::add);
+            Optional<ColumnReference> reference = resolveColumnReference(column, columnOrdinals);
+            Optional<Expression> columnExpr = reference.flatMap(columnReference -> domainToExpression(columnReference, domain));
+            if (columnExpr.isPresent()) {
+                columnExpressions.add(columnExpr.get());
+                pushedDomains.put(column, domain);
+            }
+            else if (!domain.isAll()) {
+                remainingDomains.put(column, domain);
+            }
         }
 
+        Optional<Expression> expression;
         if (columnExpressions.isEmpty()) {
-            return Optional.empty();
+            expression = Optional.empty();
+        }
+        else if (columnExpressions.size() == 1) {
+            expression = Optional.of(columnExpressions.getFirst());
+        }
+        else {
+            expression = Optional.of(andExpressions(columnExpressions));
         }
 
-        if (columnExpressions.size() == 1) {
-            return Optional.of(columnExpressions.getFirst());
-        }
-
-        // Combine with AND
-        return Optional.of(andExpressions(columnExpressions));
+        TupleDomain<LanceColumnHandle> pushedTupleDomain = pushedDomains.isEmpty()
+                ? TupleDomain.all()
+                : TupleDomain.withColumnDomains(pushedDomains);
+        TupleDomain<LanceColumnHandle> remainingTupleDomain = remainingDomains.isEmpty()
+                ? TupleDomain.all()
+                : TupleDomain.withColumnDomains(remainingDomains);
+        return new TupleDomainExtractionResult(expression, pushedTupleDomain, remainingTupleDomain);
     }
 
     private static Optional<Expression> domainToExpression(
-            String columnName,
-            io.trino.spi.type.Type trinoType,
-            Domain domain,
-            int ordinal)
+            ColumnReference columnReference,
+            Domain domain)
     {
         if (domain.isAll()) {
             return Optional.empty();
@@ -177,17 +201,17 @@ public final class SubstraitExpressionBuilder
             return Optional.of(ExpressionCreator.bool(false, false));
         }
 
-        Type substraitType = trinoTypeToSubstrait(trinoType);
+        Type substraitType = columnReference.leafType();
         List<Expression> predicates = new ArrayList<>();
 
         // Handle null check
         if (domain.isNullAllowed()) {
-            predicates.add(isNullExpression(ordinal, substraitType));
+            predicates.add(isNullExpression(columnReference));
         }
 
         ValueSet valueSet = domain.getValues();
         if (!valueSet.isNone()) {
-            Optional<Expression> valueExpr = valueSetToExpression(trinoType, valueSet, domain.isNullAllowed(), ordinal, substraitType);
+            Optional<Expression> valueExpr = valueSetToExpression(columnReference, valueSet, domain.isNullAllowed(), substraitType);
             valueExpr.ifPresent(predicates::add);
         }
 
@@ -204,10 +228,9 @@ public final class SubstraitExpressionBuilder
     }
 
     private static Optional<Expression> valueSetToExpression(
-            io.trino.spi.type.Type trinoType,
+            ColumnReference columnReference,
             ValueSet valueSet,
             boolean nullAllowed,
-            int ordinal,
             Type substraitType)
     {
         if (valueSet.isNone()) {
@@ -215,14 +238,14 @@ public final class SubstraitExpressionBuilder
         }
         if (valueSet.isAll()) {
             if (!nullAllowed) {
-                return Optional.of(isNotNullExpression(ordinal, substraitType));
+                return Optional.of(isNotNullExpression(columnReference));
             }
             return Optional.empty();
         }
 
         if (valueSet.isSingleValue()) {
             Object value = valueSet.getSingleValue();
-            return Optional.of(equalExpression(ordinal, substraitType, trinoType, value));
+            return Optional.of(equalExpression(columnReference, value));
         }
 
         List<Range> ranges = valueSet.getRanges().getOrderedRanges();
@@ -233,19 +256,19 @@ public final class SubstraitExpressionBuilder
         // Handle single value range
         if (ranges.size() == 1 && ranges.getFirst().isSingleValue()) {
             Object value = ranges.getFirst().getSingleValue();
-            return Optional.of(equalExpression(ordinal, substraitType, trinoType, value));
+            return Optional.of(equalExpression(columnReference, value));
         }
 
         // Handle IN clause (all single values)
         boolean allSingleValues = ranges.stream().allMatch(Range::isSingleValue);
         if (allSingleValues && ranges.size() > 1) {
-            return Optional.of(inExpression(ordinal, substraitType, trinoType, ranges));
+            return Optional.of(inExpression(columnReference, ranges));
         }
 
         // Handle range predicates
         List<Expression> rangeExpressions = new ArrayList<>();
         for (Range range : ranges) {
-            Optional<Expression> rangeExpr = rangeToExpression(trinoType, range, ordinal, substraitType);
+            Optional<Expression> rangeExpr = rangeToExpression(columnReference, range, substraitType);
             rangeExpr.ifPresent(rangeExpressions::add);
         }
 
@@ -260,9 +283,8 @@ public final class SubstraitExpressionBuilder
     }
 
     private static Optional<Expression> rangeToExpression(
-            io.trino.spi.type.Type trinoType,
+            ColumnReference columnReference,
             Range range,
-            int ordinal,
             Type substraitType)
     {
         if (range.isAll()) {
@@ -270,14 +292,14 @@ public final class SubstraitExpressionBuilder
         }
 
         if (range.isSingleValue()) {
-            return Optional.of(equalExpression(ordinal, substraitType, trinoType, range.getSingleValue()));
+            return Optional.of(equalExpression(columnReference, range.getSingleValue()));
         }
 
         List<Expression> bounds = new ArrayList<>();
 
         if (!range.isLowUnbounded()) {
-            Expression fieldRef = fieldReference(ordinal, substraitType);
-            Expression literal = toLiteral(trinoType, range.getLowBoundedValue(), substraitType);
+            Expression fieldRef = fieldReference(columnReference);
+            Expression literal = toLiteral(columnReference.column().trinoType(), range.getLowBoundedValue(), substraitType);
             if (range.isLowInclusive()) {
                 bounds.add(greaterThanOrEqual(fieldRef, literal));
             }
@@ -287,8 +309,8 @@ public final class SubstraitExpressionBuilder
         }
 
         if (!range.isHighUnbounded()) {
-            Expression fieldRef = fieldReference(ordinal, substraitType);
-            Expression literal = toLiteral(trinoType, range.getHighBoundedValue(), substraitType);
+            Expression fieldRef = fieldReference(columnReference);
+            Expression literal = toLiteral(columnReference.column().trinoType(), range.getHighBoundedValue(), substraitType);
             if (range.isHighInclusive()) {
                 bounds.add(lessThanOrEqual(fieldRef, literal));
             }
@@ -314,31 +336,42 @@ public final class SubstraitExpressionBuilder
         return FieldReference.newRootStructReference(ordinal, type);
     }
 
-    private static Expression isNullExpression(int ordinal, Type type)
+    private static Expression fieldReference(ColumnReference columnReference)
     {
-        Expression fieldRef = fieldReference(ordinal, type);
+        FieldReference reference = FieldReference.newRootStructReference(
+                columnReference.rootOrdinal(),
+                columnReference.rootType());
+        for (int dereference : columnReference.dereferencePath()) {
+            reference = reference.dereferenceStruct(dereference);
+        }
+        return reference;
+    }
+
+    private static Expression isNullExpression(ColumnReference columnReference)
+    {
+        Expression fieldRef = fieldReference(columnReference);
         return scalarFunction("is_null:any", R.BOOLEAN, fieldRef);
     }
 
-    private static Expression isNotNullExpression(int ordinal, Type type)
+    private static Expression isNotNullExpression(ColumnReference columnReference)
     {
-        Expression fieldRef = fieldReference(ordinal, type);
+        Expression fieldRef = fieldReference(columnReference);
         return scalarFunction("is_not_null:any", R.BOOLEAN, fieldRef);
     }
 
-    private static Expression equalExpression(int ordinal, Type substraitType, io.trino.spi.type.Type trinoType, Object value)
+    private static Expression equalExpression(ColumnReference columnReference, Object value)
     {
-        Expression fieldRef = fieldReference(ordinal, substraitType);
-        Expression literal = toLiteral(trinoType, value, substraitType);
+        Expression fieldRef = fieldReference(columnReference);
+        Expression literal = toLiteral(columnReference.column().trinoType(), value, columnReference.leafType());
         return scalarFunction("equal:any_any", R.BOOLEAN, fieldRef, literal);
     }
 
-    private static Expression inExpression(int ordinal, Type substraitType, io.trino.spi.type.Type trinoType, List<Range> ranges)
+    private static Expression inExpression(ColumnReference columnReference, List<Range> ranges)
     {
-        Expression fieldRef = fieldReference(ordinal, substraitType);
+        Expression fieldRef = fieldReference(columnReference);
         List<Expression> options = new ArrayList<>();
         for (Range range : ranges) {
-            options.add(toLiteral(trinoType, range.getSingleValue(), substraitType));
+            options.add(toLiteral(columnReference.column().trinoType(), range.getSingleValue(), columnReference.leafType()));
         }
         return Expression.SingleOrList.builder()
                 .condition(fieldRef)
@@ -507,6 +540,12 @@ public final class SubstraitExpressionBuilder
         }
         else if (trinoType instanceof VarbinaryType) {
             return R.BINARY;
+        }
+        else if (trinoType instanceof RowType rowType) {
+            return R.struct(rowType.getFields().stream()
+                    .map(RowType.Field::getType)
+                    .map(SubstraitExpressionBuilder::trinoTypeToSubstrait)
+                    .toList());
         }
 
         throw new UnsupportedOperationException("Unsupported type for Substrait: " + trinoType);
@@ -690,6 +729,11 @@ public final class SubstraitExpressionBuilder
             List<String> columnNames,
             ConnectorExpression remainingExpression) {}
 
+    public record TupleDomainExtractionResult(
+            Optional<Expression> expression,
+            TupleDomain<LanceColumnHandle> pushedTupleDomain,
+            TupleDomain<LanceColumnHandle> remainingTupleDomain) {}
+
     /**
      * A LIKE predicate that can be pushed down to Lance.
      */
@@ -704,6 +748,14 @@ public final class SubstraitExpressionBuilder
     public record LikePredicateExtractionResult(
             List<LikePredicate> likePredicates,
             ConnectorExpression remainingExpression) {}
+
+    private record ColumnReference(
+            String columnName,
+            LanceColumnHandle column,
+            int rootOrdinal,
+            Type rootType,
+            Type leafType,
+            List<Integer> dereferencePath) {}
 
     /**
      * Extracts pushable LIKE predicates from a ConnectorExpression (legacy method).
@@ -859,21 +911,18 @@ public final class SubstraitExpressionBuilder
         ConnectorExpression columnExpr = args.get(0);
         ConnectorExpression patternExpr = args.get(1);
 
-        if (columnExpr instanceof Variable variable && patternExpr instanceof Constant constant) {
-            String columnName = variable.getName();
-            ColumnHandle columnHandle = assignments.get(columnName);
-            Integer ordinal = columnOrdinals.get(columnName);
-
-            if (columnHandle instanceof LanceColumnHandle lanceColumn && ordinal != null) {
+        if (patternExpr instanceof Constant constant) {
+            Optional<ColumnReference> reference = resolveColumnReference(columnExpr, assignments, columnOrdinals);
+            if (reference.isPresent()) {
+                ColumnReference columnReference = reference.get();
                 Object patternValue = constant.getValue();
-                if (patternValue instanceof Slice slice) {
+                if (patternValue instanceof Slice slice && columnReference.column().trinoType() instanceof VarcharType) {
                     String pattern = slice.toStringUtf8();
                     if (isPushableLikePattern(pattern)) {
-                        Type substraitType = trinoTypeToSubstrait(lanceColumn.trinoType());
-                        if (!columnNames.contains(columnName)) {
-                            columnNames.add(columnName);
+                        if (!columnNames.contains(columnReference.columnName())) {
+                            columnNames.add(columnReference.columnName());
                         }
-                        return Optional.of(likeExpression(ordinal, substraitType, pattern));
+                        return Optional.of(likeExpression(columnReference, pattern));
                     }
                 }
             }
@@ -892,20 +941,14 @@ public final class SubstraitExpressionBuilder
             return Optional.empty();
         }
 
-        ConnectorExpression arg = args.get(0);
-        if (arg instanceof Variable variable) {
-            String columnName = variable.getName();
-            ColumnHandle columnHandle = assignments.get(columnName);
-            Integer ordinal = columnOrdinals.get(columnName);
-
-            if (columnHandle instanceof LanceColumnHandle lanceColumn && ordinal != null) {
-                if (isSupportedType(lanceColumn.trinoType())) {
-                    Type substraitType = trinoTypeToSubstrait(lanceColumn.trinoType());
-                    if (!columnNames.contains(columnName)) {
-                        columnNames.add(columnName);
-                    }
-                    return Optional.of(isNullExpression(ordinal, substraitType));
+        Optional<ColumnReference> reference = resolveColumnReference(args.get(0), assignments, columnOrdinals);
+        if (reference.isPresent()) {
+            ColumnReference columnReference = reference.get();
+            if (isSupportedType(columnReference.column().trinoType())) {
+                if (!columnNames.contains(columnReference.columnName())) {
+                    columnNames.add(columnReference.columnName());
                 }
+                return Optional.of(isNullExpression(columnReference));
             }
         }
         return Optional.empty();
@@ -976,40 +1019,40 @@ public final class SubstraitExpressionBuilder
         ConnectorExpression right = args.get(1);
 
         // Handle: column op constant
-        if (left instanceof Variable variable && right instanceof Constant constant) {
-            return tryBuildComparison(variable, constant, functionKey, assignments, columnOrdinals, columnNames);
+        if (right instanceof Constant constant) {
+            Optional<Expression> comparison = tryBuildComparison(left, constant, functionKey, assignments, columnOrdinals, columnNames);
+            if (comparison.isPresent()) {
+                return comparison;
+            }
         }
         // Handle: constant op column (reverse operands for symmetric operators)
-        if (left instanceof Constant constant && right instanceof Variable variable) {
+        if (left instanceof Constant constant) {
             // Swap the comparison direction for asymmetric operators
             String reversedKey = reverseComparisonKey(functionKey);
             if (reversedKey != null) {
-                return tryBuildComparison(variable, constant, reversedKey, assignments, columnOrdinals, columnNames);
+                return tryBuildComparison(right, constant, reversedKey, assignments, columnOrdinals, columnNames);
             }
         }
         return Optional.empty();
     }
 
     private static Optional<Expression> tryBuildComparison(
-            Variable variable,
+            ConnectorExpression columnExpression,
             Constant constant,
             String functionKey,
             Map<String, ColumnHandle> assignments,
             Map<String, Integer> columnOrdinals,
             List<String> columnNames)
     {
-        String columnName = variable.getName();
-        ColumnHandle columnHandle = assignments.get(columnName);
-        Integer ordinal = columnOrdinals.get(columnName);
-
-        if (columnHandle instanceof LanceColumnHandle lanceColumn && ordinal != null) {
-            io.trino.spi.type.Type trinoType = lanceColumn.trinoType();
+        Optional<ColumnReference> reference = resolveColumnReference(columnExpression, assignments, columnOrdinals);
+        if (reference.isPresent()) {
+            ColumnReference columnReference = reference.get();
+            io.trino.spi.type.Type trinoType = columnReference.column().trinoType();
             if (isSupportedType(trinoType)) {
-                Type substraitType = trinoTypeToSubstrait(trinoType);
-                Expression fieldRef = fieldReference(ordinal, substraitType);
-                Expression literal = toLiteral(trinoType, constant.getValue(), substraitType);
-                if (!columnNames.contains(columnName)) {
-                    columnNames.add(columnName);
+                Expression fieldRef = fieldReference(columnReference);
+                Expression literal = toLiteral(trinoType, constant.getValue(), columnReference.leafType());
+                if (!columnNames.contains(columnReference.columnName())) {
+                    columnNames.add(columnReference.columnName());
                 }
                 return Optional.of(scalarFunction(functionKey, R.BOOLEAN, fieldRef, literal));
             }
@@ -1043,18 +1086,13 @@ public final class SubstraitExpressionBuilder
         ConnectorExpression columnExpr = args.get(0);
         ConnectorExpression arrayExpr = args.get(1);
 
-        if (!(columnExpr instanceof Variable variable)) {
+        Optional<ColumnReference> reference = resolveColumnReference(columnExpr, assignments, columnOrdinals);
+        if (reference.isEmpty()) {
             return Optional.empty();
         }
 
-        String columnName = variable.getName();
-        ColumnHandle columnHandle = assignments.get(columnName);
-        Integer ordinal = columnOrdinals.get(columnName);
-
-        if (!(columnHandle instanceof LanceColumnHandle lanceColumn) || ordinal == null) {
-            return Optional.empty();
-        }
-
+        ColumnReference columnReference = reference.get();
+        LanceColumnHandle lanceColumn = columnReference.column();
         io.trino.spi.type.Type trinoType = lanceColumn.trinoType();
         if (!isSupportedType(trinoType)) {
             return Optional.empty();
@@ -1079,9 +1117,9 @@ public final class SubstraitExpressionBuilder
                 return Optional.empty();
             }
 
-            Expression fieldRef = fieldReference(ordinal, substraitType);
-            if (!columnNames.contains(columnName)) {
-                columnNames.add(columnName);
+            Expression fieldRef = fieldReference(columnReference);
+            if (!columnNames.contains(columnReference.columnName())) {
+                columnNames.add(columnReference.columnName());
             }
             return Optional.of(Expression.SingleOrList.builder()
                     .condition(fieldRef)
@@ -1089,6 +1127,93 @@ public final class SubstraitExpressionBuilder
                     .build());
         }
         return Optional.empty();
+    }
+
+    private static Optional<ColumnReference> resolveColumnReference(
+            ConnectorExpression expression,
+            Map<String, ColumnHandle> assignments,
+            Map<String, Integer> columnOrdinals)
+    {
+        if (expression instanceof Variable variable) {
+            ColumnHandle columnHandle = assignments.get(variable.getName());
+            if (!(columnHandle instanceof LanceColumnHandle lanceColumn)) {
+                return Optional.empty();
+            }
+
+            return resolveColumnReference(lanceColumn, columnOrdinals);
+        }
+
+        if (expression instanceof FieldDereference fieldDereference) {
+            Optional<ColumnReference> target = resolveColumnReference(fieldDereference.getTarget(), assignments, columnOrdinals);
+            if (target.isEmpty()) {
+                return Optional.empty();
+            }
+            ColumnReference targetReference = target.get();
+            if (!(fieldDereference.getTarget().getType() instanceof RowType rowType)) {
+                return Optional.empty();
+            }
+            int fieldIndex = fieldDereference.getField();
+            if (fieldIndex < 0 || fieldIndex >= rowType.getFields().size()) {
+                return Optional.empty();
+            }
+
+            RowType.Field field = rowType.getFields().get(fieldIndex);
+            if (field.getName().isEmpty()) {
+                return Optional.empty();
+            }
+            List<Integer> dereferencePath = new ArrayList<>(targetReference.dereferencePath());
+            dereferencePath.add(fieldIndex);
+            List<String> dereferenceNames = new ArrayList<>(targetReference.column().dereferenceNames());
+            dereferenceNames.add(field.getName().get());
+            LanceColumnHandle nestedColumn = LanceColumnHandle.nestedColumn(
+                    LanceFieldPath.canonicalPath(buildFieldPath(targetReference.column().baseColumnName(), dereferenceNames)),
+                    fieldDereference.getType(),
+                    targetReference.column().isNullable(),
+                    targetReference.column().fieldId(),
+                    targetReference.column().baseColumnName(),
+                    targetReference.column().baseColumnType(),
+                    dereferencePath,
+                    dereferenceNames);
+            return Optional.of(new ColumnReference(
+                    nestedColumn.path(),
+                    nestedColumn,
+                    targetReference.rootOrdinal(),
+                    targetReference.rootType(),
+                    trinoTypeToSubstrait(fieldDereference.getType()),
+                    dereferencePath));
+        }
+
+        return Optional.empty();
+    }
+
+    private static Optional<ColumnReference> resolveColumnReference(
+            LanceColumnHandle lanceColumn,
+            Map<String, Integer> columnOrdinals)
+    {
+        String rootPath = LanceFieldPath.canonicalPath(List.of(lanceColumn.baseColumnName()));
+        Integer ordinal = columnOrdinals.get(rootPath);
+        if (ordinal == null && !lanceColumn.isNestedField()) {
+            ordinal = columnOrdinals.get(lanceColumn.path());
+        }
+        if (ordinal == null) {
+            return Optional.empty();
+        }
+
+        return Optional.of(new ColumnReference(
+                lanceColumn.path(),
+                lanceColumn,
+                ordinal,
+                trinoTypeToSubstrait(lanceColumn.baseColumnType()),
+                trinoTypeToSubstrait(lanceColumn.trinoType()),
+                lanceColumn.dereferencePath()));
+    }
+
+    private static List<String> buildFieldPath(String baseColumnName, List<String> dereferenceNames)
+    {
+        List<String> fieldPath = new ArrayList<>();
+        fieldPath.add(baseColumnName);
+        fieldPath.addAll(dereferenceNames);
+        return fieldPath;
     }
 
     private static ConnectorExpression extractLikePredicatesRecursive(
@@ -1194,6 +1319,21 @@ public final class SubstraitExpressionBuilder
                 .build();
     }
 
+    private static Expression likeExpression(ColumnReference columnReference, String pattern)
+    {
+        Expression fieldRef = fieldReference(columnReference);
+        Expression patternLiteral = ExpressionCreator.string(false, pattern);
+
+        SimpleExtension.ScalarFunctionVariant declaration =
+                EXTENSIONS.getScalarFunction(SimpleExtension.FunctionAnchor.of(
+                        DefaultExtensionCatalog.FUNCTIONS_STRING, "like:str_str"));
+        return Expression.ScalarFunctionInvocation.builder()
+                .declaration(declaration)
+                .outputType(R.BOOLEAN)
+                .arguments(List.of(fieldRef, patternLiteral))
+                .build();
+    }
+
     /**
      * Combines a TupleDomain expression with LIKE predicates into a single Substrait expression.
      */
@@ -1210,11 +1350,9 @@ public final class SubstraitExpressionBuilder
 
         // Add LIKE expressions
         for (LikePredicate likePredicate : likePredicates) {
-            Integer ordinal = columnOrdinals.get(likePredicate.columnName());
-            if (ordinal != null) {
-                Type substraitType = trinoTypeToSubstrait(likePredicate.column().trinoType());
-                expressions.add(likeExpression(ordinal, substraitType, likePredicate.pattern()));
-            }
+            resolveColumnReference(likePredicate.column(), columnOrdinals)
+                    .map(columnReference -> likeExpression(columnReference, likePredicate.pattern()))
+                    .ifPresent(expressions::add);
         }
 
         if (expressions.isEmpty()) {

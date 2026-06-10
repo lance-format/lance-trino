@@ -55,7 +55,12 @@ public record LanceColumnHandle(
         int fieldId,
         boolean isBlob,
         BlobUtils.BlobVirtualColumnType blobVirtualColumnType,
-        String baseBlobColumnName)
+        String baseBlobColumnName,
+        String path,
+        String baseColumnName,
+        Type baseColumnType,
+        List<Integer> dereferencePath,
+        List<String> dereferenceNames)
         implements ColumnHandle
 {
     public LanceColumnHandle(String name, Type trinoType, FieldType fieldType)
@@ -78,18 +83,113 @@ public record LanceColumnHandle(
         this(name, trinoType, isNullable, fieldId, isBlob, BlobUtils.BlobVirtualColumnType.NONE, null);
     }
 
+    public LanceColumnHandle(
+            String name,
+            Type trinoType,
+            boolean isNullable,
+            int fieldId,
+            boolean isBlob,
+            BlobUtils.BlobVirtualColumnType blobVirtualColumnType,
+            String baseBlobColumnName)
+    {
+        this(
+                name,
+                trinoType,
+                isNullable,
+                fieldId,
+                isBlob,
+                blobVirtualColumnType,
+                baseBlobColumnName,
+                LanceFieldPath.canonicalPath(List.of(name)),
+                name,
+                trinoType,
+                List.of(),
+                List.of());
+    }
+
+    public static LanceColumnHandle nestedColumn(
+            String name,
+            Type trinoType,
+            boolean isNullable,
+            int fieldId,
+            String baseColumnName,
+            Type baseColumnType,
+            List<Integer> dereferencePath,
+            List<String> dereferenceNames)
+    {
+        List<String> fieldPath = new ArrayList<>();
+        fieldPath.add(baseColumnName);
+        fieldPath.addAll(dereferenceNames);
+        return new LanceColumnHandle(
+                name,
+                trinoType,
+                isNullable,
+                fieldId,
+                false,
+                BlobUtils.BlobVirtualColumnType.NONE,
+                null,
+                LanceFieldPath.canonicalPath(fieldPath),
+                baseColumnName,
+                baseColumnType,
+                dereferencePath,
+                dereferenceNames);
+    }
+
     public LanceColumnHandle
     {
+        if (path == null) {
+            path = LanceFieldPath.canonicalPath(List.of(name));
+        }
+        if (baseColumnName == null) {
+            baseColumnName = name;
+        }
+        if (baseColumnType == null) {
+            baseColumnType = trinoType;
+        }
+        if (dereferencePath == null) {
+            dereferencePath = List.of();
+        }
+        if (dereferenceNames == null) {
+            dereferenceNames = List.of();
+        }
         requireNonNull(name, "name is null");
         requireNonNull(trinoType, "trinoType is null");
+        requireNonNull(path, "path is null");
+        requireNonNull(baseColumnName, "baseColumnName is null");
+        requireNonNull(baseColumnType, "baseColumnType is null");
+        requireNonNull(dereferencePath, "dereferencePath is null");
+        requireNonNull(dereferenceNames, "dereferenceNames is null");
         if (blobVirtualColumnType == null) {
             blobVirtualColumnType = BlobUtils.BlobVirtualColumnType.NONE;
         }
+        dereferencePath = List.copyOf(dereferencePath);
+        dereferenceNames = List.copyOf(dereferenceNames);
     }
 
     public boolean isBlobVirtualColumn()
     {
         return blobVirtualColumnType != BlobUtils.BlobVirtualColumnType.NONE;
+    }
+
+    public boolean isNestedField()
+    {
+        return !dereferencePath.isEmpty();
+    }
+
+    public String projectionPath()
+    {
+        if (isBlobVirtualColumn()) {
+            return baseBlobColumnName;
+        }
+        return path;
+    }
+
+    public String scanProjectionName()
+    {
+        if (isBlobVirtualColumn()) {
+            return baseBlobColumnName;
+        }
+        return baseColumnName;
     }
 
     /**

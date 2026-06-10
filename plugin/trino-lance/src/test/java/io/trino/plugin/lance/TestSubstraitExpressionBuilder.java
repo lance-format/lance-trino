@@ -440,10 +440,8 @@ public class TestSubstraitExpressionBuilder
     }
 
     @Test
-    public void testFieldDereferenceNotExtracted()
+    public void testFieldDereferenceExtracted()
     {
-        // FieldDereference expressions (nested field access like struct.field) should NOT be extracted
-        // They should remain as remaining expressions for Trino to evaluate
         io.trino.spi.expression.FieldDereference deref = new io.trino.spi.expression.FieldDereference(
                 VARCHAR,
                 new Variable("metadata", RowType.from(List.of(
@@ -467,8 +465,35 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.ExpressionExtractionResult result =
                 SubstraitExpressionBuilder.extractPushableExpressions(comparison, assignments, ordinals);
 
-        // FieldDereference should NOT be extracted - it should remain as the remaining expression
-        assertThat(result.substraitExpressions()).isEmpty();
-        assertThat(result.remainingExpression()).isEqualTo(comparison);
+        assertThat(result.substraitExpressions()).hasSize(1);
+        assertThat(result.columnNames()).containsExactly("metadata.name");
+        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
+    }
+
+    @Test
+    public void testFieldDereferenceUsesCanonicalPath()
+    {
+        RowType rowType = RowType.from(List.of(
+                new RowType.Field(Optional.of("a.b"), VARCHAR),
+                new RowType.Field(Optional.of("value"), BIGINT)));
+        io.trino.spi.expression.FieldDereference deref = new io.trino.spi.expression.FieldDereference(
+                VARCHAR,
+                new Variable("meta.data", rowType),
+                0);
+
+        ConnectorExpression comparison = new Call(
+                BOOLEAN,
+                io.trino.spi.expression.StandardFunctions.EQUAL_OPERATOR_FUNCTION_NAME,
+                List.of(deref, new Constant(Slices.utf8Slice("alice"), VARCHAR)));
+
+        LanceColumnHandle structColumn = new LanceColumnHandle("meta.data", rowType, true, 4);
+        Map<String, ColumnHandle> assignments = Map.of("meta.data", structColumn);
+        Map<String, Integer> ordinals = Map.of("meta.data", 0, "meta\\.data", 0);
+
+        SubstraitExpressionBuilder.ExpressionExtractionResult result =
+                SubstraitExpressionBuilder.extractPushableExpressions(comparison, assignments, ordinals);
+
+        assertThat(result.substraitExpressions()).hasSize(1);
+        assertThat(result.columnNames()).containsExactly("meta\\.data.a\\.b");
     }
 }

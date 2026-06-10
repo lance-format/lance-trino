@@ -24,6 +24,13 @@ import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.type.ArrayType;
 import io.trino.testing.TestingConnectorSession;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.complex.StructVector;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.FieldType;
+import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -236,6 +243,46 @@ public class TestLanceArrowToPageScanner
         // Float2Vector elements widened to REAL inside a FixedSizeListVector
         assertArrayReal("col_fsl_f16", 0, new float[] {7.0f, 8.0f, 9.0f});
         assertArrayReal("col_fsl_f16", 1, new float[] {10.0f, 11.0f, 12.0f});
+    }
+
+    @Test
+    public void testNestedProjectionKeepsParentStructNullMask()
+    {
+        Field nameField = new Field("name", FieldType.nullable(new ArrowType.Utf8()), null);
+        Field metadataField = new Field("metadata", FieldType.nullable(new ArrowType.Struct()), List.of(nameField));
+        try (VectorSchemaRoot root = VectorSchemaRoot.create(new Schema(List.of(metadataField)), runtime.getAllocator())) {
+            StructVector metadataVector = (StructVector) root.getVector("metadata");
+            VarCharVector nameVector = (VarCharVector) metadataVector.getChild("name");
+            metadataVector.allocateNew();
+            nameVector.allocateNew();
+
+            metadataVector.setIndexDefined(0);
+            nameVector.setSafe(0, "alice".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            metadataVector.setNull(1);
+            nameVector.setSafe(1, "masked".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            metadataVector.setIndexDefined(2);
+            nameVector.setNull(2);
+            metadataVector.setValueCount(3);
+            nameVector.setValueCount(3);
+            root.setRowCount(3);
+
+            LanceColumnHandle metadataName = LanceColumnHandle.nestedColumn(
+                    "metadata.name",
+                    VARCHAR,
+                    true,
+                    0,
+                    "metadata",
+                    io.trino.spi.type.RowType.from(List.of(new io.trino.spi.type.RowType.Field(Optional.of("name"), VARCHAR))),
+                    List.of(0),
+                    List.of("name"));
+            LanceArrowToPageScanner.ProjectedVector projectedVector =
+                    LanceArrowToPageScanner.getProjectedVector(root, metadataName, metadataName.name());
+
+            assertThat(projectedVector).isNotNull();
+            assertThat(projectedVector.nullChecker().test(0)).isFalse();
+            assertThat(projectedVector.nullChecker().test(1)).isTrue();
+            assertThat(projectedVector.nullChecker().test(2)).isTrue();
+        }
     }
 
     // --- per-value assertion helpers ---

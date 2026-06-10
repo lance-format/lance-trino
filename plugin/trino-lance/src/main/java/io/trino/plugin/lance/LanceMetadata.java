@@ -47,6 +47,7 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
+import io.trino.spi.expression.FieldDereference;
 import io.trino.spi.expression.Variable;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
@@ -57,6 +58,7 @@ import io.trino.spi.statistics.TableStatistics;
 import io.trino.spi.type.DateType;
 import io.trino.spi.type.LongTimestamp;
 import io.trino.spi.type.LongTimestampWithTimeZone;
+import io.trino.spi.type.RowType;
 import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
@@ -104,6 +106,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -461,7 +464,98 @@ public class LanceMetadata
     public Optional<ProjectionApplicationResult<ConnectorTableHandle>> applyProjection(ConnectorSession session,
             ConnectorTableHandle handle, List<ConnectorExpression> projections, Map<String, ColumnHandle> assignments)
     {
+        LanceTableHandle lanceTableHandle = (LanceTableHandle) handle;
+        List<ConnectorExpression> projectedExpressions = new ArrayList<>();
+        Map<String, LanceColumnHandle> projectedColumns = new LinkedHashMap<>();
+        boolean pushedDereference = false;
+
+        for (ConnectorExpression projection : projections) {
+            Optional<LanceColumnHandle> column = resolveProjectionColumn(projection, assignments);
+            if (column.isEmpty()) {
+                return Optional.empty();
+            }
+
+            LanceColumnHandle lanceColumn = column.get();
+            String variableName = lanceColumn.path();
+            projectedColumns.putIfAbsent(variableName, lanceColumn);
+            projectedExpressions.add(new Variable(variableName, lanceColumn.trinoType()));
+            pushedDereference |= lanceColumn.isNestedField();
+        }
+
+        if (!pushedDereference) {
+            return Optional.empty();
+        }
+
+        List<Assignment> projectedAssignments = new ArrayList<>();
+        for (Map.Entry<String, LanceColumnHandle> entry : projectedColumns.entrySet()) {
+            projectedAssignments.add(new Assignment(entry.getKey(), entry.getValue(), entry.getValue().trinoType()));
+        }
+
+        return Optional.of(new ProjectionApplicationResult<>(
+                lanceTableHandle,
+                projectedExpressions,
+                projectedAssignments,
+                false));
+    }
+
+    private static Optional<LanceColumnHandle> resolveProjectionColumn(
+            ConnectorExpression expression,
+            Map<String, ColumnHandle> assignments)
+    {
+        if (expression instanceof Variable variable) {
+            ColumnHandle columnHandle = assignments.get(variable.getName());
+            if (columnHandle instanceof LanceColumnHandle lanceColumn) {
+                return Optional.of(lanceColumn);
+            }
+            return Optional.empty();
+        }
+
+        if (expression instanceof FieldDereference fieldDereference) {
+            Optional<LanceColumnHandle> target = resolveProjectionColumn(fieldDereference.getTarget(), assignments);
+            if (target.isEmpty()) {
+                return Optional.empty();
+            }
+            LanceColumnHandle targetColumn = target.get();
+            if (!(fieldDereference.getTarget().getType() instanceof RowType rowType)) {
+                return Optional.empty();
+            }
+
+            int fieldIndex = fieldDereference.getField();
+            if (fieldIndex < 0 || fieldIndex >= rowType.getFields().size()) {
+                return Optional.empty();
+            }
+
+            RowType.Field field = rowType.getFields().get(fieldIndex);
+            if (field.getName().isEmpty()) {
+                return Optional.empty();
+            }
+
+            List<Integer> dereferencePath = new ArrayList<>(targetColumn.dereferencePath());
+            dereferencePath.add(fieldIndex);
+            List<String> dereferenceNames = new ArrayList<>(targetColumn.dereferenceNames());
+            dereferenceNames.add(field.getName().get());
+            String canonicalPath = LanceFieldPath.canonicalPath(buildFieldPath(targetColumn.baseColumnName(), dereferenceNames));
+
+            return Optional.of(LanceColumnHandle.nestedColumn(
+                    canonicalPath,
+                    fieldDereference.getType(),
+                    targetColumn.isNullable(),
+                    targetColumn.fieldId(),
+                    targetColumn.baseColumnName(),
+                    targetColumn.baseColumnType(),
+                    dereferencePath,
+                    dereferenceNames));
+        }
+
         return Optional.empty();
+    }
+
+    private static List<String> buildFieldPath(String baseColumnName, List<String> dereferenceNames)
+    {
+        List<String> fieldPath = new ArrayList<>();
+        fieldPath.add(baseColumnName);
+        fieldPath.addAll(dereferenceNames);
+        return fieldPath;
     }
 
     @Override
@@ -578,7 +672,6 @@ public class LanceMetadata
 
         TupleDomain<ColumnHandle> summary = constraint.getSummary();
         TupleDomain<LanceColumnHandle> newConstraint = summary.transformKeys(LanceColumnHandle.class::cast);
-        TupleDomain<LanceColumnHandle> supportedConstraint = filterToSupportedTypes(newConstraint);
 
         // Get all columns from the table for building the full schema
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
@@ -587,6 +680,8 @@ public class LanceMetadata
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
         Map<String, Integer> fieldIdMap = buildPositionalOrdinals(allColumns);
+        SubstraitExpressionBuilder.TupleDomainExtractionResult tupleDomainResult =
+                SubstraitExpressionBuilder.extractTupleDomain(newConstraint, fieldIdMap);
 
         // Extract pushable expressions (LIKE, OR, NOT, comparisons, IN) from ConnectorExpression
         io.trino.spi.expression.ConnectorExpression expression = constraint.getExpression();
@@ -596,36 +691,18 @@ public class LanceMetadata
         List<String> exprColumnNames = exprResult.columnNames();
         io.trino.spi.expression.ConnectorExpression remainingExpression = exprResult.remainingExpression();
 
-        log.debug("applyFilter: newConstraint=%s, supportedConstraint=%s, pushedExpressions=%d",
-                newConstraint, supportedConstraint, pushedExpressions.size());
+        log.debug("applyFilter: newConstraint=%s, pushedTupleDomain=%s, remainingTupleDomain=%s, pushedExpressions=%d",
+                newConstraint, tupleDomainResult.pushedTupleDomain(), tupleDomainResult.remainingTupleDomain(), pushedExpressions.size());
 
         // If no TupleDomain constraints and no pushed expressions, nothing to push down
-        if (supportedConstraint.isAll() && pushedExpressions.isEmpty()) {
+        if (tupleDomainResult.expression().isEmpty() && pushedExpressions.isEmpty()) {
             log.debug("applyFilter: no constraints to push, returning empty");
             return Optional.empty();
         }
 
-        // Filter out columns without valid field IDs (e.g., synthetic COUNT columns)
-        Map<LanceColumnHandle, Domain> domains = supportedConstraint.getDomains().orElse(Map.of());
-        Map<LanceColumnHandle, Domain> validDomains = new HashMap<>();
-        for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
-            LanceColumnHandle column = entry.getKey();
-            if (column.fieldId() >= 0) {
-                validDomains.put(column, entry.getValue());
-            }
-            else {
-                log.debug("applyFilter: skipping synthetic column %s with invalid fieldId", column.name());
-            }
-        }
-        supportedConstraint = validDomains.isEmpty() ? TupleDomain.all() : TupleDomain.withColumnDomains(validDomains);
-
-        // Build TupleDomain expression
-        Optional<io.substrait.expression.Expression> tupleDomainExpr =
-                SubstraitExpressionBuilder.tupleDomainToExpression(supportedConstraint, fieldIdMap);
-
         // Combine TupleDomain and pushed expressions
         Optional<ByteBuffer> substraitFilter = SubstraitExpressionBuilder.combineAllExpressionsToSubstrait(
-                tupleDomainExpr, pushedExpressions, allColumns);
+                tupleDomainResult.expression(), pushedExpressions, allColumns);
 
         if (substraitFilter.isEmpty()) {
             log.debug("applyFilter: no substrait filter generated, returning empty");
@@ -647,8 +724,8 @@ public class LanceMetadata
 
         // Collect column names for display in EXPLAIN
         List<String> filterColumnNames = new ArrayList<>();
-        for (LanceColumnHandle col : validDomains.keySet()) {
-            filterColumnNames.add(col.name());
+        for (LanceColumnHandle col : tupleDomainResult.pushedTupleDomain().getDomains().orElse(Map.of()).keySet()) {
+            filterColumnNames.add(col.path());
         }
         for (String colName : exprColumnNames) {
             if (!filterColumnNames.contains(colName)) {
@@ -657,7 +734,7 @@ public class LanceMetadata
         }
 
         LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes, filterColumnNames);
-        TupleDomain<LanceColumnHandle> remainingFilter = filterToUnsupportedTypes(newConstraint);
+        TupleDomain<LanceColumnHandle> remainingFilter = tupleDomainResult.remainingTupleDomain();
 
         log.debug("applyFilter: pushing substrait filter (size=%d bytes, %d expressions), remaining=%s",
                 newFilterBytes.length, pushedExpressions.size(), remainingFilter);
@@ -680,7 +757,7 @@ public class LanceMetadata
                 .toList();
         Map<String, Integer> ordinals = new HashMap<>();
         for (int i = 0; i < sortedColumns.size(); ++i) {
-            ordinals.put(sortedColumns.get(i).name(), i);
+            ordinals.put(sortedColumns.get(i).path(), i);
         }
         return ordinals;
     }
