@@ -61,6 +61,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.function.Consumer;
+import java.util.function.IntPredicate;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.airlift.slice.Slices.wrappedBuffer;
@@ -141,9 +142,10 @@ public class LanceArrowToPageScanner
                 }
             }
             else {
-                if (!addedColumns.contains(col.name())) {
-                    projectionColumns.add(col.name());
-                    addedColumns.add(col.name());
+                String projectionPath = col.scanProjectionName();
+                if (!addedColumns.contains(projectionPath)) {
+                    projectionColumns.add(projectionPath);
+                    addedColumns.add(projectionPath);
                 }
             }
         }
@@ -284,12 +286,59 @@ public class LanceArrowToPageScanner
                 convertBlobVirtualColumn(pageBuilder.getBlockBuilder(column), blobVector, colHandle.blobVirtualColumnType(), rowCount);
             }
             else {
-                FieldVector fieldVector = vectorSchemaRoot.getVector(colName);
-                convertType(pageBuilder.getBlockBuilder(column), columnTypes.get(column), fieldVector, 0,
-                        fieldVector.getValueCount());
+                ProjectedVector projectedVector = getProjectedVector(vectorSchemaRoot, colHandle, colName);
+                if (projectedVector == null) {
+                    throw new TrinoException(GENERIC_INTERNAL_ERROR, "Projected column not found in Lance scan: " + colHandle.path());
+                }
+                convertType(pageBuilder.getBlockBuilder(column), columnTypes.get(column), projectedVector.vector(), 0,
+                        rowCount, projectedVector.nullChecker());
             }
         }
         vectorSchemaRoot.clear();
+    }
+
+    record ProjectedVector(FieldVector vector, IntPredicate nullChecker) {}
+
+    static ProjectedVector getProjectedVector(VectorSchemaRoot vectorSchemaRoot, LanceColumnHandle column, String columnName)
+    {
+        FieldVector fieldVector = vectorSchemaRoot.getVector(columnName);
+        if (fieldVector != null) {
+            return new ProjectedVector(fieldVector, fieldVector::isNull);
+        }
+
+        fieldVector = vectorSchemaRoot.getVector(column.path());
+        if (fieldVector != null) {
+            return new ProjectedVector(fieldVector, fieldVector::isNull);
+        }
+
+        if (!column.isNestedField()) {
+            FieldVector baseVector = vectorSchemaRoot.getVector(column.baseColumnName());
+            if (baseVector == null) {
+                return null;
+            }
+            return new ProjectedVector(baseVector, baseVector::isNull);
+        }
+
+        FieldVector rootVector = vectorSchemaRoot.getVector(column.baseColumnName());
+        if (rootVector == null) {
+            return null;
+        }
+
+        FieldVector nestedVector = rootVector;
+        java.util.List<StructVector> ancestors = new java.util.ArrayList<>();
+        for (String fieldName : column.dereferenceNames()) {
+            if (!(nestedVector instanceof StructVector structVector)) {
+                return null;
+            }
+            ancestors.add(structVector);
+            nestedVector = structVector.getChild(fieldName);
+            if (nestedVector == null) {
+                return null;
+            }
+        }
+        FieldVector leafVector = nestedVector;
+        return new ProjectedVector(leafVector, index ->
+                leafVector.isNull(index) || ancestors.stream().anyMatch(ancestor -> ancestor.isNull(index)));
     }
 
     private void convertBlobVirtualColumn(BlockBuilder output, FieldVector blobVector, BlobUtils.BlobVirtualColumnType virtualType, int rowCount)
@@ -344,10 +393,15 @@ public class LanceArrowToPageScanner
 
     private void convertType(BlockBuilder output, Type type, FieldVector vector, int offset, int length)
     {
+        convertType(output, type, vector, offset, length, vector::isNull);
+    }
+
+    private void convertType(BlockBuilder output, Type type, FieldVector vector, int offset, int length, IntPredicate nullChecker)
+    {
         Class<?> javaType = type.getJavaType();
         try {
             if (javaType == boolean.class) {
-                writeVectorValues(output, vector,
+                writeVectorValues(output, nullChecker,
                         index -> type.writeBoolean(output, ((BitVector) vector).get(index) == 1), offset, length);
             }
             else if (javaType == long.class) {
@@ -355,45 +409,45 @@ public class LanceArrowToPageScanner
                     // Handle both signed (BigIntVector) and unsigned (UInt8Vector) 64-bit integers,
                     // and unsigned 32-bit integers (UInt4Vector) promoted to BIGINT
                     if (vector instanceof UInt8Vector uint8Vector) {
-                        writeVectorValues(output, vector,
+                        writeVectorValues(output, nullChecker,
                                 index -> type.writeLong(output, uint8Vector.get(index)), offset, length);
                     }
                     else if (vector instanceof UInt4Vector uint4Vector) {
-                        writeVectorValues(output, vector,
+                        writeVectorValues(output, nullChecker,
                                 index -> type.writeLong(output, Integer.toUnsignedLong(uint4Vector.get(index))), offset, length);
                     }
                     else {
-                        writeVectorValues(output, vector,
+                        writeVectorValues(output, nullChecker,
                                 index -> type.writeLong(output, ((BigIntVector) vector).get(index)), offset, length);
                     }
                 }
                 else if (type.equals(INTEGER)) {
                     if (vector instanceof UInt4Vector uint4Vector) {
-                        writeVectorValues(output, vector,
+                        writeVectorValues(output, nullChecker,
                                 index -> type.writeLong(output, Integer.toUnsignedLong(uint4Vector.get(index))), offset, length);
                     }
                     else {
-                        writeVectorValues(output, vector, index -> type.writeLong(output, ((IntVector) vector).get(index)),
+                        writeVectorValues(output, nullChecker, index -> type.writeLong(output, ((IntVector) vector).get(index)),
                                 offset, length);
                     }
                 }
                 else if (type.equals(DATE)) {
-                    writeVectorValues(output, vector,
+                    writeVectorValues(output, nullChecker,
                             index -> type.writeLong(output, ((DateDayVector) vector).get(index)), offset, length);
                 }
                 else if (type.equals(TIME_MICROS)) {
-                    writeVectorValues(output, vector, index -> type.writeLong(output,
+                    writeVectorValues(output, nullChecker, index -> type.writeLong(output,
                             ((TimeMicroVector) vector).get(index) * PICOSECONDS_PER_MICROSECOND), offset, length);
                 }
                 else if (type.equals(REAL)) {
                     // REAL stores float bits as int which is widened to long
                     if (vector instanceof Float2Vector f2v) {
                         // Widen float16 to float32 since Trino has no float16 type
-                        writeVectorValues(output, vector, index -> type.writeLong(output,
+                        writeVectorValues(output, nullChecker, index -> type.writeLong(output,
                                 Float.floatToIntBits(f2v.getValueAsFloat(index))), offset, length);
                     }
                     else {
-                        writeVectorValues(output, vector, index -> type.writeLong(output,
+                        writeVectorValues(output, nullChecker, index -> type.writeLong(output,
                                 Float.floatToIntBits(((Float4Vector) vector).get(index))), offset, length);
                     }
                 }
@@ -401,7 +455,7 @@ public class LanceArrowToPageScanner
                     // Timestamp with timezone - stored as microseconds in Arrow
                     // Convert to milliseconds and pack with UTC timezone for TIMESTAMP_TZ_MILLIS
                     if (vector instanceof TimeStampMicroTZVector tsVector) {
-                        writeVectorValues(output, vector, index -> {
+                        writeVectorValues(output, nullChecker, index -> {
                             long micros = tsVector.get(index);
                             long millis = micros / 1000;
                             type.writeLong(output, packDateTimeWithZone(millis, UTC_KEY));
@@ -409,7 +463,7 @@ public class LanceArrowToPageScanner
                     }
                     else if (vector instanceof TimeStampMicroVector tsVector) {
                         // Handle case where Arrow has no TZ but we map to TZ type
-                        writeVectorValues(output, vector, index -> {
+                        writeVectorValues(output, nullChecker, index -> {
                             long micros = tsVector.get(index);
                             long millis = micros / 1000;
                             type.writeLong(output, packDateTimeWithZone(millis, UTC_KEY));
@@ -423,12 +477,12 @@ public class LanceArrowToPageScanner
                 else if (type instanceof TimestampType) {
                     // Timestamp without timezone - stored as microseconds in Arrow
                     if (vector instanceof TimeStampMicroVector tsVector) {
-                        writeVectorValues(output, vector, index -> type.writeLong(output, tsVector.get(index)),
+                        writeVectorValues(output, nullChecker, index -> type.writeLong(output, tsVector.get(index)),
                                 offset, length);
                     }
                     else if (vector instanceof TimeStampMicroTZVector tsVector) {
                         // Handle case where Arrow has TZ but Trino doesn't need it
-                        writeVectorValues(output, vector, index -> type.writeLong(output, tsVector.get(index)),
+                        writeVectorValues(output, nullChecker, index -> type.writeLong(output, tsVector.get(index)),
                                 offset, length);
                     }
                     else {
@@ -442,25 +496,25 @@ public class LanceArrowToPageScanner
                 }
             }
             else if (javaType == double.class) {
-                writeVectorValues(output, vector, index -> type.writeDouble(output, ((Float8Vector) vector).get(index)),
+                writeVectorValues(output, nullChecker, index -> type.writeDouble(output, ((Float8Vector) vector).get(index)),
                         offset, length);
             }
             else if (javaType == Slice.class) {
-                writeVectorValues(output, vector, index -> writeSlice(output, type, vector, index), offset, length);
+                writeVectorValues(output, nullChecker, index -> writeSlice(output, type, vector, index), offset, length);
             }
             else if (type instanceof ArrayType arrayType) {
                 // Handle both ListVector and FixedSizeListVector
                 if (vector instanceof FixedSizeListVector) {
-                    writeVectorValues(output, vector, index -> writeFixedSizeArrayBlock(output, arrayType, vector, index), offset,
+                    writeVectorValues(output, nullChecker, index -> writeFixedSizeArrayBlock(output, arrayType, vector, index), offset,
                             length);
                 }
                 else {
-                    writeVectorValues(output, vector, index -> writeArrayBlock(output, arrayType, vector, index), offset,
+                    writeVectorValues(output, nullChecker, index -> writeArrayBlock(output, arrayType, vector, index), offset,
                             length);
                 }
             }
             else if (type instanceof RowType rowType) {
-                writeVectorValues(output, vector, index -> writeRowBlock(output, rowType, vector, index), offset,
+                writeVectorValues(output, nullChecker, index -> writeRowBlock(output, rowType, vector, index), offset,
                         length);
             }
             else {
@@ -477,8 +531,14 @@ public class LanceArrowToPageScanner
     private void writeVectorValues(BlockBuilder output, FieldVector vector, Consumer<Integer> consumer, int offset,
             int length)
     {
+        writeVectorValues(output, vector::isNull, consumer, offset, length);
+    }
+
+    private void writeVectorValues(BlockBuilder output, IntPredicate nullChecker, Consumer<Integer> consumer, int offset,
+            int length)
+    {
         for (int i = offset; i < offset + length; i++) {
-            if (vector.isNull(i)) {
+            if (nullChecker.test(i)) {
                 output.appendNull();
             }
             else {

@@ -123,6 +123,7 @@ public class LanceFragmentPageSource
                 optionsBuilder.columns(columns);
             }
             optionsBuilder.batchSize(readBatchSize);
+            optionsBuilder.useScalarIndex(true);
             substraitFilter.ifPresent(optionsBuilder::substraitFilter);
             limit.ifPresent(optionsBuilder::limit);
 

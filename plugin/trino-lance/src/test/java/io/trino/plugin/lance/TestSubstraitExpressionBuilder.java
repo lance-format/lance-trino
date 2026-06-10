@@ -272,15 +272,12 @@ public class TestSubstraitExpressionBuilder
     @Test
     public void testIsPushableLikePattern()
     {
-        // All non-empty patterns should be pushable (Lance filters at storage layer)
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo%")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%bar")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("_foo%")).isTrue();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("exact")).isTrue();
-
-        // Only empty/null patterns are not pushable
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo%")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%bar")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("_foo%")).isFalse();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("exact")).isFalse();
         assertThat(SubstraitExpressionBuilder.isPushableLikePattern("")).isFalse();
         assertThat(SubstraitExpressionBuilder.isPushableLikePattern(null)).isFalse();
     }
@@ -301,10 +298,8 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.LikePredicateExtractionResult result =
                 SubstraitExpressionBuilder.extractLikePredicates(likeExpr, assignments);
 
-        assertThat(result.likePredicates()).hasSize(1);
-        assertThat(result.likePredicates().getFirst().columnName()).isEqualTo("name");
-        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("foo%");
-        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
+        assertThat(result.likePredicates()).isEmpty();
+        assertThat(result.remainingExpression()).isEqualTo(likeExpr);
     }
 
     @Test
@@ -324,10 +319,8 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.LikePredicateExtractionResult result =
                 SubstraitExpressionBuilder.extractLikePredicates(likeExpr, assignments);
 
-        // All patterns are now pushable
-        assertThat(result.likePredicates()).hasSize(1);
-        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("%foo");
-        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
+        assertThat(result.likePredicates()).isEmpty();
+        assertThat(result.remainingExpression()).isEqualTo(likeExpr);
     }
 
     @Test
@@ -358,11 +351,8 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.LikePredicateExtractionResult result =
                 SubstraitExpressionBuilder.extractLikePredicates(andExpr, assignments);
 
-        // LIKE should be extracted, other predicate should remain
-        assertThat(result.likePredicates()).hasSize(1);
-        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("foo%");
-        // The remaining expression should be the > predicate
-        assertThat(result.remainingExpression()).isEqualTo(otherExpr);
+        assertThat(result.likePredicates()).isEmpty();
+        assertThat(result.remainingExpression()).isEqualTo(andExpr);
     }
 
     @Test
@@ -401,8 +391,7 @@ public class TestSubstraitExpressionBuilder
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.combineExpressionsToSubstrait(
                 Optional.empty(), likePredicates, ALL_COLUMNS, COLUMN_ORDINALS);
 
-        assertThat(result).isPresent();
-        assertThat(result.get().remaining()).isGreaterThan(0);
+        assertThat(result).isEmpty();
     }
 
     // ===== RowType (nested field) tests =====
@@ -440,10 +429,8 @@ public class TestSubstraitExpressionBuilder
     }
 
     @Test
-    public void testFieldDereferenceNotExtracted()
+    public void testFieldDereferenceExtracted()
     {
-        // FieldDereference expressions (nested field access like struct.field) should NOT be extracted
-        // They should remain as remaining expressions for Trino to evaluate
         io.trino.spi.expression.FieldDereference deref = new io.trino.spi.expression.FieldDereference(
                 VARCHAR,
                 new Variable("metadata", RowType.from(List.of(
@@ -467,8 +454,35 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.ExpressionExtractionResult result =
                 SubstraitExpressionBuilder.extractPushableExpressions(comparison, assignments, ordinals);
 
-        // FieldDereference should NOT be extracted - it should remain as the remaining expression
-        assertThat(result.substraitExpressions()).isEmpty();
-        assertThat(result.remainingExpression()).isEqualTo(comparison);
+        assertThat(result.substraitExpressions()).hasSize(1);
+        assertThat(result.columnNames()).containsExactly("metadata.name");
+        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
+    }
+
+    @Test
+    public void testFieldDereferenceUsesCanonicalPath()
+    {
+        RowType rowType = RowType.from(List.of(
+                new RowType.Field(Optional.of("a.b"), VARCHAR),
+                new RowType.Field(Optional.of("value"), BIGINT)));
+        io.trino.spi.expression.FieldDereference deref = new io.trino.spi.expression.FieldDereference(
+                VARCHAR,
+                new Variable("meta.data", rowType),
+                0);
+
+        ConnectorExpression comparison = new Call(
+                BOOLEAN,
+                io.trino.spi.expression.StandardFunctions.EQUAL_OPERATOR_FUNCTION_NAME,
+                List.of(deref, new Constant(Slices.utf8Slice("alice"), VARCHAR)));
+
+        LanceColumnHandle structColumn = new LanceColumnHandle("meta.data", rowType, true, 4);
+        Map<String, ColumnHandle> assignments = Map.of("meta.data", structColumn);
+        Map<String, Integer> ordinals = Map.of("meta.data", 0, "meta\\.data", 0);
+
+        SubstraitExpressionBuilder.ExpressionExtractionResult result =
+                SubstraitExpressionBuilder.extractPushableExpressions(comparison, assignments, ordinals);
+
+        assertThat(result.substraitExpressions()).hasSize(1);
+        assertThat(result.columnNames()).containsExactly("meta\\.data.a\\.b");
     }
 }

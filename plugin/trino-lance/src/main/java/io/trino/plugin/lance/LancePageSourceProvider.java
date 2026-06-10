@@ -103,16 +103,17 @@ public class LancePageSourceProvider
         // Get output column names
         Set<String> outputColumnNames = new HashSet<>();
         for (LanceColumnHandle col : outputColumns) {
-            outputColumnNames.add(col.name());
+            outputColumnNames.add(col.scanProjectionName());
         }
 
         // Return filter columns that aren't already in output
         List<String> result = new ArrayList<>();
         Set<String> addedColumns = new HashSet<>();
         for (String filterCol : filterColumns) {
-            if (!outputColumnNames.contains(filterCol) && !addedColumns.contains(filterCol)) {
-                result.add(filterCol);
-                addedColumns.add(filterCol);
+            String scanColumn = LanceFieldPath.rootName(filterCol);
+            if (!outputColumnNames.contains(scanColumn) && !addedColumns.contains(scanColumn)) {
+                result.add(scanColumn);
+                addedColumns.add(scanColumn);
             }
         }
 
