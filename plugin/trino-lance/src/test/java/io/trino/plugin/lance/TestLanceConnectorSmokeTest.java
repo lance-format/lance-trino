@@ -61,25 +61,25 @@ public class TestLanceConnectorSmokeTest
         return switch (connectorBehavior) {
             // Supported behaviors
             case SUPPORTS_CREATE_TABLE,
-                    SUPPORTS_CREATE_TABLE_WITH_DATA,
-                    SUPPORTS_INSERT,
-                    SUPPORTS_DELETE,
-                    SUPPORTS_ROW_LEVEL_DELETE,
-                    SUPPORTS_UPDATE,
-                    SUPPORTS_MERGE -> true;
+                 SUPPORTS_CREATE_TABLE_WITH_DATA,
+                 SUPPORTS_INSERT,
+                 SUPPORTS_DELETE,
+                 SUPPORTS_ROW_LEVEL_DELETE,
+                 SUPPORTS_UPDATE,
+                 SUPPORTS_MERGE -> true;
 
             // Not supported behaviors
             // CASCADE is not supported for DROP SCHEMA
             case SUPPORTS_CREATE_SCHEMA,
-                    SUPPORTS_DROP_SCHEMA_CASCADE,
-                    SUPPORTS_RENAME_SCHEMA,
-                    SUPPORTS_RENAME_TABLE,
-                    SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
-                    SUPPORTS_TRUNCATE,
-                    SUPPORTS_CREATE_VIEW,
-                    SUPPORTS_COMMENT_ON_VIEW_COLUMN,
-                    SUPPORTS_CREATE_MATERIALIZED_VIEW,
-                    SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN -> false;
+                 SUPPORTS_DROP_SCHEMA_CASCADE,
+                 SUPPORTS_RENAME_SCHEMA,
+                 SUPPORTS_RENAME_TABLE,
+                 SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
+                 SUPPORTS_TRUNCATE,
+                 SUPPORTS_CREATE_VIEW,
+                 SUPPORTS_COMMENT_ON_VIEW_COLUMN,
+                 SUPPORTS_CREATE_MATERIALIZED_VIEW,
+                 SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN -> false;
 
             default -> super.hasBehavior(connectorBehavior);
         };

@@ -2,12 +2,12 @@
 
 ## Requirements
 
-- Java 23 or later
-- Trino 476 or compatible version
+- Java 25 or later
+- Trino 481 or compatible version
 
 ## Download from GitHub Releases
 
-Each release includes a `trino-lance-<version>-trino<trino_version>.tar.gz` archive containing all required JARs. Download from the [releases page](https://github.com/lancedb/lance-trino/releases).
+Each release includes a `lance-trino-<version>-trino<trino_version>.tar.gz` archive containing all required JARs. Download from the [releases page](https://github.com/lancedb/lance-trino/releases).
 
 ### Quick Installation
 
@@ -15,24 +15,24 @@ Each release includes a `trino-lance-<version>-trino<trino_version>.tar.gz` arch
     ```bash
     # Set variables
     VERSION="0.3.2"
-    TRINO_VERSION="476"
+    TRINO_VERSION="481"
     PLUGIN_DIR="/usr/lib/trino/plugin"
 
     # Download and extract
-    wget "https://github.com/lancedb/lance-trino/releases/download/v${VERSION}/trino-lance-${VERSION}-trino${TRINO_VERSION}.tar.gz"
-    tar -xzf "trino-lance-${VERSION}-trino${TRINO_VERSION}.tar.gz" -C "${PLUGIN_DIR}/"
-    mv "${PLUGIN_DIR}/trino-lance-${TRINO_VERSION}" "${PLUGIN_DIR}/lance"
+    wget "https://github.com/lancedb/lance-trino/releases/download/v${VERSION}/lance-trino-${VERSION}-trino${TRINO_VERSION}.tar.gz"
+    tar -xzf "lance-trino-${VERSION}-trino${TRINO_VERSION}.tar.gz" -C "${PLUGIN_DIR}/"
+    mv "${PLUGIN_DIR}/lance-trino-${VERSION}" "${PLUGIN_DIR}/lance"
     ```
 
 === "Docker"
     ```dockerfile
-    FROM trinodb/trino:476
+    FROM trinodb/trino:481
 
     # Download and install Lance connector
     ARG VERSION=0.3.2
-    ARG TRINO_VERSION=476
+    ARG TRINO_VERSION=481
 
-    RUN curl -fsSL "https://github.com/lancedb/lance-trino/releases/download/v${VERSION}/trino-lance-${VERSION}-trino${TRINO_VERSION}.tar.gz" \
+    RUN curl -fsSL "https://github.com/lancedb/lance-trino/releases/download/v${VERSION}/lance-trino-${VERSION}-trino${TRINO_VERSION}.tar.gz" \
         | tar -xz -C /usr/lib/trino/plugin/ \
-        && mv "/usr/lib/trino/plugin/trino-lance-${TRINO_VERSION}" /usr/lib/trino/plugin/lance
+        && mv "/usr/lib/trino/plugin/lance-trino-${VERSION}" /usr/lib/trino/plugin/lance
     ```

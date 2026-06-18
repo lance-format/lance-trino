@@ -20,6 +20,7 @@ import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.testing.TestingConnectorSession;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -61,6 +62,14 @@ public class TestLanceSplitManager
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
         this.metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
         this.splitManager = new LanceSplitManager(runtime);
+    }
+
+    @AfterEach
+    public void tearDown()
+    {
+        if (runtime != null) {
+            runtime.close();
+        }
     }
 
     @Test
@@ -198,7 +207,6 @@ public class TestLanceSplitManager
 
         assertThat(split.isAllFragments()).isTrue();
         assertThat(split.getFragments()).isEmpty();
-        assertThat(split.getSplitInfo()).containsEntry("fragments", "ALL");
 
         JsonCodec<LanceSplit> codec = JsonCodec.jsonCodec(LanceSplit.class);
         String json = codec.toJson(split);

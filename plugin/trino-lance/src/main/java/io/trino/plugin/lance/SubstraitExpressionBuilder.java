@@ -117,7 +117,7 @@ public final class SubstraitExpressionBuilder
                 .sorted(Comparator.comparingInt(LanceColumnHandle::fieldId))
                 .toList();
 
-        return Optional.of(serializeAsExtendedExpression(expression.get(), sortedColumns));
+        return Optional.of(serializeAsExtendedExpression(expression.orElseThrow(), sortedColumns));
     }
 
     /**
@@ -162,7 +162,7 @@ public final class SubstraitExpressionBuilder
             Optional<ColumnReference> reference = resolveColumnReference(column, columnOrdinals);
             Optional<Expression> columnExpr = reference.flatMap(columnReference -> domainToExpression(columnReference, domain));
             if (columnExpr.isPresent()) {
-                columnExpressions.add(columnExpr.get());
+                columnExpressions.add(columnExpr.orElseThrow());
                 pushedDomains.put(column, domain);
             }
             else if (!domain.isAll()) {
@@ -831,7 +831,7 @@ public final class SubstraitExpressionBuilder
         // Try to convert entire expression to Substrait
         Optional<Expression> substraitExpr = tryConvertToSubstrait(call, assignments, columnOrdinals, columnNames);
         if (substraitExpr.isPresent()) {
-            substraitExprs.add(substraitExpr.get());
+            substraitExprs.add(substraitExpr.orElseThrow());
             return Constant.TRUE;
         }
 
@@ -914,7 +914,7 @@ public final class SubstraitExpressionBuilder
         if (patternExpr instanceof Constant constant) {
             Optional<ColumnReference> reference = resolveColumnReference(columnExpr, assignments, columnOrdinals);
             if (reference.isPresent()) {
-                ColumnReference columnReference = reference.get();
+                ColumnReference columnReference = reference.orElseThrow();
                 Object patternValue = constant.getValue();
                 if (patternValue instanceof Slice slice && columnReference.column().trinoType() instanceof VarcharType) {
                     String pattern = slice.toStringUtf8();
@@ -943,7 +943,7 @@ public final class SubstraitExpressionBuilder
 
         Optional<ColumnReference> reference = resolveColumnReference(args.get(0), assignments, columnOrdinals);
         if (reference.isPresent()) {
-            ColumnReference columnReference = reference.get();
+            ColumnReference columnReference = reference.orElseThrow();
             if (isSupportedType(columnReference.column().trinoType())) {
                 if (!columnNames.contains(columnReference.columnName())) {
                     columnNames.add(columnReference.columnName());
@@ -969,7 +969,7 @@ public final class SubstraitExpressionBuilder
         if (arg instanceof Call innerCall) {
             Optional<Expression> innerExpr = tryConvertToSubstrait(innerCall, assignments, columnOrdinals, columnNames);
             if (innerExpr.isPresent()) {
-                return Optional.of(notExpression(innerExpr.get()));
+                return Optional.of(notExpression(innerExpr.orElseThrow()));
             }
         }
         return Optional.empty();
@@ -998,7 +998,7 @@ public final class SubstraitExpressionBuilder
             if (converted.isEmpty()) {
                 return Optional.empty();
             }
-            substraitArgs.add(converted.get());
+            substraitArgs.add(converted.orElseThrow());
         }
         return Optional.of(orExpressions(substraitArgs));
     }
@@ -1046,7 +1046,7 @@ public final class SubstraitExpressionBuilder
     {
         Optional<ColumnReference> reference = resolveColumnReference(columnExpression, assignments, columnOrdinals);
         if (reference.isPresent()) {
-            ColumnReference columnReference = reference.get();
+            ColumnReference columnReference = reference.orElseThrow();
             io.trino.spi.type.Type trinoType = columnReference.column().trinoType();
             if (isSupportedType(trinoType)) {
                 Expression fieldRef = fieldReference(columnReference);
@@ -1091,7 +1091,7 @@ public final class SubstraitExpressionBuilder
             return Optional.empty();
         }
 
-        ColumnReference columnReference = reference.get();
+        ColumnReference columnReference = reference.orElseThrow();
         LanceColumnHandle lanceColumn = columnReference.column();
         io.trino.spi.type.Type trinoType = lanceColumn.trinoType();
         if (!isSupportedType(trinoType)) {
@@ -1148,7 +1148,7 @@ public final class SubstraitExpressionBuilder
             if (target.isEmpty()) {
                 return Optional.empty();
             }
-            ColumnReference targetReference = target.get();
+            ColumnReference targetReference = target.orElseThrow();
             if (!(fieldDereference.getTarget().getType() instanceof RowType rowType)) {
                 return Optional.empty();
             }
@@ -1164,7 +1164,7 @@ public final class SubstraitExpressionBuilder
             List<Integer> dereferencePath = new ArrayList<>(targetReference.dereferencePath());
             dereferencePath.add(fieldIndex);
             List<String> dereferenceNames = new ArrayList<>(targetReference.column().dereferenceNames());
-            dereferenceNames.add(field.getName().get());
+            dereferenceNames.add(field.getName().orElseThrow());
             LanceColumnHandle nestedColumn = LanceColumnHandle.nestedColumn(
                     LanceFieldPath.canonicalPath(buildFieldPath(targetReference.column().baseColumnName(), dereferenceNames)),
                     fieldDereference.getType(),

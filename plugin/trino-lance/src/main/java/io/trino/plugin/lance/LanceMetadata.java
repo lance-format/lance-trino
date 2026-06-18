@@ -67,7 +67,6 @@ import org.lance.CommitBuilder;
 import org.lance.Dataset;
 import org.lance.FragmentMetadata;
 import org.lance.ManifestSummary;
-import org.lance.ReadOptions;
 import org.lance.SourcedTransaction;
 import org.lance.Transaction;
 import org.lance.namespace.LanceNamespace;
@@ -109,6 +108,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -137,12 +137,12 @@ public class LanceMetadata
         implements ConnectorMetadata
 {
     private static final Logger log = Logger.get(LanceMetadata.class);
-    private static final ConcurrentMap<String, Dataset> transactionDatasets = new ConcurrentHashMap<>();
 
     private final LanceRuntime runtime;
     private final LanceConfig lanceConfig;
     private final JsonCodec<LanceCommitTaskData> commitTaskDataCodec;
     private final JsonCodec<LanceMergeCommitData> mergeCommitDataCodec;
+    private final ConcurrentMap<String, TransactionDataset> transactionDatasets = new ConcurrentHashMap<>();
 
     @Inject
     public LanceMetadata(
@@ -157,6 +157,18 @@ public class LanceMetadata
         this.mergeCommitDataCodec = requireNonNull(mergeCommitDataCodec, "mergeCommitDataCodec is null");
     }
 
+    @Override
+    public void cleanupQuery(ConnectorSession session)
+    {
+        String queryId = session.getQueryId();
+        transactionDatasets.forEach((transactionId, transactionDataset) -> {
+            if (Objects.equals(transactionDataset.queryId(), queryId) &&
+                    transactionDatasets.remove(transactionId, transactionDataset)) {
+                closeTransactionDataset(transactionId, transactionDataset);
+            }
+        });
+    }
+
     // ===== Schema/Namespace Operations =====
 
     @Override
@@ -168,7 +180,7 @@ public class LanceMetadata
 
         ListNamespacesRequest request = new ListNamespacesRequest();
         if (runtime.getParentPrefix().isPresent()) {
-            request.setId(runtime.getParentPrefix().get());
+            request.setId(runtime.getParentPrefix().orElseThrow());
         }
         ListNamespacesResponse response = getNamespace().listNamespaces(request);
         Set<String> namespaces = response.getNamespaces();
@@ -247,8 +259,11 @@ public class LanceMetadata
     // ===== Table Operations =====
 
     @Override
-    public LanceTableHandle getTableHandle(ConnectorSession session, SchemaTableName name,
-            Optional<ConnectorTableVersion> startVersion, Optional<ConnectorTableVersion> endVersion)
+    public LanceTableHandle getTableHandle(
+            ConnectorSession session,
+            SchemaTableName name,
+            Optional<ConnectorTableVersion> startVersion,
+            Optional<ConnectorTableVersion> endVersion)
     {
         if (startVersion.isPresent()) {
             throw new TrinoException(NOT_SUPPORTED, "Lance connector does not support start version for time travel");
@@ -262,7 +277,7 @@ public class LanceMetadata
 
             Long datasetVersion;
             if (endVersion.isPresent()) {
-                datasetVersion = resolveVersion(session, tablePath, storageOptions, endVersion.get());
+                datasetVersion = resolveVersion(session, tablePath, storageOptions, endVersion.orElseThrow());
             }
             else {
                 datasetVersion = runtime.getLatestVersion(userIdentity, tablePath, storageOptions);
@@ -273,8 +288,11 @@ public class LanceMetadata
         return null;
     }
 
-    private Long resolveVersion(ConnectorSession session, String tablePath,
-            Map<String, String> storageOptions, ConnectorTableVersion version)
+    private Long resolveVersion(
+            ConnectorSession session,
+            String tablePath,
+            Map<String, String> storageOptions,
+            ConnectorTableVersion version)
     {
         String userIdentity = session.getUser();
         Type versionType = version.getVersionType();
@@ -285,8 +303,12 @@ public class LanceMetadata
         };
     }
 
-    private Long resolveTargetIdVersion(String tablePath, Map<String, String> storageOptions,
-            String userIdentity, ConnectorTableVersion version, Type versionType)
+    private Long resolveTargetIdVersion(
+            String tablePath,
+            Map<String, String> storageOptions,
+            String userIdentity,
+            ConnectorTableVersion version,
+            Type versionType)
     {
         long versionNumber;
         if (versionType.equals(BIGINT)) {
@@ -318,8 +340,13 @@ public class LanceMetadata
         return versionNumber;
     }
 
-    private Long resolveTemporalVersion(ConnectorSession session, String tablePath,
-            Map<String, String> storageOptions, String userIdentity, ConnectorTableVersion version, Type versionType)
+    private Long resolveTemporalVersion(
+            ConnectorSession session,
+            String tablePath,
+            Map<String, String> storageOptions,
+            String userIdentity,
+            ConnectorTableVersion version,
+            Type versionType)
     {
         long timestampMillis = getTimestampMillis(session, version, versionType);
 
@@ -327,13 +354,16 @@ public class LanceMetadata
                 userIdentity, tablePath, timestampMillis, storageOptions);
 
         if (resolvedVersion.isEmpty()) {
-            throw new TrinoException(INVALID_ARGUMENTS,
+            throw new TrinoException(
+                    INVALID_ARGUMENTS,
                     "No Lance version found at or before timestamp: " + Instant.ofEpochMilli(timestampMillis));
         }
 
-        log.debug("Resolved temporal version for timestamp %s to version %d",
-                Instant.ofEpochMilli(timestampMillis), resolvedVersion.get());
-        return resolvedVersion.get();
+        log.debug(
+                "Resolved temporal version for timestamp %s to version %d",
+                Instant.ofEpochMilli(timestampMillis),
+                resolvedVersion.orElseThrow());
+        return resolvedVersion.orElseThrow();
     }
 
     private long getTimestampMillis(ConnectorSession session, ConnectorTableVersion version, Type versionType)
@@ -365,7 +395,8 @@ public class LanceMetadata
                     : ((LongTimestampWithTimeZone) version.getVersion()).getEpochMillis();
         }
 
-        throw new TrinoException(NOT_SUPPORTED,
+        throw new TrinoException(
+                NOT_SUPPORTED,
                 "Unsupported type for Lance temporal version: " + versionType.getDisplayName());
     }
 
@@ -418,8 +449,11 @@ public class LanceMetadata
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
             String userIdentity = session.getUser();
-            return runtime.getColumnHandles(userIdentity, lanceTableHandle.getTablePath(),
-                    lanceTableHandle.getDatasetVersion(), storageOptions);
+            return runtime.getColumnHandles(
+                    userIdentity,
+                    lanceTableHandle.getTablePath(),
+                    lanceTableHandle.getDatasetVersion(),
+                    storageOptions);
         }
         catch (Exception e) {
             throw new TableNotFoundException(new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName()));
@@ -427,7 +461,8 @@ public class LanceMetadata
     }
 
     @Override
-    public Map<SchemaTableName, List<ColumnMetadata>> listTableColumns(ConnectorSession session,
+    public Map<SchemaTableName, List<ColumnMetadata>> listTableColumns(
+            ConnectorSession session,
             SchemaTablePrefix prefix)
     {
         requireNonNull(prefix, "prefix is null");
@@ -454,15 +489,20 @@ public class LanceMetadata
     }
 
     @Override
-    public ColumnMetadata getColumnMetadata(ConnectorSession session, ConnectorTableHandle tableHandle,
+    public ColumnMetadata getColumnMetadata(
+            ConnectorSession session,
+            ConnectorTableHandle tableHandle,
             ColumnHandle columnHandle)
     {
         return ((LanceColumnHandle) columnHandle).getColumnMetadata();
     }
 
     @Override
-    public Optional<ProjectionApplicationResult<ConnectorTableHandle>> applyProjection(ConnectorSession session,
-            ConnectorTableHandle handle, List<ConnectorExpression> projections, Map<String, ColumnHandle> assignments)
+    public Optional<ProjectionApplicationResult<ConnectorTableHandle>> applyProjection(
+            ConnectorSession session,
+            ConnectorTableHandle handle,
+            List<ConnectorExpression> projections,
+            Map<String, ColumnHandle> assignments)
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) handle;
         List<ConnectorExpression> projectedExpressions = new ArrayList<>();
@@ -475,7 +515,7 @@ public class LanceMetadata
                 return Optional.empty();
             }
 
-            LanceColumnHandle lanceColumn = column.get();
+            LanceColumnHandle lanceColumn = column.orElseThrow();
             String variableName = lanceColumn.path();
             projectedColumns.putIfAbsent(variableName, lanceColumn);
             projectedExpressions.add(new Variable(variableName, lanceColumn.trinoType()));
@@ -515,7 +555,7 @@ public class LanceMetadata
             if (target.isEmpty()) {
                 return Optional.empty();
             }
-            LanceColumnHandle targetColumn = target.get();
+            LanceColumnHandle targetColumn = target.orElseThrow();
             if (!(fieldDereference.getTarget().getType() instanceof RowType rowType)) {
                 return Optional.empty();
             }
@@ -533,7 +573,7 @@ public class LanceMetadata
             List<Integer> dereferencePath = new ArrayList<>(targetColumn.dereferencePath());
             dereferencePath.add(fieldIndex);
             List<String> dereferenceNames = new ArrayList<>(targetColumn.dereferenceNames());
-            dereferenceNames.add(field.getName().get());
+            dereferenceNames.add(field.getName().orElseThrow());
             String canonicalPath = LanceFieldPath.canonicalPath(buildFieldPath(targetColumn.baseColumnName(), dereferenceNames));
 
             return Optional.of(LanceColumnHandle.nestedColumn(
@@ -569,7 +609,8 @@ public class LanceMetadata
             ManifestSummary summary = runtime.getManifestSummary(
                     userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
-            log.debug("getTableStatistics: table=%s, totalRows=%d, totalFilesSize=%d, totalFragments=%d",
+            log.debug(
+                    "getTableStatistics: table=%s, totalRows=%d, totalFilesSize=%d, totalFragments=%d",
                     lanceTableHandle.getTableName(),
                     summary.getTotalRows(),
                     summary.getTotalFilesSize(),
@@ -588,8 +629,10 @@ public class LanceMetadata
     }
 
     @Override
-    public Optional<LimitApplicationResult<ConnectorTableHandle>> applyLimit(ConnectorSession session,
-            ConnectorTableHandle table, long limit)
+    public Optional<LimitApplicationResult<ConnectorTableHandle>> applyLimit(
+            ConnectorSession session,
+            ConnectorTableHandle table,
+            long limit)
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
 
@@ -640,7 +683,8 @@ public class LanceMetadata
             return Optional.empty();
         }
 
-        log.debug("applyAggregation: pushing COUNT(*) for table %s (no filter)",
+        log.debug(
+                "applyAggregation: pushing COUNT(*) for table %s (no filter)",
                 lanceTableHandle.getTableName());
 
         LanceTableHandle newHandle = lanceTableHandle.withCountStar();
@@ -665,8 +709,10 @@ public class LanceMetadata
     }
 
     @Override
-    public Optional<ConstraintApplicationResult<ConnectorTableHandle>> applyFilter(ConnectorSession session,
-            ConnectorTableHandle table, Constraint constraint)
+    public Optional<ConstraintApplicationResult<ConnectorTableHandle>> applyFilter(
+            ConnectorSession session,
+            ConnectorTableHandle table,
+            Constraint constraint)
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
 
@@ -691,8 +737,12 @@ public class LanceMetadata
         List<String> exprColumnNames = exprResult.columnNames();
         io.trino.spi.expression.ConnectorExpression remainingExpression = exprResult.remainingExpression();
 
-        log.debug("applyFilter: newConstraint=%s, pushedTupleDomain=%s, remainingTupleDomain=%s, pushedExpressions=%d",
-                newConstraint, tupleDomainResult.pushedTupleDomain(), tupleDomainResult.remainingTupleDomain(), pushedExpressions.size());
+        log.debug(
+                "applyFilter: newConstraint=%s, pushedTupleDomain=%s, remainingTupleDomain=%s, pushedExpressions=%d",
+                newConstraint,
+                tupleDomainResult.pushedTupleDomain(),
+                tupleDomainResult.remainingTupleDomain(),
+                pushedExpressions.size());
 
         // If no TupleDomain constraints and no pushed expressions, nothing to push down
         if (tupleDomainResult.expression().isEmpty() && pushedExpressions.isEmpty()) {
@@ -710,7 +760,7 @@ public class LanceMetadata
         }
 
         // Combine with existing filter if present
-        byte[] newFilterBytes = substraitFilter.get().array();
+        byte[] newFilterBytes = substraitFilter.orElseThrow().array();
         byte[] existingFilter = lanceTableHandle.getSubstraitFilter();
 
         // If there's an existing filter, we can't easily combine Substrait expressions,
@@ -736,8 +786,11 @@ public class LanceMetadata
         LanceTableHandle newHandle = lanceTableHandle.withSubstraitFilter(newFilterBytes, filterColumnNames);
         TupleDomain<LanceColumnHandle> remainingFilter = tupleDomainResult.remainingTupleDomain();
 
-        log.debug("applyFilter: pushing substrait filter (size=%d bytes, %d expressions), remaining=%s",
-                newFilterBytes.length, pushedExpressions.size(), remainingFilter);
+        log.debug(
+                "applyFilter: pushing substrait filter (size=%d bytes, %d expressions), remaining=%s",
+                newFilterBytes.length,
+                pushedExpressions.size(),
+                remainingFilter);
 
         return Optional.of(new ConstraintApplicationResult<>(
                 newHandle,
@@ -861,8 +914,8 @@ public class LanceMetadata
             Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
             String userIdentity = session.getUser();
             // For write operations, open dataset directly (not cached)
-            try (Dataset dataset = runtime.openDatasetDirect(userIdentity, existingPath, null, storageOptions)) {
-                commitOverwrite(dataset, List.of(), arrowSchema, storageOptions);
+            try (LanceRuntime.DatasetLease datasetLease = runtime.openDatasetDirectLease(userIdentity, existingPath, null, storageOptions)) {
+                commitOverwrite(datasetLease.getDataset(), List.of(), arrowSchema, storageOptions);
             }
             runtime.invalidate(userIdentity, existingPath);
             log.debug("createTable: replaced table %s at %s", tableName, existingPath);
@@ -938,8 +991,12 @@ public class LanceMetadata
         }
 
         List<LanceColumnHandle> columns = tableMetadata.getColumns().stream()
-                .map(col -> new LanceColumnHandle(col.getName(), col.getType(), col.isNullable(),
-                        -1, blobColumns.contains(col.getName())))
+                .map(col -> new LanceColumnHandle(
+                        col.getName(),
+                        col.getType(),
+                        col.isNullable(),
+                        -1,
+                        blobColumns.contains(col.getName())))
                 .collect(toImmutableList());
 
         Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
@@ -948,19 +1005,40 @@ public class LanceMetadata
         String transactionId = null;
         if (tableExisted) {
             transactionId = UUID.randomUUID().toString();
-            ReadOptions readOptions = new ReadOptions.Builder()
-                    .setStorageOptions(storageOptions)
-                    .build();
-            Dataset dataset = Dataset.open(tablePath, readOptions);
-            transactionDatasets.put(transactionId, dataset);
-            // For replace tables (RTAS/CORTAS), use existing table's format if not specified
-            if (fileFormatVersion == null) {
-                fileFormatVersion = dataset.getLanceFileFormatVersion();
+            LanceRuntime.DatasetLease datasetLease = runtime.openDatasetDirectLease(session.getUser(), tablePath, null, storageOptions);
+            boolean registered = false;
+            try {
+                registerTransactionDataset(transactionId, session, datasetLease);
+                registered = true;
+                // For replace tables (RTAS/CORTAS), use existing table's format if not specified
+                if (fileFormatVersion == null) {
+                    fileFormatVersion = datasetLease.getDataset().getLanceFileFormatVersion();
+                }
+                datasetLease = null;
+            }
+            catch (RuntimeException | Error e) {
+                if (registered) {
+                    TransactionDataset transactionDataset = transactionDatasets.remove(transactionId);
+                    if (transactionDataset != null) {
+                        closeTransactionDataset(transactionId, transactionDataset);
+                    }
+                }
+                else {
+                    datasetLease.close();
+                }
+                throw e;
             }
         }
 
-        log.debug("beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s, transactionId=%s, blobColumns=%s, fileFormatVersion=%s",
-                tableName, tablePath, replace, tableExisted, transactionId, blobColumns, fileFormatVersion);
+        log.debug(
+                "beginCreateTable: table=%s, path=%s, replace=%s, tableExisted=%s, transactionId=%s, blobColumns=%s, fileFormatVersion=%s",
+                tableName,
+                tablePath,
+                replace,
+                tableExisted,
+                transactionId,
+                blobColumns,
+                fileFormatVersion);
 
         return new LanceWritableTableHandle(
                 tableName,
@@ -993,16 +1071,19 @@ public class LanceMetadata
         }
 
         String transactionId = handle.transactionId();
-        log.debug("finishCreateTable: table=%s, fragments=%d, replace=%s, tableExisted=%s, transactionId=%s",
-                handle.tableName(), fragments.size(), handle.replace(), handle.tableExisted(), transactionId);
+        log.debug(
+                "finishCreateTable: table=%s, fragments=%d, replace=%s, tableExisted=%s, transactionId=%s",
+                handle.tableName(),
+                fragments.size(),
+                handle.replace(),
+                handle.tableExisted(),
+                transactionId);
 
         Map<String, String> storageOptions = handle.storageOptions();
 
         if (handle.tableExisted()) {
-            Dataset dataset = transactionDatasets.remove(transactionId);
-            if (dataset == null) {
-                throw new TrinoException(GENERIC_INTERNAL_ERROR, "No dataset found for transaction: " + transactionId);
-            }
+            TransactionDataset transactionDataset = removeTransactionDataset(transactionId);
+            Dataset dataset = transactionDataset.dataset();
             try {
                 if (fragments.isEmpty()) {
                     commitOverwrite(dataset, List.of(), arrowSchema, storageOptions);
@@ -1013,7 +1094,7 @@ public class LanceMetadata
                 }
             }
             finally {
-                dataset.close();
+                closeTransactionDataset(transactionId, transactionDataset);
             }
         }
         else {
@@ -1053,26 +1134,48 @@ public class LanceMetadata
 
         String transactionId = UUID.randomUUID().toString();
         // For write operations, open dataset directly (not cached)
-        Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
-        transactionDatasets.put(transactionId, dataset);
+        LanceRuntime.DatasetLease datasetLease = runtime.openDatasetDirectLease(userIdentity, tablePath, null, storageOptions);
+        boolean registered = false;
+        try {
+            registerTransactionDataset(transactionId, session, datasetLease);
+            registered = true;
 
-        // Read the existing table's file format version to ensure consistent writes
-        String fileFormatVersion = dataset.getLanceFileFormatVersion();
-        log.debug("beginInsert: table=%s, path=%s, columns=%d, transactionId=%s, fileFormatVersion=%s",
-                tableName, tablePath, columns.size(), transactionId, fileFormatVersion);
+            // Read the existing table's file format version to ensure consistent writes
+            String fileFormatVersion = datasetLease.getDataset().getLanceFileFormatVersion();
+            log.debug(
+                    "beginInsert: table=%s, path=%s, columns=%d, transactionId=%s, fileFormatVersion=%s",
+                    tableName,
+                    tablePath,
+                    columns.size(),
+                    transactionId,
+                    fileFormatVersion);
 
-        return new LanceWritableTableHandle(
-                tableName,
-                tablePath,
-                schemaJson,
-                lanceColumns,
-                tableId,
-                storageOptions,
-                false,
-                false,
-                true,
-                transactionId,
-                fileFormatVersion);
+            datasetLease = null;
+            return new LanceWritableTableHandle(
+                    tableName,
+                    tablePath,
+                    schemaJson,
+                    lanceColumns,
+                    tableId,
+                    storageOptions,
+                    false,
+                    false,
+                    true,
+                    transactionId,
+                    fileFormatVersion);
+        }
+        catch (RuntimeException | Error e) {
+            if (registered) {
+                TransactionDataset transactionDataset = transactionDatasets.remove(transactionId);
+                if (transactionDataset != null) {
+                    closeTransactionDataset(transactionId, transactionDataset);
+                }
+            }
+            else {
+                datasetLease.close();
+            }
+            throw e;
+        }
     }
 
     @Override
@@ -1088,10 +1191,8 @@ public class LanceMetadata
 
         log.debug("finishInsert: table=%s, fragments=%d, transactionId=%s", handle.tableName(), fragments.size(), transactionId);
 
-        Dataset dataset = transactionDatasets.remove(transactionId);
-        if (dataset == null) {
-            throw new TrinoException(GENERIC_INTERNAL_ERROR, "No dataset found for transaction: " + transactionId);
-        }
+        TransactionDataset transactionDataset = removeTransactionDataset(transactionId);
+        Dataset dataset = transactionDataset.dataset();
 
         try {
             if (fragments.isEmpty()) {
@@ -1107,7 +1208,7 @@ public class LanceMetadata
             return Optional.empty();
         }
         finally {
-            dataset.close();
+            closeTransactionDataset(transactionId, transactionDataset);
         }
     }
 
@@ -1149,27 +1250,50 @@ public class LanceMetadata
         String transactionId = UUID.randomUUID().toString();
         String userIdentity = session.getUser();
         // For write operations, open dataset directly (not cached)
-        Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions);
-        long readVersion = dataset.version();
-        transactionDatasets.put(transactionId, dataset);
+        LanceRuntime.DatasetLease datasetLease = runtime.openDatasetDirectLease(userIdentity, tablePath, null, storageOptions);
+        boolean registered = false;
+        try {
+            Dataset dataset = datasetLease.getDataset();
+            long readVersion = dataset.version();
+            registerTransactionDataset(transactionId, session, datasetLease);
+            registered = true;
 
-        List<LanceColumnHandle> columns = runtime.getColumnHandleList(userIdentity, tablePath, null, storageOptions);
-        Schema arrowSchema = runtime.getSchema(userIdentity, tablePath, null, storageOptions);
-        String schemaJson = arrowSchema.toJson();
+            List<LanceColumnHandle> columns = runtime.getColumnHandleList(userIdentity, tablePath, null, storageOptions);
+            Schema arrowSchema = runtime.getSchema(userIdentity, tablePath, null, storageOptions);
+            String schemaJson = arrowSchema.toJson();
 
-        // Read the existing table's file format version to ensure consistent writes
-        String fileFormatVersion = dataset.getLanceFileFormatVersion();
-        log.debug("beginMerge: table=%s, path=%s, version=%d, transactionId=%s, fileFormatVersion=%s",
-                tableName, tablePath, readVersion, transactionId, fileFormatVersion);
+            // Read the existing table's file format version to ensure consistent writes
+            String fileFormatVersion = dataset.getLanceFileFormatVersion();
+            log.debug(
+                    "beginMerge: table=%s, path=%s, version=%d, transactionId=%s, fileFormatVersion=%s",
+                    tableName,
+                    tablePath,
+                    readVersion,
+                    transactionId,
+                    fileFormatVersion);
 
-        return new LanceMergeTableHandle(
-                table.withStorageOptions(storageOptions),
-                getMergeRowIdColumnHandle(session, tableHandle),
-                readVersion,
-                schemaJson,
-                columns,
-                transactionId,
-                fileFormatVersion);
+            datasetLease = null;
+            return new LanceMergeTableHandle(
+                    table.withStorageOptions(storageOptions),
+                    getMergeRowIdColumnHandle(session, tableHandle),
+                    readVersion,
+                    schemaJson,
+                    columns,
+                    transactionId,
+                    fileFormatVersion);
+        }
+        catch (RuntimeException | Error e) {
+            if (registered) {
+                TransactionDataset transactionDataset = transactionDatasets.remove(transactionId);
+                if (transactionDataset != null) {
+                    closeTransactionDataset(transactionId, transactionDataset);
+                }
+            }
+            else {
+                datasetLease.close();
+            }
+            throw e;
+        }
     }
 
     @Override
@@ -1183,13 +1307,14 @@ public class LanceMetadata
         LanceMergeTableHandle handle = (LanceMergeTableHandle) mergeTableHandle;
         String transactionId = handle.transactionId();
 
-        log.debug("finishMerge: table=%s, fragments=%d, transactionId=%s",
-                handle.tableHandle().getTableName(), fragments.size(), transactionId);
+        log.debug(
+                "finishMerge: table=%s, fragments=%d, transactionId=%s",
+                handle.tableHandle().getTableName(),
+                fragments.size(),
+                transactionId);
 
-        Dataset dataset = transactionDatasets.remove(transactionId);
-        if (dataset == null) {
-            throw new TrinoException(GENERIC_INTERNAL_ERROR, "No dataset found for transaction: " + transactionId);
-        }
+        TransactionDataset transactionDataset = removeTransactionDataset(transactionId);
+        Dataset dataset = transactionDataset.dataset();
 
         try {
             List<Long> removedFragmentIds = new ArrayList<>();
@@ -1204,7 +1329,7 @@ public class LanceMetadata
                 LanceMergeCommitData commitData = mergeCommitDataCodec.fromJson(slice.getBytes());
 
                 for (FragmentDeletion deletion : commitData.deletions()) {
-                    allDeletions.computeIfAbsent(deletion.fragmentId(), k -> new ArrayList<>())
+                    allDeletions.computeIfAbsent(deletion.fragmentId(), _ -> new ArrayList<>())
                             .addAll(deletion.rowIndexes());
                 }
 
@@ -1216,7 +1341,8 @@ public class LanceMetadata
                 int fragmentId = entry.getKey();
                 List<Integer> rowIndexes = entry.getValue();
 
-                log.debug("finishMerge: deleting %d rows from fragment %d, first few indices: %s",
+                log.debug(
+                        "finishMerge: deleting %d rows from fragment %d, first few indices: %s",
                         rowIndexes.size(),
                         fragmentId,
                         rowIndexes.stream().limit(5).toList());
@@ -1224,8 +1350,10 @@ public class LanceMetadata
                 FragmentMetadata updated = dataset.getFragment(fragmentId)
                         .deleteRows(rowIndexes);
                 if (updated != null) {
-                    log.debug("finishMerge: fragment %d updated with deletion vector, deletionFile=%s",
-                            fragmentId, updated.getDeletionFile());
+                    log.debug(
+                            "finishMerge: fragment %d updated with deletion vector, deletionFile=%s",
+                            fragmentId,
+                            updated.getDeletionFile());
                     updatedFragments.add(updated);
                 }
                 else {
@@ -1237,8 +1365,11 @@ public class LanceMetadata
             Map<String, String> storageOptions = handle.getStorageOptions();
 
             if (!removedFragmentIds.isEmpty() || !updatedFragments.isEmpty() || !newFragments.isEmpty()) {
-                log.debug("finishMerge: committing update with %d removed fragments, %d updated fragments, %d new fragments",
-                        removedFragmentIds.size(), updatedFragments.size(), newFragments.size());
+                log.debug(
+                        "finishMerge: committing update with %d removed fragments, %d updated fragments, %d new fragments",
+                        removedFragmentIds.size(),
+                        updatedFragments.size(),
+                        newFragments.size());
                 Update update = Update.builder()
                         .removedFragmentIds(removedFragmentIds)
                         .updatedFragments(updatedFragments)
@@ -1266,11 +1397,55 @@ public class LanceMetadata
             throw e;
         }
         finally {
-            dataset.close();
+            closeTransactionDataset(transactionId, transactionDataset);
         }
     }
 
     // ===== Helper Methods =====
+
+    private void registerTransactionDataset(String transactionId, ConnectorSession session, LanceRuntime.DatasetLease datasetLease)
+    {
+        TransactionDataset transactionDataset = new TransactionDataset(session.getQueryId(), datasetLease);
+        TransactionDataset previous = transactionDatasets.putIfAbsent(transactionId, transactionDataset);
+        if (previous != null) {
+            closeTransactionDataset(transactionId, transactionDataset);
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Duplicate transaction dataset: " + transactionId);
+        }
+    }
+
+    private TransactionDataset removeTransactionDataset(String transactionId)
+    {
+        TransactionDataset transactionDataset = transactionDatasets.remove(transactionId);
+        if (transactionDataset == null) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "No dataset found for transaction: " + transactionId);
+        }
+        return transactionDataset;
+    }
+
+    private static void closeTransactionDataset(String transactionId, TransactionDataset transactionDataset)
+    {
+        try {
+            transactionDataset.close();
+        }
+        catch (Exception e) {
+            log.warn(e, "Failed to close dataset for transaction: %s", transactionId);
+        }
+    }
+
+    private record TransactionDataset(String queryId, LanceRuntime.DatasetLease datasetLease)
+            implements AutoCloseable
+    {
+        private Dataset dataset()
+        {
+            return datasetLease.getDataset();
+        }
+
+        @Override
+        public void close()
+        {
+            datasetLease.close();
+        }
+    }
 
     private LanceNamespace getNamespace()
     {
@@ -1486,6 +1661,12 @@ public class LanceMetadata
         return runtime;
     }
 
+    @VisibleForTesting
+    int getTransactionDatasetCount()
+    {
+        return transactionDatasets.size();
+    }
+
     /**
      * Check if the exception is a Lance commit conflict or concurrent modification error.
      */
@@ -1497,10 +1678,10 @@ public class LanceMetadata
             String message = current.getMessage();
             if (message != null && (
                     message.toLowerCase().contains("commit conflict") ||
-                    message.toLowerCase().contains("concurrent") ||
-                    message.toLowerCase().contains("version") ||
-                    message.toLowerCase().contains("conflict") ||
-                    message.toLowerCase().contains("not found"))) {
+                            message.toLowerCase().contains("concurrent") ||
+                            message.toLowerCase().contains("version") ||
+                            message.toLowerCase().contains("conflict") ||
+                            message.toLowerCase().contains("not found"))) {
                 return true;
             }
             // NullPointerException in Fragment/Dataset operations is also a sign of concurrent modification

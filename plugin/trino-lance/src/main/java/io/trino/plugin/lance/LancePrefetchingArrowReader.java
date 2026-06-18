@@ -52,35 +52,53 @@ public class LancePrefetchingArrowReader
 {
     private static final Logger log = Logger.get(LancePrefetchingArrowReader.class);
 
-    /** Default queue depth - number of batches that can be prefetched. */
+    /**
+     * Default queue depth - number of batches that can be prefetched.
+     */
     private static final int DEFAULT_QUEUE_DEPTH = 4;
 
-    /** Sentinel batch to signal end of stream. */
+    /**
+     * Sentinel batch to signal end of stream.
+     */
     private static final VectorSchemaRoot END_OF_STREAM = null;
 
     private final ArrowReader underlying;
     private final BufferAllocator allocator;
     private final int queueDepth;
 
-    /** Queue holding prefetched batches ready for consumption. */
+    /**
+     * Queue holding prefetched batches ready for consumption.
+     */
     private final BlockingQueue<VectorSchemaRoot> batchQueue;
 
-    /** Background prefetch executor. */
+    /**
+     * Background prefetch executor.
+     */
     private final ExecutorService prefetchExecutor;
 
-    /** Current batch being consumed. */
+    /**
+     * Current batch being consumed.
+     */
     private VectorSchemaRoot currentBatch;
 
-    /** Flag indicating prefetch thread has finished (either completed or error). */
+    /**
+     * Flag indicating prefetch thread has finished (either completed or error).
+     */
     private final AtomicBoolean prefetchFinished = new AtomicBoolean(false);
 
-    /** Error from prefetch thread, if any. */
+    /**
+     * Error from prefetch thread, if any.
+     */
     private final AtomicReference<Throwable> prefetchError = new AtomicReference<>();
 
-    /** Flag indicating consumer has finished. */
+    /**
+     * Flag indicating consumer has finished.
+     */
     private volatile boolean consumerFinished;
 
-    /** Total bytes read from Arrow buffers. */
+    /**
+     * Total bytes read from Arrow buffers.
+     */
     private volatile long bytesRead;
 
     public LancePrefetchingArrowReader(ArrowReader underlying, BufferAllocator allocator)

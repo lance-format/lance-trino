@@ -72,53 +72,58 @@ public abstract class BaseLanceConnectorTest
         return switch (connectorBehavior) {
             // Supported write behaviors
             case SUPPORTS_CREATE_TABLE,
-                    SUPPORTS_CREATE_TABLE_WITH_DATA,
-                    SUPPORTS_CREATE_OR_REPLACE_TABLE,
-                    SUPPORTS_INSERT -> true;
+                 SUPPORTS_CREATE_TABLE_WITH_DATA,
+                 SUPPORTS_CREATE_OR_REPLACE_TABLE,
+                 SUPPORTS_INSERT -> true;
 
             // Complex types - ROW and MAP not fully supported for writes
             case SUPPORTS_ROW_TYPE,
-                    SUPPORTS_MAP_TYPE -> false;
+                 SUPPORTS_MAP_TYPE -> false;
 
             // Schema operations - depends on namespace configuration
             case SUPPORTS_CREATE_SCHEMA -> getNamespaceTestConfig().supportsCreateSchema();
             case SUPPORTS_DROP_SCHEMA_CASCADE,
-                    SUPPORTS_RENAME_SCHEMA -> false;
+                 SUPPORTS_RENAME_SCHEMA -> false;
 
             // Table modification operations - not supported
             case SUPPORTS_RENAME_TABLE,
-                    SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
-                    SUPPORTS_ADD_COLUMN,
-                    SUPPORTS_ADD_COLUMN_WITH_COMMENT,
-                    SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT,
-                    SUPPORTS_DROP_COLUMN,
-                    SUPPORTS_RENAME_COLUMN,
-                    SUPPORTS_SET_COLUMN_TYPE -> false;
+                 SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
+                 SUPPORTS_ADD_COLUMN,
+                 SUPPORTS_ADD_COLUMN_WITH_COMMENT,
+                 SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT,
+                 SUPPORTS_DROP_COLUMN,
+                 SUPPORTS_RENAME_COLUMN,
+                 SUPPORTS_SET_COLUMN_TYPE -> false;
+
+            case SUPPORTS_DEFAULT_COLUMN_VALUE,
+                 SUPPORTS_SET_DEFAULT_COLUMN_VALUE,
+                 SUPPORTS_DROP_DEFAULT_COLUMN_VALUE -> false;
 
             // Row-level modification operations - supported via merge-on-read
             case SUPPORTS_DELETE,
-                    SUPPORTS_ROW_LEVEL_DELETE,
-                    SUPPORTS_UPDATE,
-                    SUPPORTS_MERGE -> true;
+                 SUPPORTS_ROW_LEVEL_DELETE,
+                 SUPPORTS_UPDATE,
+                 SUPPORTS_MERGE -> true;
 
             // Truncate not yet supported
             case SUPPORTS_TRUNCATE -> false;
 
             // View operations - not supported
             case SUPPORTS_CREATE_VIEW,
-                    SUPPORTS_COMMENT_ON_VIEW_COLUMN,
-                    SUPPORTS_CREATE_MATERIALIZED_VIEW,
-                    SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN -> false;
+                 SUPPORTS_COMMENT_ON_VIEW_COLUMN,
+                 SUPPORTS_CREATE_MATERIALIZED_VIEW,
+                 SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN -> false;
 
             // Comment operations - not supported
             case SUPPORTS_COMMENT_ON_TABLE,
-                    SUPPORTS_COMMENT_ON_COLUMN -> false;
+                 SUPPORTS_COMMENT_ON_COLUMN -> false;
 
             // Constraint operations - not supported
             case SUPPORTS_NOT_NULL_CONSTRAINT -> false;
 
             // Pushdown operations - not currently supported
-            case SUPPORTS_TOPN_PUSHDOWN -> false;
+            case SUPPORTS_LIMIT_PUSHDOWN,
+                 SUPPORTS_TOPN_PUSHDOWN -> false;
 
             // Date handling - negative dates may not be supported
             case SUPPORTS_NEGATIVE_DATE -> false;
@@ -468,11 +473,11 @@ public abstract class BaseLanceConnectorTest
         // Lance supports time travel, so we expect specific error messages instead of "not supported"
         assertThat(e).hasMessageMatching(
                 "Lance connector does not support start version for time travel|" +
-                "Lance version number must be positive: .*|" +
-                "Lance version does not exist: .*|" +
-                "Unsupported type for Lance version: .*\\..*|" +
-                "Unsupported type for Lance temporal version: .*|" +
-                "No Lance version found at or before timestamp: .*");
+                        "Lance version number must be positive: .*|" +
+                        "Lance version does not exist: .*|" +
+                        "Unsupported type for Lance version: .*\\..*|" +
+                        "Unsupported type for Lance temporal version: .*|" +
+                        "No Lance version found at or before timestamp: .*");
     }
 
     // ===== Time Travel Tests =====

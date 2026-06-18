@@ -29,6 +29,7 @@
         <dependency>
             <groupId>com.google.inject</groupId>
             <artifactId>guice</artifactId>
+            <classifier>classes</classifier>
         </dependency>
 
         <dependency>
@@ -110,6 +111,11 @@
 
         <dependency>
             <groupId>org.apache.arrow</groupId>
+            <artifactId>arrow-memory-unsafe</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.arrow</groupId>
             <artifactId>arrow-vector</artifactId>
         </dependency>
 
@@ -169,12 +175,6 @@
         <dependency>
             <groupId>io.trino</groupId>
             <artifactId>trino-spi</artifactId>
-            <scope>provided</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.openjdk.jol</groupId>
-            <artifactId>jol-core</artifactId>
             <scope>provided</scope>
         </dependency>
 
@@ -261,27 +261,8 @@
 
         <dependency>
             <groupId>io.trino</groupId>
-            <artifactId>trino-spi</artifactId>
-            <type>test-jar</type>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>io.trino</groupId>
             <artifactId>trino-testing</artifactId>
             <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>io.trino</groupId>
-            <artifactId>trino-testing-kafka</artifactId>
-            <scope>test</scope>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.glassfish.jersey.core</groupId>
-                    <artifactId>jersey-common</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 
         <dependency>
@@ -328,19 +309,19 @@
 
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>kafka</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>localstack</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-localstack</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -401,7 +382,7 @@
                         </requireUpperBoundDeps>
                         <enforceBytecodeVersion>
                             <excludes combine.children="append">
-                                <!-- Trino SPI compiled with Java 24 -->
+                                <!-- Trino SPI compiled with Java 25 -->
                                 <exclude>io.trino:trino-spi</exclude>
                                 <exclude>io.trino:trino-matching</exclude>
                                 <exclude>io.trino:trino-cache</exclude>
@@ -414,7 +395,7 @@
             <plugin>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>--add-opens=java.base/java.nio=ALL-UNNAMED</argLine>
+                    <argLine>${air.test.jvm.additional-arguments} --add-opens=java.base/java.nio=ALL-UNNAMED</argLine>
                     <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
                     <useSystemClassLoader>false</useSystemClassLoader>
                     <!-- Each DistributedQueryRunner consumes ~500 threads. Limit parallel forks to
@@ -422,6 +403,7 @@
                          safe value for the local machine and passes it via -Dsurefire.forkCount. -->
                     <forkCount>${surefire.forkCount}</forkCount>
                     <systemPropertyVariables>
+                        <arrow.allocation.manager.type>Unsafe</arrow.allocation.manager.type>
                         <junit.jupiter.execution.parallel.mode.classes.default>same_thread</junit.jupiter.execution.parallel.mode.classes.default>
                     </systemPropertyVariables>
                 </configuration>
@@ -435,6 +417,8 @@
                         <ignoredUnusedDeclaredDependency>com.google.protobuf:protobuf-java</ignoredUnusedDeclaredDependency>
                         <!-- Currently unused but kept for potential future use -->
                         <ignoredUnusedDeclaredDependency>io.trino:trino-cache</ignoredUnusedDeclaredDependency>
+                        <!-- Selected reflectively by Arrow when arrow.allocation.manager.type=Unsafe -->
+                        <ignoredUnusedDeclaredDependency>org.apache.arrow:arrow-memory-unsafe</ignoredUnusedDeclaredDependency>
                         <!-- Used for @SuppressModernizer annotation -->
                         <ignoredUnusedDeclaredDependency>org.gaul:modernizer-maven-annotations</ignoredUnusedDeclaredDependency>
                     </ignoredUnusedDeclaredDependencies>

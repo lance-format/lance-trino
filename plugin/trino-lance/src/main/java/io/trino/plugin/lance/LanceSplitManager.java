@@ -46,8 +46,12 @@ public class LanceSplitManager
     }
 
     @Override
-    public ConnectorSplitSource getSplits(ConnectorTransactionHandle transactionHandle, ConnectorSession session,
-            ConnectorTableHandle tableHandle, DynamicFilter dynamicFilter, Constraint constraint)
+    public ConnectorSplitSource getSplits(
+            ConnectorTransactionHandle transactionHandle,
+            ConnectorSession session,
+            ConnectorTableHandle tableHandle,
+            DynamicFilter dynamicFilter,
+            Constraint constraint)
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) tableHandle;
 

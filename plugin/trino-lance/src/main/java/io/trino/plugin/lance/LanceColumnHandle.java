@@ -92,8 +92,7 @@ public record LanceColumnHandle(
             BlobUtils.BlobVirtualColumnType blobVirtualColumnType,
             String baseBlobColumnName)
     {
-        this(
-                name,
+        this(name,
                 trinoType,
                 isNullable,
                 fieldId,
