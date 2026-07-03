@@ -26,12 +26,14 @@ import io.trino.spi.connector.AggregationApplicationResult;
 import io.trino.spi.connector.Assignment;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
+import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
 import io.trino.spi.connector.ConnectorMergeTableHandle;
 import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorOutputMetadata;
 import io.trino.spi.connector.ConnectorOutputTableHandle;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.ConnectorTableExecuteHandle;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTableLayout;
 import io.trino.spi.connector.ConnectorTableMetadata;
@@ -70,6 +72,14 @@ import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
 import org.lance.SourcedTransaction;
 import org.lance.Transaction;
+import org.lance.compaction.CompactionOptions;
+import org.lance.index.Index;
+import org.lance.index.IndexOptions;
+import org.lance.index.IndexParams;
+import org.lance.index.IndexType;
+import org.lance.index.OptimizeOptions;
+import org.lance.index.scalar.InvertedIndexParams;
+import org.lance.index.scalar.ScalarIndexParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.DeclareTableRequest;
@@ -1268,6 +1278,162 @@ public class LanceMetadata
         finally {
             dataset.close();
         }
+    }
+
+    // ===== Table Procedures (ALTER TABLE ... EXECUTE) =====
+
+    @Override
+    public Optional<ConnectorTableExecuteHandle> getTableHandleForExecute(
+            ConnectorSession session,
+            ConnectorAccessControl accessControl,
+            ConnectorTableHandle tableHandle,
+            String procedureName,
+            Map<String, Object> executeProperties,
+            RetryMode retryMode)
+    {
+        LanceTableHandle table = (LanceTableHandle) tableHandle;
+
+        LanceTableProcedureId procedureId;
+        try {
+            procedureId = LanceTableProcedureId.valueOf(procedureName);
+        }
+        catch (IllegalArgumentException e) {
+            throw new TrinoException(NOT_SUPPORTED, "Unknown table procedure: " + procedureName);
+        }
+
+        LanceProcedureHandle procedureHandle = switch (procedureId) {
+            case CREATE_INDEX -> buildCreateIndexHandle(executeProperties);
+            case OPTIMIZE_INDICES -> buildOptimizeIndicesHandle(executeProperties);
+            case COMPACT -> buildCompactHandle(executeProperties);
+        };
+
+        Map<String, String> storageOptions = getEffectiveStorageOptions(table);
+        log.debug("getTableHandleForExecute: table=%s, procedure=%s, handle=%s", table.getTableName(), procedureId, procedureHandle);
+
+        return Optional.of(new LanceTableExecuteHandle(
+                new SchemaTableName(table.getSchemaName(), table.getTableName()),
+                table.getTablePath(),
+                table.getTableId(),
+                storageOptions,
+                procedureId,
+                procedureHandle));
+    }
+
+    private static LanceCreateIndexHandle buildCreateIndexHandle(Map<String, Object> properties)
+    {
+        String column = (String) properties.get(LanceTableProcedures.COLUMN);
+        if (column == null || column.isEmpty()) {
+            throw new TrinoException(INVALID_ARGUMENTS, "create_index requires a 'column' argument");
+        }
+        String indexType = (String) properties.get(LanceTableProcedures.INDEX_TYPE);
+        if (!"fts".equalsIgnoreCase(indexType)) {
+            throw new TrinoException(NOT_SUPPORTED, "create_index currently only supports index_type => 'fts', got: " + indexType);
+        }
+
+        return new LanceCreateIndexHandle(
+                column,
+                Optional.ofNullable((String) properties.get(LanceTableProcedures.INDEX_NAME)),
+                indexType,
+                (Boolean) properties.get(LanceTableProcedures.REPLACE),
+                (Boolean) properties.get(LanceTableProcedures.TRAIN),
+                (String) properties.get(LanceTableProcedures.BASE_TOKENIZER),
+                (String) properties.get(LanceTableProcedures.LANGUAGE),
+                (Boolean) properties.get(LanceTableProcedures.WITH_POSITION),
+                (Boolean) properties.get(LanceTableProcedures.LOWER_CASE),
+                (Boolean) properties.get(LanceTableProcedures.STEM),
+                (Boolean) properties.get(LanceTableProcedures.REMOVE_STOP_WORDS),
+                (Boolean) properties.get(LanceTableProcedures.ASCII_FOLDING),
+                Optional.ofNullable((Integer) properties.get(LanceTableProcedures.MAX_TOKEN_LENGTH)));
+    }
+
+    private static LanceOptimizeIndicesHandle buildOptimizeIndicesHandle(Map<String, Object> properties)
+    {
+        String indexNamesCsv = (String) properties.get(LanceTableProcedures.INDEX_NAMES);
+        List<String> indexNames = List.of();
+        if (indexNamesCsv != null && !indexNamesCsv.isEmpty()) {
+            indexNames = Arrays.stream(indexNamesCsv.split(","))
+                    .map(String::trim)
+                    .filter(name -> !name.isEmpty())
+                    .collect(toImmutableList());
+        }
+
+        return new LanceOptimizeIndicesHandle(
+                indexNames,
+                Optional.ofNullable((Integer) properties.get(LanceTableProcedures.NUM_INDICES_TO_MERGE)),
+                (Boolean) properties.get(LanceTableProcedures.RETRAIN));
+    }
+
+    private static LanceCompactHandle buildCompactHandle(Map<String, Object> properties)
+    {
+        return new LanceCompactHandle(Optional.ofNullable((Boolean) properties.get(LanceTableProcedures.DEFER_INDEX_REMAP)));
+    }
+
+    @Override
+    public void executeTableExecute(ConnectorSession session, ConnectorTableExecuteHandle tableExecuteHandle)
+    {
+        LanceTableExecuteHandle handle = (LanceTableExecuteHandle) tableExecuteHandle;
+        String userIdentity = session.getUser();
+
+        log.debug("executeTableExecute: table=%s, procedure=%s, handle=%s",
+                handle.schemaTableName(), handle.procedureId(), handle.procedureHandle());
+
+        try (Dataset dataset = runtime.openDatasetDirect(userIdentity, handle.tablePath(), null, handle.storageOptions())) {
+            switch (handle.procedureId()) {
+                case CREATE_INDEX -> executeCreateIndex(dataset, (LanceCreateIndexHandle) handle.procedureHandle());
+                case OPTIMIZE_INDICES -> executeOptimizeIndices(dataset, (LanceOptimizeIndicesHandle) handle.procedureHandle());
+                case COMPACT -> executeCompact(dataset, (LanceCompactHandle) handle.procedureHandle());
+            }
+        }
+        catch (RuntimeException e) {
+            if (isCommitConflict(e)) {
+                throw new TrinoException(TRANSACTION_CONFLICT, "Concurrent modification conflict", e);
+            }
+            throw e;
+        }
+
+        runtime.invalidate(userIdentity, handle.tablePath());
+    }
+
+    private void executeCreateIndex(Dataset dataset, LanceCreateIndexHandle handle)
+    {
+        InvertedIndexParams.Builder tokenizerBuilder = InvertedIndexParams.builder()
+                .baseTokenizer(handle.baseTokenizer())
+                .language(handle.language())
+                .withPosition(handle.withPosition())
+                .lowerCase(handle.lowerCase())
+                .stem(handle.stem())
+                .removeStopWords(handle.removeStopWords())
+                .asciiFolding(handle.asciiFolding());
+        handle.maxTokenLength().ifPresent(tokenizerBuilder::maxTokenLength);
+
+        ScalarIndexParams scalarParams = tokenizerBuilder.build();
+        IndexParams indexParams = IndexParams.builder().setScalarIndexParams(scalarParams).build();
+
+        IndexOptions.Builder optionsBuilder = IndexOptions
+                .builder(List.of(handle.column()), IndexType.INVERTED, indexParams)
+                .replace(handle.replace())
+                .train(handle.train());
+        handle.indexName().ifPresent(optionsBuilder::withIndexName);
+
+        Index index = dataset.createIndex(optionsBuilder.build());
+        log.debug("executeCreateIndex: created index %s on column %s", index.name(), handle.column());
+    }
+
+    private void executeOptimizeIndices(Dataset dataset, LanceOptimizeIndicesHandle handle)
+    {
+        OptimizeOptions.Builder builder = OptimizeOptions.builder().retrain(handle.retrain());
+        if (!handle.indexNames().isEmpty()) {
+            builder.indexNames(handle.indexNames());
+        }
+        handle.numIndicesToMerge().ifPresent(builder::numIndicesToMerge);
+        dataset.optimizeIndices(builder.build());
+    }
+
+    private void executeCompact(Dataset dataset, LanceCompactHandle handle)
+    {
+        CompactionOptions.Builder builder = CompactionOptions.builder();
+        handle.deferIndexRemap().ifPresent(builder::withDeferIndexRemap);
+        dataset.compact(builder.build());
     }
 
     // ===== Helper Methods =====
