@@ -17,6 +17,7 @@ import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.QueryRunner;
 import org.junit.jupiter.api.Test;
 import org.lance.Dataset;
+import org.lance.Fragment;
 import org.lance.ReadOptions;
 
 import java.nio.file.Files;
@@ -78,6 +79,48 @@ public class TestLanceTableExecuteProcedures
                     "ALTER TABLE " + tableName + " EXECUTE create_index(column => 'body', index_type => 'fts')"));
 
             // With replace => true it should succeed.
+            getQueryRunner().execute(
+                    "ALTER TABLE " + tableName + " EXECUTE create_index(column => 'body', index_type => 'fts', replace => true)");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
+    public void testCreateIndexParallelizesAcrossMultipleFragments()
+    {
+        String tableName = "test_create_index_parallel_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE TABLE " + tableName + " (id bigint, body varchar)");
+            // Separate INSERT statements so the table has multiple fragments before create_index
+            // runs, exercising the fragment-parallel build (org.lance.Dataset#createIndex with
+            // withFragmentIds/withIndexUUID per batch) + commitExistingIndexSegments merge path,
+            // instead of the single-fragment path that skips parallelization.
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, 'alpha document')", 1);
+            assertUpdate("INSERT INTO " + tableName + " VALUES (2, 'beta document')", 1);
+            assertUpdate("INSERT INTO " + tableName + " VALUES (3, 'gamma document')", 1);
+            assertUpdate("INSERT INTO " + tableName + " VALUES (4, 'delta document')", 1);
+
+            List<Integer> fragmentIdsBeforeIndex;
+            try (Dataset dataset = openDataset(tableName)) {
+                fragmentIdsBeforeIndex = dataset.getFragments().stream().map(Fragment::getId).toList();
+            }
+            assertThat(fragmentIdsBeforeIndex.size())
+                    .as("test setup should produce multiple fragments so the parallel path is exercised")
+                    .isGreaterThan(1);
+
+            getQueryRunner().execute("ALTER TABLE " + tableName + " EXECUTE create_index(column => 'body', index_type => 'fts')");
+
+            try (Dataset dataset = openDataset(tableName)) {
+                assertThat(dataset.listIndexes()).contains("body_idx");
+            }
+
+            // The merge (commitExistingIndexSegments) must not have lost or duplicated any rows.
+            assertQuery("SELECT count(*) FROM " + tableName, "SELECT 4");
+            assertQuery("SELECT id FROM " + tableName + " ORDER BY id", "VALUES 1, 2, 3, 4");
+
+            // replace => true must go through the same drop-then-commit path as the single-fragment case.
             getQueryRunner().execute(
                     "ALTER TABLE " + tableName + " EXECUTE create_index(column => 'body', index_type => 'fts', replace => true)");
         }

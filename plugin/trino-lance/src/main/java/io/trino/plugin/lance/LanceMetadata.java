@@ -16,6 +16,7 @@ package io.trino.plugin.lance;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
 import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
@@ -67,6 +68,7 @@ import io.trino.spi.type.Type;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.CommitBuilder;
 import org.lance.Dataset;
+import org.lance.Fragment;
 import org.lance.FragmentMetadata;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
@@ -124,6 +126,12 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -1396,6 +1404,59 @@ public class LanceMetadata
 
     private void executeCreateIndex(Dataset dataset, LanceCreateIndexHandle handle)
     {
+        IndexParams indexParams = IndexParams.builder().setScalarIndexParams(buildInvertedIndexParams(handle)).build();
+
+        // Registering an empty index (train=false) or training on a single-fragment table isn't
+        // worth parallelizing; fewer than 2 fragments means there's nothing to split work across.
+        List<Integer> fragmentIds = handle.train() ? dataset.getFragments().stream().map(Fragment::getId).toList() : List.of();
+        if (fragmentIds.size() < 2) {
+            IndexOptions.Builder optionsBuilder = IndexOptions
+                    .builder(List.of(handle.column()), IndexType.INVERTED, indexParams)
+                    .replace(handle.replace())
+                    .train(handle.train());
+            handle.indexName().ifPresent(optionsBuilder::withIndexName);
+
+            Index index = dataset.createIndex(optionsBuilder.build());
+            log.debug("executeCreateIndex: created index %s on column %s", index.name(), handle.column());
+            return;
+        }
+
+        // Phase 2: build one index segment per batch of fragments in parallel (each createIndex call
+        // with fragmentIds set takes only a read lock on the dataset and does not commit - see
+        // org.lance.Dataset#createIndex), consolidate the resulting segments into one physical segment,
+        // then commit that single segment as the named logical index in one write-locked call. This
+        // parallelizes the CPU-bound tokenize/build work across the coordinator's cores; it does not
+        // distribute across Trino worker nodes (see #187/#188 for why: Trino's distributed table-execute
+        // machinery requires scanning full table rows through the page pipeline, which would force
+        // redundant reads on top of Lance's own native fragment scan).
+        //
+        // Each batch is built with its own auto-generated UUID (IndexOptions.withIndexUUID is left
+        // unset): mergeExistingIndexSegments rejects segments sharing one UUID as duplicates, so - despite
+        // its Javadoc ("multiple fragment-level indices need to share UUID for later merging") - passing
+        // one shared UUID across batches does not work; the segments passed to mergeExistingIndexSegments
+        // must each carry a distinct identity.
+        String indexName = handle.indexName().orElseGet(() -> handle.column() + "_idx");
+        int parallelism = Math.min(fragmentIds.size(), Runtime.getRuntime().availableProcessors());
+
+        log.info("executeCreateIndex: building index %s on column %s across %d fragments with parallelism %d",
+                indexName, handle.column(), fragmentIds.size(), parallelism);
+
+        // Each per-fragment createIndex call validates the index name against the dataset's currently
+        // committed indices up front, even though it doesn't commit anything itself - so an existing
+        // index of the same name must be dropped before building segments, not just before the final
+        // commit, or every batch fails with "Index name '...' already exists".
+        if (handle.replace() && dataset.listIndexes().contains(indexName)) {
+            dataset.dropIndex(indexName);
+        }
+
+        List<Index> segments = buildIndexSegmentsInParallel(dataset, handle.column(), indexParams, fragmentIds, parallelism);
+        Index mergedSegment = dataset.mergeExistingIndexSegments(segments);
+        List<Index> committed = dataset.commitExistingIndexSegments(indexName, handle.column(), List.of(mergedSegment));
+        log.debug("executeCreateIndex: committed %d fragment-parallel segments as index %s", committed.size(), indexName);
+    }
+
+    private static ScalarIndexParams buildInvertedIndexParams(LanceCreateIndexHandle handle)
+    {
         InvertedIndexParams.Builder tokenizerBuilder = InvertedIndexParams.builder()
                 .baseTokenizer(handle.baseTokenizer())
                 .language(handle.language())
@@ -1405,18 +1466,44 @@ public class LanceMetadata
                 .removeStopWords(handle.removeStopWords())
                 .asciiFolding(handle.asciiFolding());
         handle.maxTokenLength().ifPresent(tokenizerBuilder::maxTokenLength);
+        return tokenizerBuilder.build();
+    }
 
-        ScalarIndexParams scalarParams = tokenizerBuilder.build();
-        IndexParams indexParams = IndexParams.builder().setScalarIndexParams(scalarParams).build();
+    private static List<Index> buildIndexSegmentsInParallel(
+            Dataset dataset, String column, IndexParams indexParams, List<Integer> fragmentIds, int parallelism)
+    {
+        int batchSize = (fragmentIds.size() + parallelism - 1) / parallelism;
+        List<List<Integer>> batches = Lists.partition(fragmentIds, batchSize);
+        AtomicInteger threadCounter = new AtomicInteger();
+        ThreadFactory threadFactory = runnable -> {
+            Thread thread = new Thread(runnable, "lance-create-index-" + threadCounter.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        };
+        try (ExecutorService executor = Executors.newFixedThreadPool(batches.size(), threadFactory)) {
+            // Each batch gets its own auto-generated segment UUID (withIndexUUID left unset) -
+            // see the caller for why a shared UUID across batches doesn't work here.
+            List<Future<Index>> futures = batches.stream()
+                    .map(batch -> executor.submit(() -> dataset.createIndex(
+                            IndexOptions.builder(List.of(column), IndexType.INVERTED, indexParams)
+                                    .withFragmentIds(batch)
+                                    .train(true)
+                                    .build())))
+                    .collect(toImmutableList());
 
-        IndexOptions.Builder optionsBuilder = IndexOptions
-                .builder(List.of(handle.column()), IndexType.INVERTED, indexParams)
-                .replace(handle.replace())
-                .train(handle.train());
-        handle.indexName().ifPresent(optionsBuilder::withIndexName);
-
-        Index index = dataset.createIndex(optionsBuilder.build());
-        log.debug("executeCreateIndex: created index %s on column %s", index.name(), handle.column());
+            List<Index> segments = new ArrayList<>();
+            for (Future<Index> future : futures) {
+                segments.add(future.get());
+            }
+            return segments;
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Interrupted while building index segments", e);
+        }
+        catch (ExecutionException e) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to build an index segment", e.getCause());
+        }
     }
 
     private void executeOptimizeIndices(Dataset dataset, LanceOptimizeIndicesHandle handle)
