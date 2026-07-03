@@ -130,6 +130,39 @@ public class TestLanceTableExecuteProcedures
     }
 
     @Test
+    public void testCreateIndexWithLanguageAgnosticTokenizers()
+    {
+        String tableName = "test_create_index_lang_agnostic_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE TABLE " + tableName + " (id bigint, body varchar)");
+            // Mixed-script content: whitespace-delimited English, plus Chinese and Japanese text
+            // with no whitespace between words at all. base_tokenizer => 'simple' (the default)
+            // would treat each CJK line as one giant token since it only splits on whitespace/punctuation.
+            assertUpdate("INSERT INTO " + tableName + " VALUES " +
+                    "(1, '这是一个测试文档，用于验证语言无关的分词器'), " +
+                    "(2, 'これはテストです、言語に依存しないトークナイザーを検証するためのものです'), " +
+                    "(3, 'hello world, this is an english test document')",
+                    3);
+
+            // 'ngram' is character-level and works uniformly regardless of script; the most
+            // conservative choice when the corpus mixes arbitrary/unknown scripts. Note: 'icu' -
+            // Unicode's own generic word-boundary segmentation - is documented on the lance-format/lance
+            // main branch but is NOT accepted by the lance-core:7.0.0 native library this connector
+            // pins (fails with "unknown base tokenizer icu"); it isn't available until a newer release.
+            getQueryRunner().execute(
+                    "ALTER TABLE " + tableName + " EXECUTE create_index(column => 'body', index_type => 'fts', base_tokenizer => 'ngram')");
+            try (Dataset dataset = openDataset(tableName)) {
+                assertThat(dataset.listIndexes()).contains("body_idx");
+            }
+
+            assertQuery("SELECT count(*) FROM " + tableName, "SELECT 3");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
     public void testCreateIndexRequiresColumnArgument()
     {
         String tableName = "test_create_index_missing_col_" + System.currentTimeMillis();

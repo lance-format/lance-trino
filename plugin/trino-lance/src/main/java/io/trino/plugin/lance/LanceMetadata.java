@@ -1387,7 +1387,7 @@ public class LanceMetadata
 
         try (Dataset dataset = runtime.openDatasetDirect(userIdentity, handle.tablePath(), null, handle.storageOptions())) {
             switch (handle.procedureId()) {
-                case CREATE_INDEX -> executeCreateIndex(dataset, (LanceCreateIndexHandle) handle.procedureHandle());
+                case CREATE_INDEX -> executeCreateIndex(dataset, handle.tablePath(), handle.storageOptions(), (LanceCreateIndexHandle) handle.procedureHandle());
                 case OPTIMIZE_INDICES -> executeOptimizeIndices(dataset, (LanceOptimizeIndicesHandle) handle.procedureHandle());
                 case COMPACT -> executeCompact(dataset, (LanceCompactHandle) handle.procedureHandle());
             }
@@ -1402,7 +1402,7 @@ public class LanceMetadata
         runtime.invalidate(userIdentity, handle.tablePath());
     }
 
-    private void executeCreateIndex(Dataset dataset, LanceCreateIndexHandle handle)
+    private void executeCreateIndex(Dataset dataset, String tablePath, Map<String, String> storageOptions, LanceCreateIndexHandle handle)
     {
         IndexParams indexParams = IndexParams.builder().setScalarIndexParams(buildInvertedIndexParams(handle)).build();
 
@@ -1421,14 +1421,21 @@ public class LanceMetadata
             return;
         }
 
-        // Phase 2: build one index segment per batch of fragments in parallel (each createIndex call
-        // with fragmentIds set takes only a read lock on the dataset and does not commit - see
-        // org.lance.Dataset#createIndex), consolidate the resulting segments into one physical segment,
-        // then commit that single segment as the named logical index in one write-locked call. This
-        // parallelizes the CPU-bound tokenize/build work across the coordinator's cores; it does not
-        // distribute across Trino worker nodes (see #187/#188 for why: Trino's distributed table-execute
-        // machinery requires scanning full table rows through the page pipeline, which would force
-        // redundant reads on top of Lance's own native fragment scan).
+        // Phase 2: build one index segment per batch of fragments in parallel, consolidate the
+        // resulting segments into one physical segment, then commit that single segment as the named
+        // logical index in one write-locked call. This parallelizes the CPU-bound tokenize/build work
+        // across the coordinator's cores; it does not distribute across Trino worker nodes (see #187/
+        // #188 for why: Trino's distributed table-execute machinery requires scanning full table rows
+        // through the page pipeline, which would force redundant reads on top of Lance's own native
+        // fragment scan).
+        //
+        // Each batch opens its OWN independent Dataset handle (see buildIndexSegmentsInParallel) rather
+        // than sharing this method's `dataset` - benchmarking showed concurrent createIndex calls
+        // against one shared Dataset instance are consistently slower than the plain single-call path
+        // (shared allocator/handle contention, not anything about Lance's own createIndex being
+        // internally parallelized - it isn't; lance-index's inverted-index builder has no internal
+        // rayon/tokio/thread concurrency), while independent per-thread handles show real ~20-40%
+        // speedup up to about 4 concurrent builds before plateauing.
         //
         // Each batch is built with its own auto-generated UUID (IndexOptions.withIndexUUID is left
         // unset): mergeExistingIndexSegments rejects segments sharing one UUID as duplicates, so - despite
@@ -1449,13 +1456,14 @@ public class LanceMetadata
             dataset.dropIndex(indexName);
         }
 
-        List<Index> segments = buildIndexSegmentsInParallel(dataset, handle.column(), indexParams, fragmentIds, parallelism);
+        List<Index> segments = buildIndexSegmentsInParallel(tablePath, storageOptions, handle.column(), indexParams, fragmentIds, parallelism);
         Index mergedSegment = dataset.mergeExistingIndexSegments(segments);
         List<Index> committed = dataset.commitExistingIndexSegments(indexName, handle.column(), List.of(mergedSegment));
         log.debug("executeCreateIndex: committed %d fragment-parallel segments as index %s", committed.size(), indexName);
     }
 
-    private static ScalarIndexParams buildInvertedIndexParams(LanceCreateIndexHandle handle)
+    @VisibleForTesting
+    static ScalarIndexParams buildInvertedIndexParams(LanceCreateIndexHandle handle)
     {
         InvertedIndexParams.Builder tokenizerBuilder = InvertedIndexParams.builder()
                 .baseTokenizer(handle.baseTokenizer())
@@ -1469,8 +1477,9 @@ public class LanceMetadata
         return tokenizerBuilder.build();
     }
 
-    private static List<Index> buildIndexSegmentsInParallel(
-            Dataset dataset, String column, IndexParams indexParams, List<Integer> fragmentIds, int parallelism)
+    @VisibleForTesting
+    static List<Index> buildIndexSegmentsInParallel(
+            String tablePath, Map<String, String> storageOptions, String column, IndexParams indexParams, List<Integer> fragmentIds, int parallelism)
     {
         int batchSize = (fragmentIds.size() + parallelism - 1) / parallelism;
         List<List<Integer>> batches = Lists.partition(fragmentIds, batchSize);
@@ -1481,14 +1490,24 @@ public class LanceMetadata
             return thread;
         };
         try (ExecutorService executor = Executors.newFixedThreadPool(batches.size(), threadFactory)) {
-            // Each batch gets its own auto-generated segment UUID (withIndexUUID left unset) -
-            // see the caller for why a shared UUID across batches doesn't work here.
+            // Each batch opens its own independent Dataset handle (own native handle, own allocator -
+            // not a shared session/allocator via LanceRuntime) and gets its own auto-generated segment
+            // UUID (withIndexUUID left unset - see the caller for why a shared UUID across batches
+            // doesn't work here).
             List<Future<Index>> futures = batches.stream()
-                    .map(batch -> executor.submit(() -> dataset.createIndex(
-                            IndexOptions.builder(List.of(column), IndexType.INVERTED, indexParams)
-                                    .withFragmentIds(batch)
-                                    .train(true)
-                                    .build())))
+                    .map(batch -> executor.submit(() -> {
+                        ReadOptions.Builder readOptionsBuilder = new ReadOptions.Builder();
+                        if (storageOptions != null && !storageOptions.isEmpty()) {
+                            readOptionsBuilder.setStorageOptions(storageOptions);
+                        }
+                        try (Dataset batchDataset = Dataset.open(tablePath, readOptionsBuilder.build())) {
+                            return batchDataset.createIndex(
+                                    IndexOptions.builder(List.of(column), IndexType.INVERTED, indexParams)
+                                            .withFragmentIds(batch)
+                                            .train(true)
+                                            .build());
+                        }
+                    }))
                     .collect(toImmutableList());
 
             List<Index> segments = new ArrayList<>();
