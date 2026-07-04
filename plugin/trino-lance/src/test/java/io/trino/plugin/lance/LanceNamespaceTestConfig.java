@@ -28,7 +28,7 @@ import java.util.UUID;
 public enum LanceNamespaceTestConfig
 {
     /**
-     * Directory namespace with single_level_ns=true (1st level access, virtual "default" schema).
+     * Directory namespace with single-level-ns=true (1st level access, virtual "default" schema).
      * CREATE SCHEMA is not allowed in this mode.
      */
     DIRECTORY_SINGLE_LEVEL("dir", true, Optional.empty()),
@@ -47,7 +47,7 @@ public enum LanceNamespaceTestConfig
     DIRECTORY_DEFAULT("dir", false, Optional.empty()),
 
     /**
-     * REST namespace with single_level_ns=true backend.
+     * REST namespace with single-level-ns=true backend.
      */
     REST_SINGLE_LEVEL("rest", true, Optional.empty()),
 
@@ -63,7 +63,7 @@ public enum LanceNamespaceTestConfig
     REST_DEFAULT("rest", false, Optional.empty()),
 
     /**
-     * S3 directory namespace with single_level_ns=true.
+     * S3 directory namespace with single-level-ns=true.
      */
     S3_SINGLE_LEVEL("dir", true, Optional.empty()),
 
@@ -155,7 +155,7 @@ public enum LanceNamespaceTestConfig
         properties.put("lance.root", rootPath);
 
         if (singleLevelNs) {
-            properties.put("lance.single_level_ns", "true");
+            properties.put("lance.single-level-ns", "true");
         }
 
         parent.ifPresent(p -> properties.put("lance.parent", p));
@@ -176,7 +176,7 @@ public enum LanceNamespaceTestConfig
         properties.put("lance.uri", restUri);
 
         if (singleLevelNs) {
-            properties.put("lance.single_level_ns", "true");
+            properties.put("lance.single-level-ns", "true");
         }
 
         parent.ifPresent(p -> properties.put("lance.parent", p));
@@ -206,7 +206,7 @@ public enum LanceNamespaceTestConfig
         properties.put("lance.storage.aws_s3_force_path_style", "true");
 
         if (singleLevelNs) {
-            properties.put("lance.single_level_ns", "true");
+            properties.put("lance.single-level-ns", "true");
         }
 
         parent.ifPresent(p -> properties.put("lance.parent", p));
@@ -261,7 +261,7 @@ public enum LanceNamespaceTestConfig
         properties.put("lance.storage.aws_s3_force_path_style", "true");
 
         if (singleLevelNs) {
-            properties.put("lance.single_level_ns", "true");
+            properties.put("lance.single-level-ns", "true");
         }
 
         parent.ifPresent(p -> properties.put("lance.parent", p));

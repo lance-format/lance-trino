@@ -38,7 +38,7 @@ Uses a virtual `default` schema. All tables are stored at the root level. `CREAT
 connector.name=lance
 lance.impl=dir
 lance.root=s3://my-bucket/lance-warehouse
-lance.single_level_ns=true
+lance.single-level-ns=true
 ```
 
 ```sql
@@ -65,7 +65,7 @@ CREATE TABLE lance.myschema.users (id BIGINT, name VARCHAR);
 
 | Property | Description | Default |
 |----------|-------------|---------|
-| `lance.single_level_ns` | Enable single-level mode with virtual `default` schema | `false` |
+| `lance.single-level-ns` | Enable single-level mode with virtual `default` schema | `false` |
 | `lance.parent` | Parent namespace prefix (levels separated by `$`) | - |
 
 ## Read and Write Settings
@@ -74,10 +74,10 @@ Control batch sizes for vectorized operations:
 
 | Property | Description | Default |
 |----------|-------------|---------|
-| `lance.read_batch_size` | Rows per batch during vectorized reads | `8192` |
-| `lance.write_batch_size` | Rows to batch before writing to Arrow | `10000` |
-| `lance.max_rows_per_file` | Maximum rows per Lance file | `1000000` |
-| `lance.max_rows_per_group` | Maximum rows per row group | `100000` |
+| `lance.read-batch-size` | Rows per batch during vectorized reads | `8192` |
+| `lance.write-batch-size` | Rows to batch before writing to Arrow | `10000` |
+| `lance.max-rows-per-file` | Maximum rows per Lance file | `1000000` |
+| `lance.max-rows-per-group` | Maximum rows per row group | `100000` |
 
 ## Examples
 

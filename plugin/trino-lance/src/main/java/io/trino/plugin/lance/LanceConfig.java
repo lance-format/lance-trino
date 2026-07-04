@@ -15,6 +15,7 @@ package io.trino.plugin.lance;
 
 import io.airlift.configuration.Config;
 import io.airlift.configuration.ConfigDescription;
+import io.airlift.configuration.LegacyConfig;
 import jakarta.validation.constraints.NotNull;
 
 /**
@@ -85,7 +86,8 @@ public class LanceConfig
         return singleLevelNs;
     }
 
-    @Config("lance.single_level_ns")
+    @Config("lance.single-level-ns")
+    @LegacyConfig("lance.single_level_ns")
     @ConfigDescription("Access 1st level namespace with virtual 'default' schema (no CREATE SCHEMA)")
     public LanceConfig setSingleLevelNs(boolean singleLevelNs)
     {
@@ -115,7 +117,8 @@ public class LanceConfig
         return readBatchSize;
     }
 
-    @Config("lance.read_batch_size")
+    @Config("lance.read-batch-size")
+    @LegacyConfig("lance.read_batch_size")
     @ConfigDescription("Number of rows per batch during vectorized reads (default 8192 for optimal OLAP performance)")
     public LanceConfig setReadBatchSize(int readBatchSize)
     {
@@ -134,7 +137,8 @@ public class LanceConfig
         return maxRowsPerFile;
     }
 
-    @Config("lance.max_rows_per_file")
+    @Config("lance.max-rows-per-file")
+    @LegacyConfig("lance.max_rows_per_file")
     @ConfigDescription("Maximum number of rows per Lance file")
     public LanceConfig setMaxRowsPerFile(int maxRowsPerFile)
     {
@@ -147,7 +151,8 @@ public class LanceConfig
         return maxRowsPerGroup;
     }
 
-    @Config("lance.max_rows_per_group")
+    @Config("lance.max-rows-per-group")
+    @LegacyConfig("lance.max_rows_per_group")
     @ConfigDescription("Maximum number of rows per row group within a Lance file")
     public LanceConfig setMaxRowsPerGroup(int maxRowsPerGroup)
     {
@@ -160,7 +165,8 @@ public class LanceConfig
         return writeBatchSize;
     }
 
-    @Config("lance.write_batch_size")
+    @Config("lance.write-batch-size")
+    @LegacyConfig("lance.write_batch_size")
     @ConfigDescription("Number of rows to batch before writing to Arrow")
     public LanceConfig setWriteBatchSize(int writeBatchSize)
     {
@@ -182,7 +188,8 @@ public class LanceConfig
         return cacheSessionMaxEntries;
     }
 
-    @Config("lance.cache.session.max_entries")
+    @Config("lance.cache.session.max-entries")
+    @LegacyConfig("lance.cache.session.max_entries")
     @ConfigDescription("Maximum number of cached sessions (default 100)")
     public LanceConfig setCacheSessionMaxEntries(int cacheSessionMaxEntries)
     {
@@ -195,7 +202,8 @@ public class LanceConfig
         return cacheSessionTtlMinutes;
     }
 
-    @Config("lance.cache.session.ttl_minutes")
+    @Config("lance.cache.session.ttl-minutes")
+    @LegacyConfig("lance.cache.session.ttl_minutes")
     @ConfigDescription("Session cache TTL in minutes (default 60)")
     public LanceConfig setCacheSessionTtlMinutes(int cacheSessionTtlMinutes)
     {
@@ -208,7 +216,8 @@ public class LanceConfig
         return cacheSessionIndexCacheSizeBytes;
     }
 
-    @Config("lance.cache.session.index_cache_size_bytes")
+    @Config("lance.cache.session.index-cache-size-bytes")
+    @LegacyConfig("lance.cache.session.index_cache_size_bytes")
     @ConfigDescription("Lance session index cache size in bytes (default: Lance default)")
     public LanceConfig setCacheSessionIndexCacheSizeBytes(Long cacheSessionIndexCacheSizeBytes)
     {
@@ -221,7 +230,8 @@ public class LanceConfig
         return cacheSessionMetadataCacheSizeBytes;
     }
 
-    @Config("lance.cache.session.metadata_cache_size_bytes")
+    @Config("lance.cache.session.metadata-cache-size-bytes")
+    @LegacyConfig("lance.cache.session.metadata_cache_size_bytes")
     @ConfigDescription("Lance session metadata cache size in bytes (default: Lance default)")
     public LanceConfig setCacheSessionMetadataCacheSizeBytes(Long cacheSessionMetadataCacheSizeBytes)
     {
@@ -234,7 +244,8 @@ public class LanceConfig
         return cacheDatasetMaxEntries;
     }
 
-    @Config("lance.cache.dataset.max_entries")
+    @Config("lance.cache.dataset.max-entries")
+    @LegacyConfig("lance.cache.dataset.max_entries")
     @ConfigDescription("Maximum number of cached datasets (default 100)")
     public LanceConfig setCacheDatasetMaxEntries(int cacheDatasetMaxEntries)
     {
@@ -247,7 +258,8 @@ public class LanceConfig
         return cacheDatasetTtlMinutes;
     }
 
-    @Config("lance.cache.dataset.ttl_minutes")
+    @Config("lance.cache.dataset.ttl-minutes")
+    @LegacyConfig("lance.cache.dataset.ttl_minutes")
     @ConfigDescription("Dataset cache TTL in minutes (default 30)")
     public LanceConfig setCacheDatasetTtlMinutes(int cacheDatasetTtlMinutes)
     {
