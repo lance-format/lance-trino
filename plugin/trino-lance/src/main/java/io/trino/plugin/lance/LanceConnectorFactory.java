@@ -30,7 +30,6 @@ import org.weakref.jmx.guice.MBeanModule;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 import static io.trino.plugin.base.Versions.checkStrictSpiVersionMatch;
@@ -47,13 +46,6 @@ public class LanceConnectorFactory
             "lance.write_batch_size",
             "lance.single_level_ns",
             "lance.parent");
-
-    private final Optional<Module> extension;
-
-    public LanceConnectorFactory(Optional<Module> extension)
-    {
-        this.extension = requireNonNull(extension, "extension is null");
-    }
 
     @Override
     public String getName()
@@ -90,8 +82,6 @@ public class LanceConnectorFactory
                                 .toInstance(catalogProperties));
         // TODO: add auth module
         // .add(new AuthenticationModule());
-
-        extension.ifPresent(modulesBuilder::add);
 
         Bootstrap app = new Bootstrap(modulesBuilder.build());
 
