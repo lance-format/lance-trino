@@ -88,6 +88,7 @@ import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.operation.Append;
 import org.lance.operation.Overwrite;
 import org.lance.operation.Update;
+import org.lance.schema.LanceSchema;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -376,11 +377,13 @@ public class LanceMetadata
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
             String userIdentity = session.getUser();
-            List<ColumnMetadata> columnsMetadata = runtime.getColumnMetadata(
-                    userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
+            LanceSchema lanceSchema = runtime.getLanceSchema(userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
+            Schema arrowSchema = runtime.getSchema(userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
+            List<ColumnMetadata> columnsMetadata = LanceRuntime.getColumnMetadata(lanceSchema, arrowSchema);
             SchemaTableName schemaTableName =
                     new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName());
-            return new ConnectorTableMetadata(schemaTableName, columnsMetadata);
+            Map<String, Object> properties = LanceRuntime.getTableProperties(arrowSchema);
+            return new ConnectorTableMetadata(schemaTableName, columnsMetadata, properties);
         }
         catch (Exception e) {
             log.debug(e, "Failed to get table metadata for %s", lanceTableHandle.getTableName());
