@@ -45,6 +45,9 @@ public class TestLanceBlobEncoding
 
             // Verify table was created
             assertThat(computeScalar("SELECT COUNT(*) FROM " + tableName)).isEqualTo(0L);
+
+            assertThat((String) computeScalar("SHOW CREATE TABLE " + tableName))
+                    .contains("blob_columns = 'content'");
         }
         finally {
             assertUpdate("DROP TABLE IF EXISTS " + tableName);
@@ -117,6 +120,9 @@ public class TestLanceBlobEncoding
 
             // Verify table was created
             assertThat(computeScalar("SELECT COUNT(*) FROM " + tableName)).isEqualTo(1L);
+
+            assertThat((String) computeScalar("SHOW CREATE TABLE " + tableName))
+                    .contains("blob_columns = 'content1, content2'");
         }
         finally {
             assertUpdate("DROP TABLE IF EXISTS " + tableName);

@@ -16,6 +16,7 @@ package io.trino.plugin.lance;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.RemovalListener;
+import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import io.airlift.log.Logger;
 import io.trino.spi.connector.ColumnHandle;
@@ -23,6 +24,7 @@ import io.trino.spi.connector.ColumnMetadata;
 import jakarta.annotation.PreDestroy;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.gaul.modernizer_maven_annotations.SuppressModernizer;
@@ -50,12 +52,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.plugin.lance.LanceTableProperties.BLOB_COLUMNS;
+import static io.trino.plugin.lance.LanceTableProperties.VECTOR_COLUMNS;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static java.util.Objects.requireNonNull;
 
@@ -419,12 +422,37 @@ public class LanceRuntime
         return dataset.getLanceSchema();
     }
 
+    public static Map<String, Object> getTableProperties(Schema arrowSchema)
+    {
+        ImmutableMap.Builder<String, Object> properties = ImmutableMap.builder();
+        List<String> blobColumns = getBlobColumnsFromSchema(arrowSchema);
+        if (!blobColumns.isEmpty()) {
+            properties.put(BLOB_COLUMNS, String.join(", ", blobColumns));
+        }
+
+        String vectorColumns = arrowSchema.getFields().stream()
+                .filter(field -> field.getType() instanceof ArrowType.FixedSizeList)
+                .map(field -> "%s:%s".formatted(field.getName(), ((ArrowType.FixedSizeList) field.getType()).getListSize()))
+                .collect(Collectors.joining(", "));
+        if (!vectorColumns.isEmpty()) {
+            properties.put(VECTOR_COLUMNS, vectorColumns);
+        }
+
+        // TODO Expose file_format_version properties
+        return properties.buildOrThrow();
+    }
+
     public Map<String, ColumnHandle> getColumnHandles(String userIdentity, String tablePath, Long version,
             Map<String, String> storageOptions)
     {
         LanceSchema lanceSchema = getLanceSchema(userIdentity, tablePath, version, storageOptions);
         Schema arrowSchema = getSchema(userIdentity, tablePath, version, storageOptions);
-        Set<String> blobColumns = getBlobColumnsFromSchema(arrowSchema);
+        return getColumnHandles(lanceSchema, arrowSchema);
+    }
+
+    private static Map<String, ColumnHandle> getColumnHandles(LanceSchema lanceSchema, Schema arrowSchema)
+    {
+        List<String> blobColumns = getBlobColumnsFromSchema(arrowSchema);
 
         Map<String, ColumnHandle> result = new LinkedHashMap<>();
 
@@ -469,7 +497,7 @@ public class LanceRuntime
     {
         LanceSchema lanceSchema = getLanceSchema(userIdentity, tablePath, version, storageOptions);
         Schema arrowSchema = getSchema(userIdentity, tablePath, version, storageOptions);
-        Set<String> blobColumns = getBlobColumnsFromSchema(arrowSchema);
+        List<String> blobColumns = getBlobColumnsFromSchema(arrowSchema);
 
         List<LanceColumnHandle> result = new ArrayList<>();
 
@@ -506,18 +534,25 @@ public class LanceRuntime
         return result;
     }
 
-    private static Set<String> getBlobColumnsFromSchema(Schema schema)
+    private static List<String> getBlobColumnsFromSchema(Schema schema)
     {
         return schema.getFields().stream()
                 .filter(BlobUtils::isBlobArrowField)
                 .map(Field::getName)
-                .collect(Collectors.toSet());
+                .collect(toImmutableList());
     }
 
     public List<ColumnMetadata> getColumnMetadata(String userIdentity, String tablePath, Long version,
             Map<String, String> storageOptions)
     {
-        Map<String, ColumnHandle> columnHandles = getColumnHandles(userIdentity, tablePath, version, storageOptions);
+        LanceSchema lanceSchema = getLanceSchema(userIdentity, tablePath, version, storageOptions);
+        Schema arrowSchema = getSchema(userIdentity, tablePath, version, storageOptions);
+        return getColumnMetadata(lanceSchema, arrowSchema);
+    }
+
+    public static List<ColumnMetadata> getColumnMetadata(LanceSchema lanceSchema, Schema arrowSchema)
+    {
+        Map<String, ColumnHandle> columnHandles = getColumnHandles(lanceSchema, arrowSchema);
         return columnHandles.values().stream()
                 .map(c -> ((LanceColumnHandle) c).getColumnMetadata())
                 .collect(toImmutableList());

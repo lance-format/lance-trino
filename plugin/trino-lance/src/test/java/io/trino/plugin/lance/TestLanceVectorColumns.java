@@ -45,6 +45,9 @@ public class TestLanceVectorColumns
 
             // Verify table was created
             assertThat(computeScalar("SELECT COUNT(*) FROM " + tableName)).isEqualTo(0L);
+
+            assertThat((String) computeScalar("SHOW CREATE TABLE " + tableName))
+                    .contains("vector_columns = 'embedding:768'");
         }
         finally {
             assertUpdate("DROP TABLE IF EXISTS " + tableName);
@@ -130,6 +133,9 @@ public class TestLanceVectorColumns
 
             // Verify table was created
             assertThat(computeScalar("SELECT COUNT(*) FROM " + tableName)).isEqualTo(1L);
+
+            assertThat((String) computeScalar("SHOW CREATE TABLE " + tableName))
+                    .contains("vector_columns = 'embedding1:2, embedding2:3'");
         }
         finally {
             assertUpdate("DROP TABLE IF EXISTS " + tableName);
