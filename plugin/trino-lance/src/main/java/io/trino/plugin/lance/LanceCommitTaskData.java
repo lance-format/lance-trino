@@ -13,12 +13,9 @@
  */
 package io.trino.plugin.lance;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.ImmutableList;
 
 import java.util.List;
-
-import static java.util.Objects.requireNonNull;
 
 /**
  * Data class representing commit information from a worker task.
@@ -27,38 +24,10 @@ import static java.util.Objects.requireNonNull;
  *
  * Contains fragment metadata that needs to be committed atomically.
  */
-public class LanceCommitTaskData
+public record LanceCommitTaskData(List<String> fragmentsJson, long writtenBytes, long rowCount)
 {
-    private final List<String> fragmentsJson;
-    private final long writtenBytes;
-    private final long rowCount;
-
-    @JsonCreator
-    public LanceCommitTaskData(
-            @JsonProperty("fragmentsJson") List<String> fragmentsJson,
-            @JsonProperty("writtenBytes") long writtenBytes,
-            @JsonProperty("rowCount") long rowCount)
+    public LanceCommitTaskData
     {
-        this.fragmentsJson = requireNonNull(fragmentsJson, "fragmentsJson is null");
-        this.writtenBytes = writtenBytes;
-        this.rowCount = rowCount;
-    }
-
-    @JsonProperty
-    public List<String> getFragmentsJson()
-    {
-        return fragmentsJson;
-    }
-
-    @JsonProperty
-    public long getWrittenBytes()
-    {
-        return writtenBytes;
-    }
-
-    @JsonProperty
-    public long getRowCount()
-    {
-        return rowCount;
+        fragmentsJson = ImmutableList.copyOf(fragmentsJson);
     }
 }

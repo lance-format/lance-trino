@@ -30,10 +30,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static io.airlift.slice.Slices.wrappedBuffer;
-import static io.trino.spi.connector.ConnectorMergeSink.DELETE_OPERATION_NUMBER;
-import static io.trino.spi.connector.ConnectorMergeSink.INSERT_OPERATION_NUMBER;
-import static io.trino.spi.connector.ConnectorMergeSink.UPDATE_DELETE_OPERATION_NUMBER;
-import static io.trino.spi.connector.ConnectorMergeSink.UPDATE_INSERT_OPERATION_NUMBER;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.TinyintType.TINYINT;
 import static java.util.Objects.requireNonNull;
@@ -189,7 +185,7 @@ public class LanceMergeSink
 
         for (Slice slice : insertResults) {
             LanceCommitTaskData insertData = insertCodec.fromJson(slice.getBytes());
-            allFragmentsJson.addAll(insertData.getFragmentsJson());
+            allFragmentsJson.addAll(insertData.fragmentsJson());
         }
 
         return allFragmentsJson;

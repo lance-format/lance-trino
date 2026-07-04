@@ -1358,7 +1358,7 @@ public class LanceMetadata
         List<String> allFragmentsJson = new ArrayList<>();
         for (Slice slice : fragments) {
             LanceCommitTaskData commitData = commitTaskDataCodec.fromJson(slice.getBytes());
-            allFragmentsJson.addAll(commitData.getFragmentsJson());
+            allFragmentsJson.addAll(commitData.fragmentsJson());
         }
         return allFragmentsJson;
     }
