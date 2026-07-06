@@ -10,7 +10,7 @@
 
     <groupId>org.lance</groupId>
     <artifactId>lance-trino-root</artifactId>
-    <version>0.3.2</version>
+    <version>0.3.3</version>
     <packaging>pom</packaging>
 
     <name>${project.artifactId}</name>
