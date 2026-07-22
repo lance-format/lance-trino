@@ -42,8 +42,10 @@ import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.RealType.REAL;
+import static io.trino.spi.type.SmallintType.SMALLINT;
 import static io.trino.spi.type.TimestampType.TIMESTAMP_MICROS;
 import static io.trino.spi.type.TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS;
+import static io.trino.spi.type.TinyintType.TINYINT;
 import static io.trino.spi.type.VarbinaryType.VARBINARY;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
@@ -260,7 +262,15 @@ public record LanceColumnHandle(
             return BOOLEAN;
         }
         else if (type instanceof ArrowType.Int intType) {
-            if (intType.getBitWidth() == 32) {
+            if (intType.getBitWidth() == 8) {
+                // Unsigned int8 (0-255) exceeds TINYINT range, so widen to SMALLINT
+                return intType.getIsSigned() ? TINYINT : SMALLINT;
+            }
+            else if (intType.getBitWidth() == 16) {
+                // Unsigned int16 (0-65535) exceeds SMALLINT range, so widen to INTEGER
+                return intType.getIsSigned() ? SMALLINT : INTEGER;
+            }
+            else if (intType.getBitWidth() == 32) {
                 // Unsigned int32 can exceed Integer.MAX_VALUE, so map to BIGINT
                 return intType.getIsSigned() ? INTEGER : BIGINT;
             }
@@ -353,6 +363,12 @@ public record LanceColumnHandle(
     {
         if (trinoType.equals(BOOLEAN)) {
             return ArrowType.Bool.INSTANCE;
+        }
+        else if (trinoType.equals(TINYINT)) {
+            return new ArrowType.Int(8, true);
+        }
+        else if (trinoType.equals(SMALLINT)) {
+            return new ArrowType.Int(16, true);
         }
         else if (trinoType.equals(INTEGER)) {
             return new ArrowType.Int(32, true);
