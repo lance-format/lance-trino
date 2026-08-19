@@ -15,6 +15,9 @@ package io.trino.plugin.lance;
 
 import io.airlift.slice.Slices;
 import io.substrait.expression.Expression;
+import io.substrait.proto.ExtendedExpression;
+import io.substrait.proto.NamedStruct;
+import io.substrait.proto.Type;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.expression.Call;
 import io.trino.spi.expression.ConnectorExpression;
@@ -25,6 +28,7 @@ import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.predicate.ValueSet;
+import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.RowType;
 import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.TimestampWithTimeZoneType;
@@ -33,6 +37,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -484,5 +489,91 @@ public class TestSubstraitExpressionBuilder
 
         assertThat(result.substraitExpressions()).hasSize(1);
         assertThat(result.columnNames()).containsExactly("meta\\.data.a\\.b");
+    }
+
+    // ===== NamedStruct.names / lance field-count invariant =====
+
+    @Test
+    public void testBaseSchemaNamesMatchLanceFieldCount()
+            throws Exception
+    {
+        RowType tagRow = RowType.rowType(RowType.field("tag", VARCHAR));
+        RowType abRow = RowType.rowType(RowType.field("a", BIGINT), RowType.field("b", VARCHAR));
+
+        List<LanceColumnHandle> columns = List.of(
+                new LanceColumnHandle("id", INTEGER, true, 0),
+                new LanceColumnHandle("row_col", abRow, true, 1),
+                new LanceColumnHandle("nested_row", RowType.rowType(
+                        RowType.field("x", BIGINT),
+                        RowType.field("inner", tagRow)), true, 2),
+                new LanceColumnHandle("prim_array", new ArrayType(BIGINT), true, 3),
+                new LanceColumnHandle("array_of_row", new ArrayType(tagRow), true, 4),
+                new LanceColumnHandle("array_of_row2", new ArrayType(abRow), true, 5),
+                new LanceColumnHandle("array_of_array_of_row", new ArrayType(new ArrayType(abRow)), true, 6),
+                new LanceColumnHandle("row_with_array", RowType.rowType(
+                        RowType.field("x", BIGINT),
+                        RowType.field("arr", new ArrayType(abRow))), true, 7));
+
+        NamedStruct schema = baseSchemaFor(columns);
+        List<Type> types = schema.getStruct().getTypesList();
+        assertThat(types).hasSize(columns.size());
+
+        int fieldIndex = 0;
+        for (int i = 0; i < types.size(); i++) {
+            assertThat(fieldIndex).isLessThan(schema.getNamesCount());
+            assertThat(schema.getNames(fieldIndex)).isEqualTo(columns.get(i).name());
+            fieldIndex += countFields(types.get(i));
+        }
+        assertThat(fieldIndex).isEqualTo(schema.getNamesCount());
+    }
+
+    @Test
+    public void testBaseSchemaNamesOrderForArrayOfRow()
+            throws Exception
+    {
+        List<LanceColumnHandle> columns = List.of(
+                new LanceColumnHandle("id", INTEGER, true, 0),
+                new LanceColumnHandle("col", new ArrayType(RowType.rowType(
+                        RowType.field("a", BIGINT),
+                        RowType.field("b", VARCHAR))), true, 1));
+
+        NamedStruct schema = baseSchemaFor(columns);
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < schema.getNamesCount(); i++) {
+            names.add(schema.getNames(i));
+        }
+        assertThat(names).containsExactly("id", "col", "a", "b");
+    }
+
+    /**
+     * Mirror of count_fields() in lance-datafusion/src/substrait.rs: a struct consumes a name for
+     * itself plus one per nested field, a list consumes none of its own, everything else consumes one.
+     */
+    private static int countFields(Type substraitType)
+    {
+        return switch (substraitType.getKindCase()) {
+            case STRUCT -> substraitType.getStruct().getTypesList().stream()
+                    .mapToInt(TestSubstraitExpressionBuilder::countFields)
+                    .sum() + 1;
+            case LIST -> countFields(substraitType.getList().getType());
+            default -> 1;
+        };
+    }
+
+    /**
+     * Builds the base schema the connector would send to lance for a filter on the first column.
+     * The predicate itself is irrelevant: the base schema always covers every column of the table.
+     */
+    private static NamedStruct baseSchemaFor(List<LanceColumnHandle> columns)
+            throws Exception
+    {
+        Map<String, Integer> ordinals = new HashMap<>();
+        for (int i = 0; i < columns.size(); i++) {
+            ordinals.put(columns.get(i).name(), i);
+        }
+        TupleDomain<LanceColumnHandle> domain = TupleDomain.withColumnDomains(
+                Map.of(columns.getFirst(), Domain.singleValue(INTEGER, 42L)));
+        ByteBuffer buffer = SubstraitExpressionBuilder.tupleDomainToSubstrait(domain, columns, ordinals).orElseThrow();
+        return ExtendedExpression.parseFrom(buffer.array()).getBaseSchema();
     }
 }

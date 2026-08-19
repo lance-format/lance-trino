@@ -603,18 +603,30 @@ public final class SubstraitExpressionBuilder
 
     /**
      * Recursively adds field names to the NamedStruct builder.
-     * Substrait NamedStruct uses a flattened list of names for all fields
+     * Substrait NamedStruct uses a flattened, depth-first list of names for all fields
      * including nested struct children.
      */
     private static void addFieldNames(NamedStruct.Builder schemaBuilder, String name, io.trino.spi.type.Type type)
     {
         schemaBuilder.addNames(name);
+        addNestedFieldNames(schemaBuilder, type);
+    }
+
+    /**
+     * Adds the names contributed by a type's nested fields, excluding a name for the type itself.
+     * A list contributes no name of its own (the consumer supplies the element name), but struct
+     * fields nested inside it still contribute names, so {@code ARRAY(ROW(a, b))} named {@code col}
+     * must emit {@code col, a, b}.
+     */
+    private static void addNestedFieldNames(NamedStruct.Builder schemaBuilder, io.trino.spi.type.Type type)
+    {
         if (type instanceof RowType rowType) {
-            List<RowType.Field> fields = rowType.getFields();
-            for (RowType.Field field : fields) {
-                String childName = field.getName().orElse("field");
-                addFieldNames(schemaBuilder, childName, field.getType());
+            for (RowType.Field field : rowType.getFields()) {
+                addFieldNames(schemaBuilder, field.getName().orElse("field"), field.getType());
             }
+        }
+        else if (type instanceof ArrayType arrayType) {
+            addNestedFieldNames(schemaBuilder, arrayType.getElementType());
         }
     }
 
