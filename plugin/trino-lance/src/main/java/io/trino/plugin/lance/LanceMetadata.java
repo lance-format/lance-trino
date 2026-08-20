@@ -47,7 +47,6 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
-import io.trino.spi.expression.Constant;
 import io.trino.spi.expression.FieldDereference;
 import io.trino.spi.expression.Variable;
 import io.trino.spi.predicate.Domain;
@@ -660,27 +659,12 @@ public class LanceMetadata
 
     private boolean isRowCountAggregate(AggregateFunction aggregate)
     {
-        if (!"count".equalsIgnoreCase(aggregate.getFunctionName())) {
-            return false;
-        }
-        // Only a plain row count maps to the manifest total. Bail out if the aggregation is DISTINCT,
-        // has a FILTER (WHERE ...) clause, or carries in-aggregate sort items (ORDER BY) - none of which
-        // a manifest row count can satisfy.
-        if (aggregate.isDistinct() || !aggregate.getSortItems().isEmpty() || aggregate.getFilter().isPresent()) {
-            return false;
-        }
-        // COUNT(*) takes no argument. COUNT(<non-null constant>) is equivalent because the constant is
-        // never NULL for any row, so it also counts every row. In current Trino, SimplifyCountOverConstant
-        // rewrites COUNT(<non-null constant>) to COUNT(*) before pushdown, so SQL queries reach the
-        // empty-argument case above; this branch is reached only when an argument survives to the SPI
-        // (exercised directly by TestLanceMetadata).
-        List<ConnectorExpression> arguments = aggregate.getArguments();
-        if (arguments.isEmpty()) {
-            return true;
-        }
-        return arguments.size() == 1
-                && arguments.getFirst() instanceof Constant constant
-                && constant.getValue() != null;
+        // Only push plain COUNT(*). Filtered and ordered aggregates are not supported.
+        return "count".equalsIgnoreCase(aggregate.getFunctionName())
+                && aggregate.getArguments().isEmpty()
+                && !aggregate.isDistinct()
+                && aggregate.getFilter().isEmpty()
+                && aggregate.getSortItems().isEmpty();
     }
 
     @Override

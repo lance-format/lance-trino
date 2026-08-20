@@ -217,39 +217,88 @@ public class TestLanceConnectorTest
     }
 
     @Test
-    public void testCountAggregationPushdownBoundaries()
+    public void testCountStarPushdown()
     {
-        // End-to-end checks. Note Trino's SimplifyCountOverConstant rewrites count(<non-null constant>)
-        // to count(*) before pushdown, so these SQL cases reach the connector as count(*) and exercise the
-        // empty-argument path; the constant-argument branch of isRowCountAggregate is covered directly by
-        // TestLanceMetadata. These assertions guard the end-to-end behavior and against optimizer changes.
-        assertQuery("SELECT count(0) FROM region", "SELECT 5");
-        assertExplain("EXPLAIN SELECT count(0) FROM region", "countStar=true");
+        assertCountStar("SELECT count(*) FROM region", "SELECT 5");
+        assertCountStar("SELECT count(0) FROM region", "SELECT 5");
+        assertCountStar("SELECT count(1) FROM region", "SELECT 5");
+        assertCountStar("SELECT count(true) FROM region", "SELECT 5");
+        assertCountStar("SELECT count(false) FROM region", "SELECT 5");
+        assertCountStar("SELECT count('') FROM region", "SELECT 5");
+    }
 
-        assertQuery("SELECT count(0) FROM region WHERE regionkey = 0", "SELECT 1");
-        assertThat((String) computeActual("EXPLAIN SELECT count(0) FROM region WHERE regionkey = 0").getOnlyValue())
-                .doesNotContain("countStar=true");
+    @Test
+    public void testCountStarPushdownEligibility()
+    {
+        assertCountStarNotPushed("SELECT count(NULL) FROM region", "SELECT 0");
+        assertCountStarNotPushed("SELECT count(*) FILTER (WHERE regionkey > 0) FROM region", "SELECT 4");
+        assertCountStarNotPushed("SELECT count(0) FILTER (WHERE regionkey > 0) FROM region", "SELECT 4");
+        assertCountStarNotPushed("SELECT count(*) FROM region WHERE regionkey = 0", "SELECT 1");
+        assertCountStarNotPushed("SELECT count(0) FROM region WHERE regionkey = 0", "SELECT 1");
+        assertCountStarNotPushed("SELECT count(DISTINCT 0) FROM region", "SELECT 1");
+        assertCountStarNotPushed("SELECT count(name) FROM region", "SELECT 5");
+        assertCountStarNotPushed("SELECT count(0) FROM region GROUP BY regionkey", "SELECT 1 FROM region");
+        assertCountStarNotPushed("SELECT count(*), min(regionkey) FROM region", "SELECT 5, 0");
+        assertCountStarNotPushed("SELECT count(*) FROM (SELECT * FROM region LIMIT 2)", "SELECT 2");
+    }
 
-        assertQuery("SELECT count(DISTINCT 0) FROM region", "SELECT 1");
-        assertThat((String) computeActual("EXPLAIN SELECT count(DISTINCT 0) FROM region").getOnlyValue())
-                .doesNotContain("countStar=true");
+    @Test
+    public void testCountStarOnEmptyTable()
+    {
+        String tableName = "test_count_empty_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE TABLE " + tableName + " (id BIGINT, name VARCHAR)");
+            assertCountStar("SELECT count(*) FROM " + tableName, "SELECT 0");
+            assertCountStar("SELECT count(0) FROM " + tableName, "SELECT 0");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
 
-        // The original COUNT(*) case must keep taking the fast path after generalizing the predicate.
-        assertQuery("SELECT count(*) FROM region", "SELECT 5");
-        assertExplain("EXPLAIN SELECT count(*) FROM region", "countStar=true");
+    @Test
+    public void testCountStarForVersion()
+    {
+        String tableName = "test_count_version_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '1' AS id", 1);
+            assertUpdate("INSERT INTO " + tableName + " VALUES (BIGINT '2')", 1);
 
-        // A non-numeric constant argument is also a row-count aggregate (again rewritten to count(*) upstream).
-        assertQuery("SELECT count(true) FROM region", "SELECT 5");
-        assertExplain("EXPLAIN SELECT count(true) FROM region", "countStar=true");
+            assertCountStar("SELECT count(*) FROM " + tableName, "SELECT 2");
+            assertCountStar("SELECT count(0) FROM " + tableName, "SELECT 2");
+            assertCountStar("SELECT count(*) FROM " + tableName + " FOR VERSION AS OF 1", "SELECT 1");
+            assertCountStar("SELECT count(0) FROM " + tableName + " FOR VERSION AS OF 1", "SELECT 1");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
 
-        // GROUP BY must stay on the normal path (one count per group, not a single manifest count).
-        assertQuery("SELECT count(0) FROM region GROUP BY regionkey", "SELECT 1 FROM region");
-        assertThat((String) computeActual("EXPLAIN SELECT count(0) FROM region GROUP BY regionkey").getOnlyValue())
-                .doesNotContain("countStar=true");
+    @Test
+    public void testCountStarAfterDelete()
+    {
+        String tableName = "test_count_delete_" + System.currentTimeMillis();
+        try {
+            assertUpdate("CREATE TABLE " + tableName + " AS SELECT * FROM region", 5);
+            assertUpdate("DELETE FROM " + tableName + " WHERE regionkey = 0", 1);
+            assertCountStar("SELECT count(*) FROM " + tableName, "SELECT 4");
+            assertCountStar("SELECT count(0) FROM " + tableName, "SELECT 4");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
 
-        // An aggregate-level FILTER must stay on the normal path.
-        assertQuery("SELECT count(0) FILTER (WHERE regionkey > 0) FROM region", "SELECT 4");
-        assertThat((String) computeActual("EXPLAIN SELECT count(0) FILTER (WHERE regionkey > 0) FROM region").getOnlyValue())
+    private void assertCountStar(String sql, String expected)
+    {
+        assertQuery(sql, expected);
+        assertExplain("EXPLAIN " + sql, "countStar=true");
+    }
+
+    private void assertCountStarNotPushed(String sql, String expected)
+    {
+        assertQuery(sql, expected);
+        assertThat((String) computeActual("EXPLAIN " + sql).getOnlyValue())
                 .doesNotContain("countStar=true");
     }
 
