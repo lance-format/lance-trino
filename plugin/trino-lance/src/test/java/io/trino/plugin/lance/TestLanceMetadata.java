@@ -18,9 +18,15 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.Resources;
 import io.airlift.json.JsonCodec;
+import io.trino.spi.connector.AggregateFunction;
+import io.trino.spi.connector.AggregationApplicationResult;
+import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.SchemaTableName;
+import io.trino.spi.connector.SortItem;
 import io.trino.spi.connector.TableNotFoundException;
+import io.trino.spi.expression.Constant;
+import io.trino.spi.expression.Variable;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +38,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static io.trino.spi.connector.SortOrder.ASC_NULLS_LAST;
+import static io.trino.spi.type.BigintType.BIGINT;
+import static io.trino.spi.type.BooleanType.BOOLEAN;
+import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.testing.TestingConnectorSession.SESSION;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -151,6 +161,279 @@ public class TestLanceMetadata
                 .containsEntry("b", 1)
                 .containsEntry("c", 2)
                 .containsEntry("e", 3);
+    }
+
+    @Test
+    public void testCountNonNullConstantAggregationPushdown()
+    {
+        AggregateFunction countConstant = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Constant(0L, INTEGER)),
+                List.of(),
+                false,
+                Optional.empty());
+
+        Optional<AggregationApplicationResult<ConnectorTableHandle>> result = metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(countConstant),
+                Map.of(),
+                List.of(List.of()));
+
+        assertThat(result).isPresent();
+        LanceTableHandle pushedHandle = (LanceTableHandle) result.orElseThrow().getHandle();
+        assertThat(pushedHandle.isCountStar()).isTrue();
+    }
+
+    @Test
+    public void testCountNullConstantAggregationNotPushedDown()
+    {
+        AggregateFunction countNullConstant = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Constant(null, INTEGER)),
+                List.of(),
+                false,
+                Optional.empty());
+
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(countNullConstant),
+                Map.of(),
+                List.of(List.of())))
+                .isEmpty();
+    }
+
+    @Test
+    public void testFilteredCountConstantAggregationNotPushedDown()
+    {
+        AggregateFunction filteredCountConstant = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Constant(0L, INTEGER)),
+                List.of(),
+                false,
+                Optional.of(Constant.FALSE));
+
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(filteredCountConstant),
+                Map.of(),
+                List.of(List.of())))
+                .isEmpty();
+    }
+
+    @Test
+    public void testCountConstantAggregationWithTableFilterNotPushedDown()
+    {
+        AggregateFunction countConstant = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Constant(0L, INTEGER)),
+                List.of(),
+                false,
+                Optional.empty());
+
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE.withSubstraitFilter(new byte[] {1}, List.of("x")),
+                List.of(countConstant),
+                Map.of(),
+                List.of(List.of())))
+                .isEmpty();
+    }
+
+    @Test
+    public void testDistinctCountConstantAggregationNotPushedDown()
+    {
+        AggregateFunction distinctCountConstant = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Constant(0L, INTEGER)),
+                List.of(),
+                true,
+                Optional.empty());
+
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(distinctCountConstant),
+                Map.of(),
+                List.of(List.of())))
+                .isEmpty();
+    }
+
+    @Test
+    public void testCountColumnAggregationNotPushedDown()
+    {
+        AggregateFunction countColumn = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Variable("x", BIGINT)),
+                List.of(),
+                false,
+                Optional.empty());
+
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(countColumn),
+                Map.of(),
+                List.of(List.of())))
+                .isEmpty();
+    }
+
+    @Test
+    public void testSortedCountConstantAggregationNotPushedDown()
+    {
+        AggregateFunction sortedCountConstant = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Constant(0L, INTEGER)),
+                List.of(new SortItem("x", ASC_NULLS_LAST)),
+                false,
+                Optional.empty());
+
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(sortedCountConstant),
+                Map.of(),
+                List.of(List.of())))
+                .isEmpty();
+    }
+
+    @Test
+    public void testCountStarAggregationPushdown()
+    {
+        AggregateFunction countStar = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(),
+                List.of(),
+                false,
+                Optional.empty());
+
+        Optional<AggregationApplicationResult<ConnectorTableHandle>> result = metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(countStar),
+                Map.of(),
+                List.of(List.of()));
+
+        assertThat(result).isPresent();
+        LanceTableHandle pushedHandle = (LanceTableHandle) result.orElseThrow().getHandle();
+        assertThat(pushedHandle.isCountStar()).isTrue();
+    }
+
+    @Test
+    public void testCountNonNumericConstantAggregationPushdown()
+    {
+        // The fast path is type-agnostic: any non-null constant argument counts every row, so a
+        // non-numeric constant such as count(true) is pushed down just like count(0).
+        AggregateFunction countBooleanConstant = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Constant(true, BOOLEAN)),
+                List.of(),
+                false,
+                Optional.empty());
+
+        Optional<AggregationApplicationResult<ConnectorTableHandle>> result = metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(countBooleanConstant),
+                Map.of(),
+                List.of(List.of()));
+
+        assertThat(result).isPresent();
+        LanceTableHandle pushedHandle = (LanceTableHandle) result.orElseThrow().getHandle();
+        assertThat(pushedHandle.isCountStar()).isTrue();
+    }
+
+    @Test
+    public void testMultipleAggregatesNotPushedDown()
+    {
+        AggregateFunction countConstant = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Constant(0L, INTEGER)),
+                List.of(),
+                false,
+                Optional.empty());
+
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(countConstant, countConstant),
+                Map.of(),
+                List.of(List.of())))
+                .isEmpty();
+    }
+
+    @Test
+    public void testGroupedCountConstantAggregationNotPushedDown()
+    {
+        AggregateFunction countConstant = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(new Constant(0L, INTEGER)),
+                List.of(),
+                false,
+                Optional.empty());
+        LanceColumnHandle groupColumn = new LanceColumnHandle("x", BIGINT, true, 0);
+
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(countConstant),
+                Map.of(),
+                List.of(List.of(groupColumn))))
+                .isEmpty();
+    }
+
+    @Test
+    public void testAlreadyPushedAggregationNotPushedDown()
+    {
+        AggregateFunction countStar = new AggregateFunction(
+                "count",
+                BIGINT,
+                List.of(),
+                List.of(),
+                false,
+                Optional.empty());
+
+        // A handle that already carries the row-count fast path must not be pushed a second time.
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE.withCountStar(),
+                List.of(countStar),
+                Map.of(),
+                List.of(List.of())))
+                .isEmpty();
+    }
+
+    @Test
+    public void testNonCountAggregationNotPushedDown()
+    {
+        AggregateFunction sum = new AggregateFunction(
+                "sum",
+                BIGINT,
+                List.of(new Variable("x", BIGINT)),
+                List.of(),
+                false,
+                Optional.empty());
+
+        assertThat(metadata.applyAggregation(
+                SESSION,
+                TEST_TABLE_1_HANDLE,
+                List.of(sum),
+                Map.of(),
+                List.of(List.of())))
+                .isEmpty();
     }
 
     @Test
