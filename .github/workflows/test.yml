@@ -39,7 +39,7 @@ jobs:
           -Dair.check.skip-enforcer=true
 
     - name: Upload test results
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       if: failure()
       with:
         name: unit-test-results
@@ -81,7 +81,7 @@ jobs:
           -Dair.check.skip-enforcer=true
 
     - name: Upload test results
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       if: failure()
       with:
         name: connector-test-results-${{ matrix.test-group.name }}
@@ -132,7 +132,7 @@ jobs:
           -Dair.check.skip-enforcer=true
 
     - name: Upload test results
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       if: failure()
       with:
         name: s3-test-results-${{ matrix.test-group.name }}
