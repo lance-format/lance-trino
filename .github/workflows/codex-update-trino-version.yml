@@ -34,7 +34,7 @@ jobs:
           echo "version = ${{ inputs.version }}"
 
       - name: Checkout Repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: true
