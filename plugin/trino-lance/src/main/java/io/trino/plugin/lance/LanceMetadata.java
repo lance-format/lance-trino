@@ -16,6 +16,7 @@ package io.trino.plugin.lance;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
 import com.google.inject.Inject;
 import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
@@ -26,12 +27,14 @@ import io.trino.spi.connector.AggregationApplicationResult;
 import io.trino.spi.connector.Assignment;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
+import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
 import io.trino.spi.connector.ConnectorMergeTableHandle;
 import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorOutputMetadata;
 import io.trino.spi.connector.ConnectorOutputTableHandle;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.ConnectorTableExecuteHandle;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTableLayout;
 import io.trino.spi.connector.ConnectorTableMetadata;
@@ -65,11 +68,20 @@ import io.trino.spi.type.Type;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.CommitBuilder;
 import org.lance.Dataset;
+import org.lance.Fragment;
 import org.lance.FragmentMetadata;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
 import org.lance.SourcedTransaction;
 import org.lance.Transaction;
+import org.lance.compaction.CompactionOptions;
+import org.lance.index.Index;
+import org.lance.index.IndexOptions;
+import org.lance.index.IndexParams;
+import org.lance.index.IndexType;
+import org.lance.index.OptimizeOptions;
+import org.lance.index.scalar.InvertedIndexParams;
+import org.lance.index.scalar.ScalarIndexParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.DeclareTableRequest;
@@ -114,6 +126,12 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -1271,6 +1289,260 @@ public class LanceMetadata
         finally {
             dataset.close();
         }
+    }
+
+    // ===== Table Procedures (ALTER TABLE ... EXECUTE) =====
+
+    @Override
+    public Optional<ConnectorTableExecuteHandle> getTableHandleForExecute(
+            ConnectorSession session,
+            ConnectorAccessControl accessControl,
+            ConnectorTableHandle tableHandle,
+            String procedureName,
+            Map<String, Object> executeProperties,
+            RetryMode retryMode)
+    {
+        LanceTableHandle table = (LanceTableHandle) tableHandle;
+
+        LanceTableProcedureId procedureId;
+        try {
+            procedureId = LanceTableProcedureId.valueOf(procedureName);
+        }
+        catch (IllegalArgumentException e) {
+            throw new TrinoException(NOT_SUPPORTED, "Unknown table procedure: " + procedureName);
+        }
+
+        LanceProcedureHandle procedureHandle = switch (procedureId) {
+            case CREATE_INDEX -> buildCreateIndexHandle(executeProperties);
+            case OPTIMIZE_INDICES -> buildOptimizeIndicesHandle(executeProperties);
+            case COMPACT -> buildCompactHandle(executeProperties);
+        };
+
+        Map<String, String> storageOptions = getEffectiveStorageOptions(table);
+        log.debug("getTableHandleForExecute: table=%s, procedure=%s, handle=%s", table.getTableName(), procedureId, procedureHandle);
+
+        return Optional.of(new LanceTableExecuteHandle(
+                new SchemaTableName(table.getSchemaName(), table.getTableName()),
+                table.getTablePath(),
+                table.getTableId(),
+                storageOptions,
+                procedureId,
+                procedureHandle));
+    }
+
+    private static LanceCreateIndexHandle buildCreateIndexHandle(Map<String, Object> properties)
+    {
+        String column = (String) properties.get(LanceTableProcedures.COLUMN);
+        if (column == null || column.isEmpty()) {
+            throw new TrinoException(INVALID_ARGUMENTS, "create_index requires a 'column' argument");
+        }
+        String indexType = (String) properties.get(LanceTableProcedures.INDEX_TYPE);
+        if (!"fts".equalsIgnoreCase(indexType)) {
+            throw new TrinoException(NOT_SUPPORTED, "create_index currently only supports index_type => 'fts', got: " + indexType);
+        }
+
+        return new LanceCreateIndexHandle(
+                column,
+                Optional.ofNullable((String) properties.get(LanceTableProcedures.INDEX_NAME)),
+                indexType,
+                (Boolean) properties.get(LanceTableProcedures.REPLACE),
+                (Boolean) properties.get(LanceTableProcedures.TRAIN),
+                (String) properties.get(LanceTableProcedures.BASE_TOKENIZER),
+                (String) properties.get(LanceTableProcedures.LANGUAGE),
+                (Boolean) properties.get(LanceTableProcedures.WITH_POSITION),
+                (Boolean) properties.get(LanceTableProcedures.LOWER_CASE),
+                (Boolean) properties.get(LanceTableProcedures.STEM),
+                (Boolean) properties.get(LanceTableProcedures.REMOVE_STOP_WORDS),
+                (Boolean) properties.get(LanceTableProcedures.ASCII_FOLDING),
+                Optional.ofNullable((Integer) properties.get(LanceTableProcedures.MAX_TOKEN_LENGTH)));
+    }
+
+    private static LanceOptimizeIndicesHandle buildOptimizeIndicesHandle(Map<String, Object> properties)
+    {
+        String indexNamesCsv = (String) properties.get(LanceTableProcedures.INDEX_NAMES);
+        List<String> indexNames = List.of();
+        if (indexNamesCsv != null && !indexNamesCsv.isEmpty()) {
+            indexNames = Arrays.stream(indexNamesCsv.split(","))
+                    .map(String::trim)
+                    .filter(name -> !name.isEmpty())
+                    .collect(toImmutableList());
+        }
+
+        return new LanceOptimizeIndicesHandle(
+                indexNames,
+                Optional.ofNullable((Integer) properties.get(LanceTableProcedures.NUM_INDICES_TO_MERGE)),
+                (Boolean) properties.get(LanceTableProcedures.RETRAIN));
+    }
+
+    private static LanceCompactHandle buildCompactHandle(Map<String, Object> properties)
+    {
+        return new LanceCompactHandle(Optional.ofNullable((Boolean) properties.get(LanceTableProcedures.DEFER_INDEX_REMAP)));
+    }
+
+    @Override
+    public void executeTableExecute(ConnectorSession session, ConnectorTableExecuteHandle tableExecuteHandle)
+    {
+        LanceTableExecuteHandle handle = (LanceTableExecuteHandle) tableExecuteHandle;
+        String userIdentity = session.getUser();
+
+        log.debug("executeTableExecute: table=%s, procedure=%s, handle=%s",
+                handle.schemaTableName(), handle.procedureId(), handle.procedureHandle());
+
+        try (Dataset dataset = runtime.openDatasetDirect(userIdentity, handle.tablePath(), null, handle.storageOptions())) {
+            switch (handle.procedureId()) {
+                case CREATE_INDEX -> executeCreateIndex(dataset, handle.tablePath(), handle.storageOptions(), (LanceCreateIndexHandle) handle.procedureHandle());
+                case OPTIMIZE_INDICES -> executeOptimizeIndices(dataset, (LanceOptimizeIndicesHandle) handle.procedureHandle());
+                case COMPACT -> executeCompact(dataset, (LanceCompactHandle) handle.procedureHandle());
+            }
+        }
+        catch (RuntimeException e) {
+            if (isCommitConflict(e)) {
+                throw new TrinoException(TRANSACTION_CONFLICT, "Concurrent modification conflict", e);
+            }
+            throw e;
+        }
+
+        runtime.invalidate(userIdentity, handle.tablePath());
+    }
+
+    private void executeCreateIndex(Dataset dataset, String tablePath, Map<String, String> storageOptions, LanceCreateIndexHandle handle)
+    {
+        IndexParams indexParams = IndexParams.builder().setScalarIndexParams(buildInvertedIndexParams(handle)).build();
+
+        // Registering an empty index (train=false) or training on a single-fragment table isn't
+        // worth parallelizing; fewer than 2 fragments means there's nothing to split work across.
+        List<Integer> fragmentIds = handle.train() ? dataset.getFragments().stream().map(Fragment::getId).toList() : List.of();
+        if (fragmentIds.size() < 2) {
+            IndexOptions.Builder optionsBuilder = IndexOptions
+                    .builder(List.of(handle.column()), IndexType.INVERTED, indexParams)
+                    .replace(handle.replace())
+                    .train(handle.train());
+            handle.indexName().ifPresent(optionsBuilder::withIndexName);
+
+            Index index = dataset.createIndex(optionsBuilder.build());
+            log.debug("executeCreateIndex: created index %s on column %s", index.name(), handle.column());
+            return;
+        }
+
+        // Phase 2: build one index segment per batch of fragments in parallel, consolidate the
+        // resulting segments into one physical segment, then commit that single segment as the named
+        // logical index in one write-locked call. This parallelizes the CPU-bound tokenize/build work
+        // across the coordinator's cores; it does not distribute across Trino worker nodes (see #187/
+        // #188 for why: Trino's distributed table-execute machinery requires scanning full table rows
+        // through the page pipeline, which would force redundant reads on top of Lance's own native
+        // fragment scan).
+        //
+        // Each batch opens its OWN independent Dataset handle (see buildIndexSegmentsInParallel) rather
+        // than sharing this method's `dataset` - benchmarking showed concurrent createIndex calls
+        // against one shared Dataset instance are consistently slower than the plain single-call path
+        // (shared allocator/handle contention, not anything about Lance's own createIndex being
+        // internally parallelized - it isn't; lance-index's inverted-index builder has no internal
+        // rayon/tokio/thread concurrency), while independent per-thread handles show real ~20-40%
+        // speedup up to about 4 concurrent builds before plateauing.
+        //
+        // Each batch is built with its own auto-generated UUID (IndexOptions.withIndexUUID is left
+        // unset): mergeExistingIndexSegments rejects segments sharing one UUID as duplicates, so - despite
+        // its Javadoc ("multiple fragment-level indices need to share UUID for later merging") - passing
+        // one shared UUID across batches does not work; the segments passed to mergeExistingIndexSegments
+        // must each carry a distinct identity.
+        String indexName = handle.indexName().orElseGet(() -> handle.column() + "_idx");
+        int parallelism = Math.min(fragmentIds.size(), Runtime.getRuntime().availableProcessors());
+
+        log.info("executeCreateIndex: building index %s on column %s across %d fragments with parallelism %d",
+                indexName, handle.column(), fragmentIds.size(), parallelism);
+
+        // Each per-fragment createIndex call validates the index name against the dataset's currently
+        // committed indices up front, even though it doesn't commit anything itself - so an existing
+        // index of the same name must be dropped before building segments, not just before the final
+        // commit, or every batch fails with "Index name '...' already exists".
+        if (handle.replace() && dataset.listIndexes().contains(indexName)) {
+            dataset.dropIndex(indexName);
+        }
+
+        List<Index> segments = buildIndexSegmentsInParallel(tablePath, storageOptions, handle.column(), indexParams, fragmentIds, parallelism);
+        Index mergedSegment = dataset.mergeExistingIndexSegments(segments);
+        List<Index> committed = dataset.commitExistingIndexSegments(indexName, handle.column(), List.of(mergedSegment));
+        log.debug("executeCreateIndex: committed %d fragment-parallel segments as index %s", committed.size(), indexName);
+    }
+
+    @VisibleForTesting
+    static ScalarIndexParams buildInvertedIndexParams(LanceCreateIndexHandle handle)
+    {
+        InvertedIndexParams.Builder tokenizerBuilder = InvertedIndexParams.builder()
+                .baseTokenizer(handle.baseTokenizer())
+                .language(handle.language())
+                .withPosition(handle.withPosition())
+                .lowerCase(handle.lowerCase())
+                .stem(handle.stem())
+                .removeStopWords(handle.removeStopWords())
+                .asciiFolding(handle.asciiFolding());
+        handle.maxTokenLength().ifPresent(tokenizerBuilder::maxTokenLength);
+        return tokenizerBuilder.build();
+    }
+
+    @VisibleForTesting
+    static List<Index> buildIndexSegmentsInParallel(
+            String tablePath, Map<String, String> storageOptions, String column, IndexParams indexParams, List<Integer> fragmentIds, int parallelism)
+    {
+        int batchSize = (fragmentIds.size() + parallelism - 1) / parallelism;
+        List<List<Integer>> batches = Lists.partition(fragmentIds, batchSize);
+        AtomicInteger threadCounter = new AtomicInteger();
+        ThreadFactory threadFactory = runnable -> {
+            Thread thread = new Thread(runnable, "lance-create-index-" + threadCounter.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        };
+        try (ExecutorService executor = Executors.newFixedThreadPool(batches.size(), threadFactory)) {
+            // Each batch opens its own independent Dataset handle (own native handle, own allocator -
+            // not a shared session/allocator via LanceRuntime) and gets its own auto-generated segment
+            // UUID (withIndexUUID left unset - see the caller for why a shared UUID across batches
+            // doesn't work here).
+            List<Future<Index>> futures = batches.stream()
+                    .map(batch -> executor.submit(() -> {
+                        ReadOptions.Builder readOptionsBuilder = new ReadOptions.Builder();
+                        if (storageOptions != null && !storageOptions.isEmpty()) {
+                            readOptionsBuilder.setStorageOptions(storageOptions);
+                        }
+                        try (Dataset batchDataset = Dataset.open(tablePath, readOptionsBuilder.build())) {
+                            return batchDataset.createIndex(
+                                    IndexOptions.builder(List.of(column), IndexType.INVERTED, indexParams)
+                                            .withFragmentIds(batch)
+                                            .train(true)
+                                            .build());
+                        }
+                    }))
+                    .collect(toImmutableList());
+
+            List<Index> segments = new ArrayList<>();
+            for (Future<Index> future : futures) {
+                segments.add(future.get());
+            }
+            return segments;
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Interrupted while building index segments", e);
+        }
+        catch (ExecutionException e) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to build an index segment", e.getCause());
+        }
+    }
+
+    private void executeOptimizeIndices(Dataset dataset, LanceOptimizeIndicesHandle handle)
+    {
+        OptimizeOptions.Builder builder = OptimizeOptions.builder().retrain(handle.retrain());
+        if (!handle.indexNames().isEmpty()) {
+            builder.indexNames(handle.indexNames());
+        }
+        handle.numIndicesToMerge().ifPresent(builder::numIndicesToMerge);
+        dataset.optimizeIndices(builder.build());
+    }
+
+    private void executeCompact(Dataset dataset, LanceCompactHandle handle)
+    {
+        CompactionOptions.Builder builder = CompactionOptions.builder();
+        handle.deferIndexRemap().ifPresent(builder::withDeferIndexRemap);
+        dataset.compact(builder.build());
     }
 
     // ===== Helper Methods =====
