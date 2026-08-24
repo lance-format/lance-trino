@@ -8,10 +8,10 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up JDK 25
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         java-version: '25'
         distribution: 'temurin'
@@ -23,10 +23,10 @@ jobs:
   unit-tests:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up JDK 25
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         java-version: '25'
         distribution: 'temurin'
@@ -39,7 +39,7 @@ jobs:
           -Dair.check.skip-enforcer=true
 
     - name: Upload test results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       if: failure()
       with:
         name: unit-test-results
@@ -65,10 +65,10 @@ jobs:
           - name: 'rest-with-parent'
             tests: 'TestLanceRestWithParentConnectorTest,TestLanceRestWithParentConnectorSmokeTest'
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up JDK 25
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         java-version: '25'
         distribution: 'temurin'
@@ -81,7 +81,7 @@ jobs:
           -Dair.check.skip-enforcer=true
 
     - name: Upload test results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       if: failure()
       with:
         name: connector-test-results-${{ matrix.test-group.name }}
@@ -116,10 +116,10 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up JDK 25
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         java-version: '25'
         distribution: 'temurin'
@@ -132,7 +132,7 @@ jobs:
           -Dair.check.skip-enforcer=true
 
     - name: Upload test results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       if: failure()
       with:
         name: s3-test-results-${{ matrix.test-group.name }}
