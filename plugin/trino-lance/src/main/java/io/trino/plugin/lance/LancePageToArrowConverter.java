@@ -652,7 +652,6 @@ public final class LancePageToArrowConverter
         Type elementType = arrayType.getElementType();
         FieldVector dataVector = vector.getDataVector();
 
-        int elementOffset = 0;
         for (int i = 0; i < rowCount; i++) {
             if (block.isNull(i)) {
                 vector.setNull(rowOffset + i);
@@ -660,12 +659,9 @@ public final class LancePageToArrowConverter
             else {
                 Block arrayBlock = arrayType.getObject(block, i);
                 int arrayLength = arrayBlock.getPositionCount();
-
-                vector.startNewValue(rowOffset + i);
-                // Write array elements to data vector starting at current offset
+                int elementOffset = vector.startNewValue(rowOffset + i);
                 writeArrayElements(arrayBlock, dataVector, elementType, elementOffset, arrayLength);
                 vector.endValue(rowOffset + i, arrayLength);
-                elementOffset += arrayLength;
             }
         }
         vector.setValueCount(rowOffset + rowCount);
