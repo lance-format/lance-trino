@@ -676,13 +676,19 @@ public class LanceMetadata
         TupleDomain<ColumnHandle> summary = constraint.getSummary();
         TupleDomain<LanceColumnHandle> newConstraint = summary.transformKeys(LanceColumnHandle.class::cast);
 
-        // Get all columns from the table for building the full schema
+        // Blob columns expose virtual columns for projection, but those columns do not exist in the
+        // physical schema consumed by the Lance scanner. Including them in the Substrait schema
+        // makes its field count differ from the scanner schema, so only physical columns may be used
+        // to build Substrait field ordinals and the schema embedded in the filter.
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
         String userIdentity = session.getUser();
         List<LanceColumnHandle> allColumns = runtime.getColumnHandleList(
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
+        List<LanceColumnHandle> physicalColumns = allColumns.stream()
+                .filter(column -> column.fieldId() >= 0)
+                .toList();
 
-        Map<String, Integer> fieldIdMap = buildPositionalOrdinals(allColumns);
+        Map<String, Integer> fieldIdMap = buildPositionalOrdinals(physicalColumns);
         SubstraitExpressionBuilder.TupleDomainExtractionResult tupleDomainResult =
                 SubstraitExpressionBuilder.extractTupleDomain(newConstraint, fieldIdMap);
 
@@ -705,7 +711,7 @@ public class LanceMetadata
 
         // Combine TupleDomain and pushed expressions
         Optional<ByteBuffer> substraitFilter = SubstraitExpressionBuilder.combineAllExpressionsToSubstrait(
-                tupleDomainResult.expression(), pushedExpressions, allColumns);
+                tupleDomainResult.expression(), pushedExpressions, physicalColumns);
 
         if (substraitFilter.isEmpty()) {
             log.debug("applyFilter: no substrait filter generated, returning empty");
