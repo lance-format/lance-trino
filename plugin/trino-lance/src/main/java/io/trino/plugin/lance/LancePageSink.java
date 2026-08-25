@@ -18,6 +18,7 @@ import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
 import io.trino.spi.Page;
+import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSink;
 import io.trino.spi.type.Type;
 import org.apache.arrow.memory.BufferAllocator;
@@ -131,6 +132,9 @@ public class LancePageSink
 
             Slice slice = wrappedBuffer(jsonCodec.toJsonBytes(commitData));
             return completedFuture(ImmutableList.of(slice));
+        }
+        catch (TrinoException e) {
+            throw e;
         }
         catch (Exception e) {
             log.error(e, "Failed to finish page sink for dataset: %s", datasetUri);

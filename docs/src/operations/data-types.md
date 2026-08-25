@@ -8,6 +8,8 @@ Lance supports a subset of Trino data types. This page documents the supported t
 |------------|------------|-------------|
 | `BIGINT` | Int64 | 64-bit signed integer |
 | `INTEGER` | Int32 | 32-bit signed integer |
+| `SMALLINT` | Int16 | 16-bit signed integer |
+| `TINYINT` | Int8 | 8-bit signed integer |
 | `DOUBLE` | Float64 | 64-bit IEEE 754 floating point |
 | `REAL` | Float32 | 32-bit IEEE 754 floating point |
 | `VARCHAR` | Utf8 | Variable-length Unicode string |
@@ -102,8 +104,6 @@ The following Trino types are **not supported**:
 
 | Type | Alternative |
 |------|-------------|
-| `TINYINT` | Use `INTEGER` or `BIGINT` |
-| `SMALLINT` | Use `INTEGER` or `BIGINT` |
 | `DECIMAL` | Use `DOUBLE` |
 | `CHAR(n)` | Use `VARCHAR` |
 | `TIME` | Store as `VARCHAR` or epoch `BIGINT` |

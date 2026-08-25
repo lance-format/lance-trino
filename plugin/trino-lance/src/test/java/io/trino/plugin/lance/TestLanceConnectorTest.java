@@ -48,6 +48,8 @@ import java.util.Optional;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.IntegerType.INTEGER;
+import static io.trino.spi.type.SmallintType.SMALLINT;
+import static io.trino.spi.type.TinyintType.TINYINT;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT;
 import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN_WITH_COMMENT;
@@ -808,5 +810,14 @@ public class TestLanceConnectorTest
                 assertThat(BIGINT.getLong(page.getBlock(unsignedIdx), 1)).isEqualTo(3_000_000_000L);
             }
         }
+    }
+
+    @Test
+    public void testToTrinoTypeWithInt8AndInt16()
+    {
+        assertThat(LanceColumnHandle.toTrinoType(new ArrowType.Int(8, true))).isEqualTo(TINYINT);
+        assertThat(LanceColumnHandle.toTrinoType(new ArrowType.Int(8, false))).isEqualTo(SMALLINT);
+        assertThat(LanceColumnHandle.toTrinoType(new ArrowType.Int(16, true))).isEqualTo(SMALLINT);
+        assertThat(LanceColumnHandle.toTrinoType(new ArrowType.Int(16, false))).isEqualTo(INTEGER);
     }
 }
