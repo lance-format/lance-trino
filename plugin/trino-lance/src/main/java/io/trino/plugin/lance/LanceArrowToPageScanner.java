@@ -38,9 +38,13 @@ import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.LargeVarBinaryVector;
 import org.apache.arrow.vector.LargeVarCharVector;
+import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeMicroVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
 import org.apache.arrow.vector.TimeStampMicroVector;
+import org.apache.arrow.vector.TinyIntVector;
+import org.apache.arrow.vector.UInt1Vector;
+import org.apache.arrow.vector.UInt2Vector;
 import org.apache.arrow.vector.UInt4Vector;
 import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.VarBinaryVector;
@@ -72,9 +76,11 @@ import static io.trino.spi.type.DateTimeEncoding.packDateTimeWithZone;
 import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.RealType.REAL;
+import static io.trino.spi.type.SmallintType.SMALLINT;
 import static io.trino.spi.type.TimeType.TIME_MICROS;
 import static io.trino.spi.type.TimeZoneKey.UTC_KEY;
 import static io.trino.spi.type.Timestamps.PICOSECONDS_PER_MICROSECOND;
+import static io.trino.spi.type.TinyintType.TINYINT;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static org.apache.arrow.vector.complex.BaseRepeatedValueVector.OFFSET_WIDTH;
@@ -426,10 +432,28 @@ public class LanceArrowToPageScanner
                         writeVectorValues(output, nullChecker,
                                 index -> type.writeLong(output, Integer.toUnsignedLong(uint4Vector.get(index))), offset, length);
                     }
+                    else if (vector instanceof UInt2Vector uint2Vector) {
+                        writeVectorValues(output, nullChecker,
+                                index -> type.writeLong(output, Short.toUnsignedInt((short) uint2Vector.get(index))), offset, length);
+                    }
                     else {
                         writeVectorValues(output, nullChecker, index -> type.writeLong(output, ((IntVector) vector).get(index)),
                                 offset, length);
                     }
+                }
+                else if (type.equals(SMALLINT)) {
+                    if (vector instanceof UInt1Vector uint1Vector) {
+                        writeVectorValues(output, nullChecker,
+                                index -> type.writeLong(output, Byte.toUnsignedInt(uint1Vector.get(index))), offset, length);
+                    }
+                    else {
+                        writeVectorValues(output, nullChecker,
+                                index -> type.writeLong(output, ((SmallIntVector) vector).get(index)), offset, length);
+                    }
+                }
+                else if (type.equals(TINYINT)) {
+                    writeVectorValues(output, nullChecker,
+                            index -> type.writeLong(output, ((TinyIntVector) vector).get(index)), offset, length);
                 }
                 else if (type.equals(DATE)) {
                     writeVectorValues(output, nullChecker,

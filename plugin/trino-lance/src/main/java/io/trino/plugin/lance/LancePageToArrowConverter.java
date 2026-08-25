@@ -35,8 +35,13 @@ import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.LargeVarBinaryVector;
+import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
 import org.apache.arrow.vector.TimeStampMicroVector;
+import org.apache.arrow.vector.TinyIntVector;
+import org.apache.arrow.vector.UInt1Vector;
+import org.apache.arrow.vector.UInt2Vector;
+import org.apache.arrow.vector.UInt4Vector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -57,6 +62,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
+import static io.trino.spi.StandardErrorCode.NUMERIC_VALUE_OUT_OF_RANGE;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
 import static io.trino.spi.type.DateTimeEncoding.unpackMillisUtc;
@@ -64,6 +70,8 @@ import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.RealType.REAL;
+import static io.trino.spi.type.SmallintType.SMALLINT;
+import static io.trino.spi.type.TinyintType.TINYINT;
 import static io.trino.spi.type.VarbinaryType.VARBINARY;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.lang.String.format;
@@ -91,6 +99,12 @@ public final class LancePageToArrowConverter
     {
         if (trinoType.equals(BOOLEAN)) {
             return ArrowType.Bool.INSTANCE;
+        }
+        else if (trinoType.equals(TINYINT)) {
+            return new ArrowType.Int(8, true);
+        }
+        else if (trinoType.equals(SMALLINT)) {
+            return new ArrowType.Int(16, true);
         }
         else if (trinoType.equals(INTEGER)) {
             return new ArrowType.Int(32, true);
@@ -316,11 +330,32 @@ public final class LancePageToArrowConverter
         if (type.equals(BOOLEAN)) {
             writeBooleanBlock(block, (BitVector) vector, rowCount, offset);
         }
+        else if (type.equals(TINYINT)) {
+            writeTinyintBlock(block, (TinyIntVector) vector, rowCount, offset);
+        }
+        else if (type.equals(SMALLINT)) {
+            if (vector instanceof UInt1Vector uint1Vector) {
+                writeUnsignedInt8Block(block, uint1Vector, rowCount, offset);
+            }
+            else {
+                writeSmallintBlock(block, (SmallIntVector) vector, rowCount, offset);
+            }
+        }
         else if (type.equals(INTEGER)) {
-            writeIntegerBlock(block, (IntVector) vector, rowCount, offset);
+            if (vector instanceof UInt2Vector uint2Vector) {
+                writeUnsignedInt16Block(block, uint2Vector, rowCount, offset);
+            }
+            else {
+                writeIntegerBlock(block, (IntVector) vector, rowCount, offset);
+            }
         }
         else if (type.equals(BIGINT)) {
-            writeBigintBlock(block, (BigIntVector) vector, rowCount, offset);
+            if (vector instanceof UInt4Vector uint4Vector) {
+                writeUnsignedInt32Block(block, uint4Vector, rowCount, offset);
+            }
+            else {
+                writeBigintBlock(block, (BigIntVector) vector, rowCount, offset);
+            }
         }
         else if (type.equals(REAL)) {
             writeRealBlock(block, (Float4Vector) vector, rowCount, offset);
@@ -377,6 +412,68 @@ public final class LancePageToArrowConverter
         vector.setValueCount(offset + rowCount);
     }
 
+    private static void writeTinyintBlock(Block block, TinyIntVector vector, int rowCount, int offset)
+    {
+        for (int i = 0; i < rowCount; i++) {
+            if (block.isNull(i)) {
+                vector.setNull(offset + i);
+            }
+            else {
+                vector.setSafe(offset + i, (byte) TINYINT.getLong(block, i));
+            }
+        }
+        vector.setValueCount(offset + rowCount);
+    }
+
+    private static void writeSmallintBlock(Block block, SmallIntVector vector, int rowCount, int offset)
+    {
+        for (int i = 0; i < rowCount; i++) {
+            if (block.isNull(i)) {
+                vector.setNull(offset + i);
+            }
+            else {
+                vector.setSafe(offset + i, (short) SMALLINT.getLong(block, i));
+            }
+        }
+        vector.setValueCount(offset + rowCount);
+    }
+
+    private static void writeUnsignedInt8Block(Block block, UInt1Vector vector, int rowCount, int offset)
+    {
+        for (int i = 0; i < rowCount; i++) {
+            if (block.isNull(i)) {
+                vector.setNull(offset + i);
+            }
+            else {
+                long value = SMALLINT.getLong(block, i);
+                if (value < 0 || value > 255) {
+                    throw new TrinoException(NUMERIC_VALUE_OUT_OF_RANGE,
+                            format("Value %s is out of range for unsigned 8-bit integer", value));
+                }
+                vector.setSafe(offset + i, (int) value);
+            }
+        }
+        vector.setValueCount(offset + rowCount);
+    }
+
+    private static void writeUnsignedInt16Block(Block block, UInt2Vector vector, int rowCount, int offset)
+    {
+        for (int i = 0; i < rowCount; i++) {
+            if (block.isNull(i)) {
+                vector.setNull(offset + i);
+            }
+            else {
+                long value = INTEGER.getLong(block, i);
+                if (value < 0 || value > 65535) {
+                    throw new TrinoException(NUMERIC_VALUE_OUT_OF_RANGE,
+                            format("Value %s is out of range for unsigned 16-bit integer", value));
+                }
+                vector.setSafe(offset + i, (int) value);
+            }
+        }
+        vector.setValueCount(offset + rowCount);
+    }
+
     private static void writeIntegerBlock(Block block, IntVector vector, int rowCount, int offset)
     {
         for (int i = 0; i < rowCount; i++) {
@@ -385,6 +482,24 @@ public final class LancePageToArrowConverter
             }
             else {
                 vector.setSafe(offset + i, (int) INTEGER.getLong(block, i));
+            }
+        }
+        vector.setValueCount(offset + rowCount);
+    }
+
+    private static void writeUnsignedInt32Block(Block block, UInt4Vector vector, int rowCount, int offset)
+    {
+        for (int i = 0; i < rowCount; i++) {
+            if (block.isNull(i)) {
+                vector.setNull(offset + i);
+            }
+            else {
+                long value = BIGINT.getLong(block, i);
+                if (value < 0 || value > 4_294_967_295L) {
+                    throw new TrinoException(NUMERIC_VALUE_OUT_OF_RANGE,
+                            format("Value %s is out of range for unsigned 32-bit integer", value));
+                }
+                vector.setSafe(offset + i, (int) value);
             }
         }
         vector.setValueCount(offset + rowCount);
@@ -561,29 +676,11 @@ public final class LancePageToArrowConverter
         // This is a simplified implementation - for complex nested types more work is needed
         // Note: We don't call allocateNew() here as the parent vector manages allocation
 
-        if (elementType.equals(INTEGER)) {
-            IntVector intVector = (IntVector) dataVector;
-            for (int i = 0; i < length; i++) {
-                if (arrayBlock.isNull(i)) {
-                    intVector.setNull(offset + i);
-                }
-                else {
-                    intVector.setSafe(offset + i, (int) INTEGER.getLong(arrayBlock, i));
-                }
-            }
-            intVector.setValueCount(offset + length);
-        }
-        else if (elementType.equals(BIGINT)) {
-            BigIntVector bigIntVector = (BigIntVector) dataVector;
-            for (int i = 0; i < length; i++) {
-                if (arrayBlock.isNull(i)) {
-                    bigIntVector.setNull(offset + i);
-                }
-                else {
-                    bigIntVector.setSafe(offset + i, BIGINT.getLong(arrayBlock, i));
-                }
-            }
-            bigIntVector.setValueCount(offset + length);
+        if (elementType.equals(TINYINT) ||
+                elementType.equals(SMALLINT) ||
+                elementType.equals(INTEGER) ||
+                elementType.equals(BIGINT)) {
+            writeBlockToVectorAtOffset(arrayBlock, dataVector, elementType, length, offset);
         }
         else if (elementType.equals(REAL)) {
             Float4Vector floatVector = (Float4Vector) dataVector;
