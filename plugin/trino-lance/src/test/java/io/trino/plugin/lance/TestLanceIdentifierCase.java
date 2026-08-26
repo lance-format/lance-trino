@@ -13,7 +13,9 @@
  */
 package io.trino.plugin.lance;
 
+import com.google.common.collect.ImmutableList;
 import io.airlift.json.JsonCodec;
+import io.trino.spi.connector.RelationColumnsMetadata;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.QueryRunner;
@@ -188,6 +190,27 @@ public class TestLanceIdentifierCase
                     Optional.empty(),
                     Optional.empty());
             assertThat(handle.getTableId()).isEqualTo(List.of("p1", "p2", "analytics", remoteName));
+        }
+        finally {
+            runtime.close();
+        }
+    }
+
+    @Test
+    public void testStreamRelationColumnsIncludesMixedCaseRemoteTable()
+    {
+        String remoteName = "StreamCaseTABLE";
+        createDataset(remoteName);
+        LanceRuntime runtime = newRuntime();
+        try {
+            LanceMetadata metadata = new LanceMetadata(
+                    runtime,
+                    new LanceConfig().setSingleLevelNs(true),
+                    JsonCodec.jsonCodec(LanceCommitTaskData.class),
+                    JsonCodec.jsonCodec(LanceMergeCommitData.class));
+            assertThat(ImmutableList.copyOf(metadata.streamRelationColumns(SESSION, Optional.of("default"), names -> names)))
+                    .extracting(RelationColumnsMetadata::name)
+                    .contains(new SchemaTableName("default", remoteName.toLowerCase(ENGLISH)));
         }
         finally {
             runtime.close();

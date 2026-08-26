@@ -40,11 +40,11 @@ import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.ConstraintApplicationResult;
 import io.trino.spi.connector.LimitApplicationResult;
 import io.trino.spi.connector.ProjectionApplicationResult;
+import io.trino.spi.connector.RelationColumnsMetadata;
 import io.trino.spi.connector.RetryMode;
 import io.trino.spi.connector.RowChangeParadigm;
 import io.trino.spi.connector.SaveMode;
 import io.trino.spi.connector.SchemaTableName;
-import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
 import io.trino.spi.expression.FieldDereference;
@@ -106,6 +106,8 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -114,7 +116,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.stream.Collectors;
+import java.util.function.UnaryOperator;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.plugin.lance.RowAddress.LANCE_ROW_ADDRESS;
@@ -391,21 +393,10 @@ public class LanceMetadata
     }
 
     @Override
-    public List<SchemaTableName> listTables(ConnectorSession session, Optional<String> schemaNameOrNull)
+    public List<SchemaTableName> listTables(ConnectorSession session, Optional<String> schemaName)
     {
-        String schema = schemaNameOrNull.orElse(LanceRuntime.DEFAULT_SCHEMA);
-
-        if (!schemaExists(schema)) {
-            return Collections.emptyList();
-        }
-
-        Set<String> tables = listNamespaceTables(schema);
-        if (tables.isEmpty()) {
-            return Collections.emptyList();
-        }
-        return tables.stream()
-                .map(tableName -> new SchemaTableName(schema, tableName))
-                .collect(Collectors.toList());
+        Map<String, Set<String>> remoteTableNamesBySchema = listRemoteTableNamesBySchema(session, schemaName);
+        return List.copyOf(toTrinoTableNames(remoteTableNamesBySchema));
     }
 
     @Override
@@ -424,39 +415,84 @@ public class LanceMetadata
     }
 
     @Override
-    public Map<SchemaTableName, List<ColumnMetadata>> listTableColumns(ConnectorSession session,
-            SchemaTablePrefix prefix)
+    public Iterator<RelationColumnsMetadata> streamRelationColumns(
+            ConnectorSession session,
+            Optional<String> schemaName,
+            UnaryOperator<Set<SchemaTableName>> relationFilter)
     {
-        requireNonNull(prefix, "prefix is null");
-        ImmutableMap.Builder<SchemaTableName, List<ColumnMetadata>> columns = ImmutableMap.builder();
+        Map<String, Set<String>> remoteTableNamesBySchema = listRemoteTableNamesBySchema(session, schemaName);
+        Set<SchemaTableName> requestedTables = relationFilter.apply(toTrinoTableNames(remoteTableNamesBySchema));
+        return loadRelationColumns(session, remoteTableNamesBySchema, requestedTables).iterator();
+    }
 
-        String schemaName = prefix.getSchema().orElse(LanceRuntime.DEFAULT_SCHEMA);
-        String userIdentity = session.getUser();
-        Set<String> remoteTables;
-        try {
-            remoteTables = listNamespaceTables(schemaName);
-        }
-        catch (NamespaceNotFoundException e) {
-            return columns.buildOrThrow();
-        }
-
-        for (String remoteTableName : remoteTables) {
-            SchemaTableName tableName = new SchemaTableName(schemaName, remoteTableName);
-            List<String> tableId = runtime.getTableId(schemaName, remoteTableName);
+    private Map<String, Set<String>> listRemoteTableNamesBySchema(ConnectorSession session, Optional<String> schemaName)
+    {
+        List<String> schemaNames = schemaName.map(List::of).orElseGet(() -> listSchemaNames(session));
+        Map<String, Set<String>> remoteTableNamesBySchema = new LinkedHashMap<>();
+        for (String currentSchemaName : schemaNames) {
+            if (runtime.isSingleLevelNs() && !LanceRuntime.DEFAULT_SCHEMA.equals(currentSchemaName)) {
+                continue;
+            }
             try {
-                DescribeTableResponse table = getNamespace().describeTable(new DescribeTableRequest().id(tableId));
-                List<ColumnMetadata> columnsMetadata = runtime.getColumnMetadata(
-                        userIdentity,
-                        table.getLocation(),
-                        null,
-                        storageOptionsFrom(table));
-                columns.put(tableName, columnsMetadata);
+                remoteTableNamesBySchema.put(currentSchemaName, listRemoteTableNames(currentSchemaName));
             }
-            catch (org.lance.namespace.errors.TableNotFoundException e) {
-                // Table may disappear between list and describe.
+            catch (NamespaceNotFoundException e) {
+                // Namespace may disappear between schema list and table list.
             }
         }
-        return columns.buildOrThrow();
+        return remoteTableNamesBySchema;
+    }
+
+    private static Set<SchemaTableName> toTrinoTableNames(Map<String, Set<String>> remoteTableNamesBySchema)
+    {
+        Set<SchemaTableName> tableNames = new HashSet<>();
+        for (Map.Entry<String, Set<String>> schemaEntry : remoteTableNamesBySchema.entrySet()) {
+            for (String remoteTableName : schemaEntry.getValue()) {
+                tableNames.add(new SchemaTableName(schemaEntry.getKey(), remoteTableName));
+            }
+        }
+        return Set.copyOf(tableNames);
+    }
+
+    private List<RelationColumnsMetadata> loadRelationColumns(
+            ConnectorSession session,
+            Map<String, Set<String>> remoteTableNamesBySchema,
+            Set<SchemaTableName> requestedTables)
+    {
+        List<RelationColumnsMetadata> relationColumns = new ArrayList<>();
+        for (SchemaTableName tableName : requestedTables) {
+            Set<String> remoteTableNames = remoteTableNamesBySchema.get(tableName.getSchemaName());
+            if (remoteTableNames == null) {
+                continue;
+            }
+            Optional<String> remoteTableName = resolveRemoteTableName(remoteTableNames, tableName.getTableName());
+            if (remoteTableName.isEmpty()) {
+                continue;
+            }
+            loadRelationColumnsForTable(session, tableName, remoteTableName.get()).ifPresent(relationColumns::add);
+        }
+        return relationColumns;
+    }
+
+    private Optional<RelationColumnsMetadata> loadRelationColumnsForTable(
+            ConnectorSession session,
+            SchemaTableName tableName,
+            String remoteTableName)
+    {
+        List<String> tableId = runtime.getTableId(tableName.getSchemaName(), remoteTableName);
+        try {
+            DescribeTableResponse tableDescription = getNamespace().describeTable(new DescribeTableRequest().id(tableId));
+            List<ColumnMetadata> columns = runtime.getColumnMetadata(
+                    session.getUser(),
+                    tableDescription.getLocation(),
+                    null,
+                    storageOptionsFrom(tableDescription));
+            return Optional.of(RelationColumnsMetadata.forTable(tableName, columns));
+        }
+        catch (org.lance.namespace.errors.TableNotFoundException e) {
+            // Table may disappear between list and describe.
+            return Optional.empty();
+        }
     }
 
     @Override
@@ -1313,15 +1349,15 @@ public class LanceMetadata
             return Optional.empty();
         }
 
-        Set<String> listedTables;
+        Set<String> remoteTableNames;
         try {
-            listedTables = listNamespaceTables(name.getSchemaName());
+            remoteTableNames = listRemoteTableNames(name.getSchemaName());
         }
         catch (NamespaceNotFoundException e) {
             return Optional.empty();
         }
 
-        Optional<String> remoteTableName = matchListedTableName(listedTables, name.getTableName());
+        Optional<String> remoteTableName = resolveRemoteTableName(remoteTableNames, name.getTableName());
         if (remoteTableName.isEmpty()) {
             return Optional.empty();
         }
@@ -1336,7 +1372,7 @@ public class LanceMetadata
         }
     }
 
-    private Set<String> listNamespaceTables(String schema)
+    private Set<String> listRemoteTableNames(String schema)
     {
         ListTablesRequest request = new ListTablesRequest();
         request.setId(runtime.trinoSchemaToLanceNamespace(schema));
@@ -1348,11 +1384,11 @@ public class LanceMetadata
     }
 
     @VisibleForTesting
-    static Optional<String> matchListedTableName(Set<String> listedNames, String trinoTableName)
+    static Optional<String> resolveRemoteTableName(Set<String> remoteTableNames, String trinoTableName)
     {
-        requireNonNull(listedNames, "listedNames is null");
+        requireNonNull(remoteTableNames, "remoteTableNames is null");
         requireNonNull(trinoTableName, "trinoTableName is null");
-        List<String> matches = listedNames.stream()
+        List<String> matches = remoteTableNames.stream()
                 .filter(name -> name.equalsIgnoreCase(trinoTableName))
                 .sorted()
                 .toList();
