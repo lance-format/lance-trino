@@ -71,6 +71,7 @@ import org.lance.ReadOptions;
 import org.lance.SourcedTransaction;
 import org.lance.Transaction;
 import org.lance.namespace.LanceNamespace;
+import org.lance.namespace.errors.NamespaceNotFoundException;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.DeclareTableRequest;
 import org.lance.namespace.model.DeclareTableResponse;
@@ -83,7 +84,6 @@ import org.lance.namespace.model.DropTableRequest;
 import org.lance.namespace.model.ListNamespacesRequest;
 import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
-import org.lance.namespace.model.ListTablesResponse;
 import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.operation.Append;
 import org.lance.operation.Overwrite;
@@ -254,23 +254,25 @@ public class LanceMetadata
             throw new TrinoException(NOT_SUPPORTED, "Lance connector does not support start version for time travel");
         }
 
-        String tablePath = getTablePath(session, name);
-        if (tablePath != null) {
-            List<String> tableId = runtime.getTableId(name.getSchemaName(), name.getTableName());
-            Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
-            String userIdentity = session.getUser();
-
-            Long datasetVersion;
-            if (endVersion.isPresent()) {
-                datasetVersion = resolveVersion(session, tablePath, storageOptions, endVersion.get());
-            }
-            else {
-                datasetVersion = runtime.getLatestVersion(userIdentity, tablePath, storageOptions);
-            }
-
-            return new LanceTableHandle(name.getSchemaName(), name.getTableName(), tablePath, tableId, storageOptions, datasetVersion);
+        Optional<ResolvedTable> existingTable = resolveTable(name);
+        if (existingTable.isEmpty()) {
+            return null;
         }
-        return null;
+        ResolvedTable resolvedTable = existingTable.get();
+        String tablePath = resolvedTable.description().getLocation();
+        List<String> tableId = resolvedTable.tableId();
+        Map<String, String> storageOptions = storageOptionsFrom(resolvedTable.description());
+        String userIdentity = session.getUser();
+
+        Long datasetVersion;
+        if (endVersion.isPresent()) {
+            datasetVersion = resolveVersion(session, tablePath, storageOptions, endVersion.get());
+        }
+        else {
+            datasetVersion = runtime.getLatestVersion(userIdentity, tablePath, storageOptions);
+        }
+
+        return new LanceTableHandle(name.getSchemaName(), name.getTableName(), tablePath, tableId, storageOptions, datasetVersion);
     }
 
     private Long resolveVersion(ConnectorSession session, String tablePath,
@@ -397,13 +399,8 @@ public class LanceMetadata
             return Collections.emptyList();
         }
 
-        List<String> namespaceId = runtime.trinoSchemaToLanceNamespace(schema);
-        ListTablesRequest request = new ListTablesRequest();
-        request.setId(namespaceId);
-
-        ListTablesResponse response = getNamespace().listTables(request);
-        Set<String> tables = response.getTables();
-        if (tables == null || tables.isEmpty()) {
+        Set<String> tables = listNamespaceTables(schema);
+        if (tables.isEmpty()) {
             return Collections.emptyList();
         }
         return tables.stream()
@@ -435,19 +432,28 @@ public class LanceMetadata
 
         String schemaName = prefix.getSchema().orElse(LanceRuntime.DEFAULT_SCHEMA);
         String userIdentity = session.getUser();
-        for (SchemaTableName tableName : listTables(session, Optional.of(schemaName))) {
+        Set<String> remoteTables;
+        try {
+            remoteTables = listNamespaceTables(schemaName);
+        }
+        catch (NamespaceNotFoundException e) {
+            return columns.buildOrThrow();
+        }
+
+        for (String remoteTableName : remoteTables) {
+            SchemaTableName tableName = new SchemaTableName(schemaName, remoteTableName);
+            List<String> tableId = runtime.getTableId(schemaName, remoteTableName);
             try {
-                String tablePath = getTablePath(session, tableName);
-                if (tablePath != null) {
-                    List<String> tableId = runtime.getTableId(tableName.getSchemaName(), tableName.getTableName());
-                    Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
-                    // Use null version for listing (always get latest)
-                    List<ColumnMetadata> columnsMetadata = runtime.getColumnMetadata(userIdentity, tablePath, null, storageOptions);
-                    columns.put(tableName, columnsMetadata);
-                }
+                DescribeTableResponse table = getNamespace().describeTable(new DescribeTableRequest().id(tableId));
+                List<ColumnMetadata> columnsMetadata = runtime.getColumnMetadata(
+                        userIdentity,
+                        table.getLocation(),
+                        null,
+                        storageOptionsFrom(table));
+                columns.put(tableName, columnsMetadata);
             }
-            catch (Exception e) {
-                // Table can disappear during listing operation, skip it
+            catch (org.lance.namespace.errors.TableNotFoundException e) {
+                // Table may disappear between list and describe.
             }
         }
         return columns.buildOrThrow();
@@ -849,21 +855,19 @@ public class LanceMetadata
         LancePageToArrowConverter.validateBlobColumns(tableMetadata.getColumns(), blobColumns);
         LancePageToArrowConverter.validateVectorColumns(tableMetadata.getColumns(), vectorColumns);
 
-        List<String> tableId = runtime.getTableId(tableName.getSchemaName(), tableName.getTableName());
-        String existingPath = getTablePath(session, tableName);
-
-        if (existingPath != null) {
+        Optional<ResolvedTable> existingTable = resolveTable(tableName);
+        if (existingTable.isPresent()) {
             if (saveMode == SaveMode.FAIL) {
                 throw new TrinoException(ALREADY_EXISTS, "Table already exists: " + tableName);
             }
             else if (saveMode == SaveMode.IGNORE) {
                 return;
             }
-            // For REPLACE, overwrite with empty dataset
-            Map<String, String> storageOptions = getStorageOptionsForTable(tableId);
+            ResolvedTable resolvedTable = existingTable.get();
+            String existingPath = resolvedTable.description().getLocation();
+            Map<String, String> storageOptions = storageOptionsFrom(resolvedTable.description());
             Schema arrowSchema = LancePageToArrowConverter.toArrowSchema(tableMetadata.getColumns(), blobColumns, vectorColumns);
             String userIdentity = session.getUser();
-            // For write operations, open dataset directly (not cached)
             try (Dataset dataset = runtime.openDatasetDirect(userIdentity, existingPath, null, storageOptions)) {
                 commitOverwrite(dataset, List.of(), arrowSchema, storageOptions);
             }
@@ -872,7 +876,7 @@ public class LanceMetadata
             return;
         }
 
-        // Declare new table via namespace API
+        List<String> tableId = runtime.getTableId(tableName.getSchemaName(), tableName.getTableName());
         DeclareTableRequest declareTableRequest = new DeclareTableRequest()
                 .id(tableId);
         DeclareTableResponse createResponse = getNamespace().declareTable(declareTableRequest);
@@ -908,24 +912,27 @@ public class LanceMetadata
         LancePageToArrowConverter.validateBlobColumns(tableMetadata.getColumns(), blobColumns);
         LancePageToArrowConverter.validateVectorColumns(tableMetadata.getColumns(), vectorColumns);
 
-        List<String> tableId = runtime.getTableId(tableName.getSchemaName(), tableName.getTableName());
-        String existingPath = getTablePath(session, tableName);
+        List<String> tableId;
         String tablePath;
-        boolean tableExisted = existingPath != null;
+        boolean tableExisted;
         Map<String, String> storageOptions;
         String fileFormatVersion = null;
 
-        if (tableExisted) {
+        Optional<ResolvedTable> existingTable = resolveTable(tableName);
+        if (existingTable.isPresent()) {
             if (!replace) {
                 throw new TrinoException(ALREADY_EXISTS, "Table already exists: " + tableName);
             }
-            log.debug("beginCreateTable: replacing existing table at: %s", existingPath);
-            tablePath = existingPath;
-            storageOptions = getStorageOptionsForTable(tableId);
+            ResolvedTable resolvedTable = existingTable.get();
+            tableId = resolvedTable.tableId();
+            tablePath = resolvedTable.description().getLocation();
+            tableExisted = true;
+            storageOptions = storageOptionsFrom(resolvedTable.description());
+            log.debug("beginCreateTable: replacing existing table at: %s", tablePath);
         }
         else {
-            // Use declareTable to reserve the location without creating the actual table.
-            // The table will only be created in finishCreateTable after fragments are written.
+            tableId = runtime.getTableId(tableName.getSchemaName(), tableName.getTableName());
+            tableExisted = false;
             DeclareTableRequest declareRequest = new DeclareTableRequest();
             tableId.forEach(declareRequest::addIdItem);
             DeclareTableResponse declareResponse = getNamespace().declareTable(declareRequest);
@@ -1300,34 +1307,87 @@ public class LanceMetadata
         }
     }
 
-    private String getTablePath(ConnectorSession session, SchemaTableName schemaTableName)
+    private Optional<ResolvedTable> resolveTable(SchemaTableName name)
     {
-        if (runtime.isSingleLevelNs() && !LanceRuntime.DEFAULT_SCHEMA.equals(schemaTableName.getSchemaName())) {
-            return null;
+        if (runtime.isSingleLevelNs() && !LanceRuntime.DEFAULT_SCHEMA.equals(name.getSchemaName())) {
+            return Optional.empty();
         }
 
+        Set<String> listedTables;
         try {
-            List<String> tableId = runtime.getTableId(schemaTableName.getSchemaName(), schemaTableName.getTableName());
-            DescribeTableRequest request = new DescribeTableRequest()
-                    .id(tableId);
-            DescribeTableResponse response = getNamespace().describeTable(request);
-            return response.getLocation();
+            listedTables = listNamespaceTables(name.getSchemaName());
         }
-        catch (Exception e) {
-            log.debug("Failed to describe table %s: %s", schemaTableName, e.getMessage());
-            return null;
+        catch (NamespaceNotFoundException e) {
+            return Optional.empty();
         }
+
+        Optional<String> remoteTableName = matchListedTableName(listedTables, name.getTableName());
+        if (remoteTableName.isEmpty()) {
+            return Optional.empty();
+        }
+
+        List<String> tableId = runtime.getTableId(name.getSchemaName(), remoteTableName.get());
+        try {
+            DescribeTableResponse response = getNamespace().describeTable(new DescribeTableRequest().id(tableId));
+            return Optional.of(new ResolvedTable(tableId, response));
+        }
+        catch (org.lance.namespace.errors.TableNotFoundException e) {
+            return Optional.empty();
+        }
+    }
+
+    private Set<String> listNamespaceTables(String schema)
+    {
+        ListTablesRequest request = new ListTablesRequest();
+        request.setId(runtime.trinoSchemaToLanceNamespace(schema));
+        Set<String> tables = getNamespace().listTables(request).getTables();
+        if (tables == null || tables.isEmpty()) {
+            return Set.of();
+        }
+        return tables;
+    }
+
+    @VisibleForTesting
+    static Optional<String> matchListedTableName(Set<String> listedNames, String trinoTableName)
+    {
+        requireNonNull(listedNames, "listedNames is null");
+        requireNonNull(trinoTableName, "trinoTableName is null");
+        List<String> matches = listedNames.stream()
+                .filter(name -> name.equalsIgnoreCase(trinoTableName))
+                .sorted()
+                .toList();
+        if (matches.size() > 1) {
+            throw new TrinoException(NOT_SUPPORTED,
+                    "Multiple Lance tables match " + trinoTableName + ": " + String.join(", ", matches));
+        }
+        if (matches.size() == 1) {
+            return Optional.of(matches.getFirst());
+        }
+        return Optional.empty();
+    }
+
+    private record ResolvedTable(List<String> tableId, DescribeTableResponse description)
+    {
+    }
+
+    private Map<String, String> storageOptionsFrom(DescribeTableResponse response)
+    {
+        Map<String, String> storageOptions = response.getStorageOptions();
+        if (storageOptions != null && !storageOptions.isEmpty()) {
+            return storageOptions;
+        }
+        Map<String, String> nsOptions = runtime.getNamespaceStorageOptions();
+        if (!nsOptions.isEmpty()) {
+            return nsOptions;
+        }
+        return new HashMap<>();
     }
 
     private Map<String, String> getStorageOptionsForTable(List<String> tableId)
     {
         try {
             DescribeTableRequest request = new DescribeTableRequest().id(tableId);
-            DescribeTableResponse response = getNamespace().describeTable(request);
-            Map<String, String> storageOptions = response.getStorageOptions();
-            if (storageOptions != null && !storageOptions.isEmpty()) {
-                return storageOptions;
-            }
+            return storageOptionsFrom(getNamespace().describeTable(request));
         }
         catch (Exception e) {
             log.debug("Failed to get storage options from describeTable for %s: %s", tableId, e.getMessage());
