@@ -88,6 +88,9 @@ public class TestLanceBlobEncoding
             assertQuery(
                     "SELECT id FROM " + tableName + " WHERE id = 1",
                     "SELECT CAST(1 AS BIGINT)");
+            assertExplain(
+                    "EXPLAIN SELECT id FROM " + tableName + " WHERE id = 1",
+                    "constraint.{0,10}(id|ID)");
         }
         finally {
             assertUpdate("DROP TABLE IF EXISTS " + tableName);

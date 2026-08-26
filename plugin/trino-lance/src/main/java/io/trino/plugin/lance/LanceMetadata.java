@@ -676,16 +676,13 @@ public class LanceMetadata
         TupleDomain<ColumnHandle> summary = constraint.getSummary();
         TupleDomain<LanceColumnHandle> newConstraint = summary.transformKeys(LanceColumnHandle.class::cast);
 
-        // Blob columns expose virtual columns for projection, but those columns do not exist in the
-        // physical schema consumed by the Lance scanner. Including them in the Substrait schema
-        // makes its field count differ from the scanner schema, so only physical columns may be used
-        // to build Substrait field ordinals and the schema embedded in the filter.
+        // Virtual blob columns are Trino only. Substrait has to match the Lance scanner schema.
         Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
         String userIdentity = session.getUser();
         List<LanceColumnHandle> allColumns = runtime.getColumnHandleList(
                 userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
         List<LanceColumnHandle> physicalColumns = allColumns.stream()
-                .filter(column -> column.fieldId() >= 0)
+                .filter(column -> !column.isBlobVirtualColumn())
                 .toList();
 
         Map<String, Integer> fieldIdMap = buildPositionalOrdinals(physicalColumns);
