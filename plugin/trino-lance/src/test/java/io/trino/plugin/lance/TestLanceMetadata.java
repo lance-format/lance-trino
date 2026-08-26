@@ -23,23 +23,37 @@ import io.trino.spi.connector.AggregationApplicationResult;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTableMetadata;
+import io.trino.spi.connector.RelationColumnsMetadata;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SortItem;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.Constant;
 import io.trino.spi.expression.Variable;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
+import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.lance.Dataset;
+import org.lance.WriteParams;
+import org.lance.namespace.LanceNamespace;
+import org.lance.namespace.model.CreateNamespaceRequest;
+import org.lance.namespace.model.DeclareTableRequest;
 
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 
+import static io.trino.plugin.lance.LanceRuntime.TABLE_PATH_SUFFIX;
 import static io.trino.spi.connector.SortOrder.ASC_NULLS_LAST;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.testing.TestingConnectorSession.SESSION;
@@ -231,37 +245,168 @@ public class TestLanceMetadata
     }
 
     @Test
-    public void testMatchListedTableNameRestoresTimestampCase()
+    public void testListTablesEmptySchemaNameListsTablesFromEverySchema()
+            throws Exception
     {
-        assertThat(LanceMetadata.matchListedTableName(
+        Path root = Files.createTempDirectory("lance-list-tables-all-schemas");
+        root.toFile().deleteOnExit();
+        LanceConfig config = new LanceConfig().setSingleLevelNs(false);
+        LanceRuntime runtime = new LanceRuntime(config, Map.of("lance.root", root.toUri().toString()));
+        try {
+            createAnalyticsAndSalesTables(runtime.getNamespace());
+            LanceMetadata metadata = new LanceMetadata(
+                    runtime,
+                    config,
+                    JsonCodec.jsonCodec(LanceCommitTaskData.class),
+                    JsonCodec.jsonCodec(LanceMergeCommitData.class));
+            assertThat(metadata.listTables(SESSION, Optional.empty()))
+                    .containsExactlyInAnyOrder(
+                            new SchemaTableName("analytics", "events"),
+                            new SchemaTableName("sales", "orders"));
+        }
+        finally {
+            runtime.close();
+        }
+    }
+
+    @Test
+    public void testStreamRelationColumnsListsTablesFromEverySchemaWhenSchemaNameIsEmpty()
+            throws Exception
+    {
+        Path root = Files.createTempDirectory("lance-relation-columns");
+        root.toFile().deleteOnExit();
+        LanceConfig config = new LanceConfig().setSingleLevelNs(false);
+        LanceRuntime runtime = new LanceRuntime(config, Map.of("lance.root", root.toUri().toString()));
+        try {
+            createAnalyticsAndSalesTables(runtime.getNamespace());
+            LanceMetadata metadata = new LanceMetadata(
+                    runtime,
+                    config,
+                    JsonCodec.jsonCodec(LanceCommitTaskData.class),
+                    JsonCodec.jsonCodec(LanceMergeCommitData.class));
+            assertThat(relationColumns(metadata, Optional.empty(), names -> names))
+                    .extracting(RelationColumnsMetadata::name)
+                    .containsExactlyInAnyOrder(
+                            new SchemaTableName("analytics", "events"),
+                            new SchemaTableName("sales", "orders"));
+            assertThat(relationColumns(metadata, Optional.of("analytics"), names -> names))
+                    .extracting(RelationColumnsMetadata::name)
+                    .containsExactly(new SchemaTableName("analytics", "events"));
+        }
+        finally {
+            runtime.close();
+        }
+    }
+
+    @Test
+    public void testStreamRelationColumnsAppliesRelationFilterBeforeLoadingColumns()
+            throws Exception
+    {
+        Path root = Files.createTempDirectory("lance-relation-filter");
+        root.toFile().deleteOnExit();
+        LanceConfig config = new LanceConfig().setSingleLevelNs(true);
+        LanceRuntime runtime = new LanceRuntime(config, Map.of("lance.root", root.toUri().toString()));
+        try {
+            createDataset(root, "good_table");
+            Files.createDirectories(root.resolve("broken_table" + TABLE_PATH_SUFFIX));
+            Files.writeString(root.resolve("broken_table" + TABLE_PATH_SUFFIX).resolve("not-a-dataset"), "invalid");
+
+            LanceMetadata metadata = new LanceMetadata(
+                    runtime,
+                    config,
+                    JsonCodec.jsonCodec(LanceCommitTaskData.class),
+                    JsonCodec.jsonCodec(LanceMergeCommitData.class));
+            SchemaTableName goodTable = new SchemaTableName("default", "good_table");
+            SchemaTableName brokenTable = new SchemaTableName("default", "broken_table");
+            assertThat(metadata.listTables(SESSION, Optional.of("default"))).contains(goodTable, brokenTable);
+
+            List<RelationColumnsMetadata> relationColumns = relationColumns(
+                    metadata,
+                    Optional.empty(),
+                    names -> {
+                        assertThat(names).contains(goodTable, brokenTable);
+                        return Set.of(goodTable);
+                    });
+            assertThat(relationColumns).extracting(RelationColumnsMetadata::name).containsExactly(goodTable);
+            assertThat(relationColumns.getFirst().tableColumns()).isPresent();
+        }
+        finally {
+            runtime.close();
+        }
+    }
+
+    @Test
+    public void testResolveRemoteTableNameRestoresTimestampCase()
+    {
+        assertThat(LanceMetadata.resolveRemoteTableName(
                 Set.of("table-main-20260729T170548Z"),
                 "table-main-20260729t170548z"))
                 .contains("table-main-20260729T170548Z");
     }
 
     @Test
-    public void testMatchListedTableNameRestoresCamelCase()
+    public void testResolveRemoteTableNameRestoresCamelCase()
     {
-        assertThat(LanceMetadata.matchListedTableName(Set.of("fooBar"), "foobar")).contains("fooBar");
+        assertThat(LanceMetadata.resolveRemoteTableName(Set.of("fooBar"), "foobar")).contains("fooBar");
     }
 
     @Test
-    public void testMatchListedTableNameKeepsExactMatch()
+    public void testResolveRemoteTableNameKeepsExactMatch()
     {
-        assertThat(LanceMetadata.matchListedTableName(Set.of("nation"), "nation")).contains("nation");
+        assertThat(LanceMetadata.resolveRemoteTableName(Set.of("nation"), "nation")).contains("nation");
     }
 
     @Test
-    public void testMatchListedTableNameUnknownTableIsEmpty()
+    public void testResolveRemoteTableNameUnknownTableIsEmpty()
     {
-        assertThat(LanceMetadata.matchListedTableName(Set.of("nation"), "region")).isEmpty();
+        assertThat(LanceMetadata.resolveRemoteTableName(Set.of("nation"), "region")).isEmpty();
     }
 
     @Test
-    public void testMatchListedTableNameRejectsCaseCollisions()
+    public void testResolveRemoteTableNameRejectsCaseCollisions()
     {
-        assertThatThrownBy(() -> LanceMetadata.matchListedTableName(Set.of("Foo", "foo"), "foo"))
+        assertThatThrownBy(() -> LanceMetadata.resolveRemoteTableName(Set.of("Foo", "foo"), "foo"))
                 .hasMessageContaining("Multiple Lance tables match foo");
+    }
+
+    private static List<RelationColumnsMetadata> relationColumns(
+            LanceMetadata metadata,
+            Optional<String> schemaName,
+            UnaryOperator<Set<SchemaTableName>> relationFilter)
+    {
+        return ImmutableList.copyOf(metadata.streamRelationColumns(SESSION, schemaName, relationFilter));
+    }
+
+    private static void createAnalyticsAndSalesTables(LanceNamespace namespace)
+    {
+        createNamespace(namespace, List.of("analytics"));
+        createNamespace(namespace, List.of("sales"));
+        createDeclaredDataset(namespace, List.of("analytics", "events"));
+        createDeclaredDataset(namespace, List.of("sales", "orders"));
+    }
+
+    private static void createNamespace(LanceNamespace namespace, List<String> namespaceId)
+    {
+        CreateNamespaceRequest request = new CreateNamespaceRequest();
+        request.setId(namespaceId);
+        namespace.createNamespace(request);
+    }
+
+    private static void createDeclaredDataset(LanceNamespace namespace, List<String> tableId)
+    {
+        String location = namespace.declareTable(new DeclareTableRequest().id(tableId)).getLocation();
+        Schema schema = new Schema(List.of(Field.nullable("id", new ArrowType.Int(64, true))), null);
+        try (BufferAllocator allocator = new RootAllocator()) {
+            Dataset.create(allocator, location, schema, new WriteParams.Builder().build()).close();
+        }
+    }
+
+    private static void createDataset(Path root, String remoteTableName)
+    {
+        Schema schema = new Schema(List.of(Field.nullable("id", new ArrowType.Int(64, true))), null);
+        try (BufferAllocator allocator = new RootAllocator()) {
+            Dataset.create(allocator, root.resolve(remoteTableName + TABLE_PATH_SUFFIX).toString(), schema, new WriteParams.Builder().build()).close();
+        }
     }
 
     private Optional<AggregationApplicationResult<ConnectorTableHandle>> applyAggregation(
