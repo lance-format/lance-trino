@@ -1,0 +1,84 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: PR Title Checks
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commitlint:
+    permissions:
+      pull-requests: write
+    name: Verify PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+      # GitHub inserts a blank line between title and body and wraps the
+      # description, so those commitlint rules do not apply here.
+      - run: npm install @commitlint/config-conventional
+      - run: >
+          echo 'module.exports = {
+            "rules": {
+              "body-max-line-length": [0, "always", Infinity],
+              "footer-max-line-length": [0, "always", Infinity],
+              "body-leading-blank": [0, "always"]
+            }
+          }' > .commitlintrc.js
+      - name: Write PR title and body to file
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const title = context.payload.pull_request.title || '';
+            const body = context.payload.pull_request.body || '';
+            fs.writeFileSync(process.env.RUNNER_TEMP + '/commit_msg.txt', title + '\n\n' + body);
+      - run: npx commitlint --extends @commitlint/config-conventional --verbose < "$RUNNER_TEMP/commit_msg.txt"
+      - if: failure()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const message = `**ACTION NEEDED**
+              This repository follows the [Conventional Commits specification](https://www.conventionalcommits.org/en/v1.0.0/) for PR titles.
+
+              Please update the title to match. For example: \`fix: ...\`, \`feat: ...\`, or \`chore: ...\`.
+
+              For details on the error please inspect the "Verify PR title" check.
+              `
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            for (const comment of comments) {
+              if (comment.body === message) {
+                return
+              }
+            }
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: message
+            })
+            core.setFailed(message)
