@@ -38,6 +38,7 @@ import java.net.URL;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static io.trino.spi.connector.SortOrder.ASC_NULLS_LAST;
 import static io.trino.spi.type.BigintType.BIGINT;
@@ -227,6 +228,40 @@ public class TestLanceMetadata
                 new SchemaTableName("default", "test_table4"),
                 new SchemaTableName("default", "test_table5"),
                 new SchemaTableName("default", "wide_types_table")));
+    }
+
+    @Test
+    public void testMatchListedTableNameRestoresTimestampCase()
+    {
+        assertThat(LanceMetadata.matchListedTableName(
+                Set.of("table-main-20260729T170548Z"),
+                "table-main-20260729t170548z"))
+                .contains("table-main-20260729T170548Z");
+    }
+
+    @Test
+    public void testMatchListedTableNameRestoresCamelCase()
+    {
+        assertThat(LanceMetadata.matchListedTableName(Set.of("fooBar"), "foobar")).contains("fooBar");
+    }
+
+    @Test
+    public void testMatchListedTableNameKeepsExactMatch()
+    {
+        assertThat(LanceMetadata.matchListedTableName(Set.of("nation"), "nation")).contains("nation");
+    }
+
+    @Test
+    public void testMatchListedTableNameUnknownTableIsEmpty()
+    {
+        assertThat(LanceMetadata.matchListedTableName(Set.of("nation"), "region")).isEmpty();
+    }
+
+    @Test
+    public void testMatchListedTableNameRejectsCaseCollisions()
+    {
+        assertThatThrownBy(() -> LanceMetadata.matchListedTableName(Set.of("Foo", "foo"), "foo"))
+                .hasMessageContaining("Multiple Lance tables match foo");
     }
 
     private Optional<AggregationApplicationResult<ConnectorTableHandle>> applyAggregation(
