@@ -72,6 +72,32 @@ public class TestLanceBlobEncoding
     }
 
     @Test
+    public void testFilterPhysicalColumnWithBlobEncoding()
+    {
+        String tableName = "test_blob_physical_filter_" + System.currentTimeMillis();
+        try {
+            assertUpdate(
+                    "CREATE TABLE " + tableName + " " +
+                            "WITH (blob_columns = 'content') AS " +
+                            "SELECT * FROM (VALUES " +
+                            "    (BIGINT '1', X'01'), " +
+                            "    (BIGINT '2', X'02')) " +
+                            "data(id, content)",
+                    2);
+
+            assertQuery(
+                    "SELECT id FROM " + tableName + " WHERE id = 1",
+                    "SELECT CAST(1 AS BIGINT)");
+            assertExplain(
+                    "EXPLAIN SELECT id FROM " + tableName + " WHERE id = 1",
+                    "constraint.{0,10}(id|ID)");
+        }
+        finally {
+            assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @Test
     public void testInsertIntoBlobColumn()
     {
         String tableName = "test_blob_insert_" + System.currentTimeMillis();
