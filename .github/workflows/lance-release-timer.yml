@@ -27,6 +27,7 @@ concurrency:
 
 jobs:
   trigger-update:
+    if: github.repository == 'lance-format/lance-trino'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
