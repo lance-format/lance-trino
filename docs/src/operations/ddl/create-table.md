@@ -260,11 +260,15 @@ CREATE TABLE lance.default.ml_data (
 |------|-------------|
 | `BIGINT` | 64-bit signed integer |
 | `INTEGER` | 32-bit signed integer |
+| `SMALLINT` | 16-bit signed integer |
+| `TINYINT` | 8-bit signed integer |
 | `DOUBLE` | 64-bit floating point |
 | `REAL` | 32-bit floating point |
 | `VARCHAR` | Variable-length string |
 | `BOOLEAN` | Boolean (true/false) |
 | `DATE` | Calendar date |
+| `TIMESTAMP` | no time zone |
+| `TIMESTAMP WITH TIME ZONE` | UTC |
 | `VARBINARY` | Variable-length binary |
 | `ARRAY<type>` | Array of elements |
 
@@ -274,7 +278,7 @@ CREATE TABLE lance.default.ml_data (
 - NOT NULL constraints are not supported
 - Default column values are not supported
 - CHAR type is not supported (use VARCHAR)
-- TIME and TIMESTAMP types are not supported
+- TIME is not supported
 - DECIMAL type is not supported (use DOUBLE)
 - MAP and ROW types are not supported for writes
 - Column names cannot contain dots or special characters
