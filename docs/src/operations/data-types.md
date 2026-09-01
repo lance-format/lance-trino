@@ -15,6 +15,8 @@ Lance supports a subset of Trino data types. This page documents the supported t
 | `VARCHAR` | Utf8 | Variable-length Unicode string |
 | `BOOLEAN` | Boolean | True or false |
 | `DATE` | Date32 | Calendar date (days since epoch) |
+| `TIMESTAMP` | Timestamp[us] | no time zone |
+| `TIMESTAMP WITH TIME ZONE` | Timestamp[us, UTC] | UTC |
 | `VARBINARY` | Binary | Variable-length binary data |
 | `ARRAY<T>` | List | Array of elements of type T |
 
@@ -74,6 +76,19 @@ INSERT INTO lance.default.events VALUES
     (2, DATE '2024-06-30');
 ```
 
+### Timestamp types
+
+```sql
+CREATE TABLE lance.default.events_ts (
+    id BIGINT,
+    created_at TIMESTAMP,
+    created_at_tz TIMESTAMP WITH TIME ZONE
+);
+
+INSERT INTO lance.default.events_ts VALUES
+    (1, TIMESTAMP '2024-01-15 12:00:00', TIMESTAMP '2024-01-15 12:00:00 America/New_York');
+```
+
 ### Binary type
 
 ```sql
@@ -107,7 +122,6 @@ The following Trino types are **not supported**:
 | `DECIMAL` | Use `DOUBLE` |
 | `CHAR(n)` | Use `VARCHAR` |
 | `TIME` | Store as `VARCHAR` or epoch `BIGINT` |
-| `TIMESTAMP` | Store as `DATE` or epoch `BIGINT` |
 | `MAP<K,V>` | Not supported |
 | `ROW(...)` | Not supported for writes |
 
