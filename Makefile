@@ -1,4 +1,4 @@
-.PHONY: build test clean install compile package help run lint format check serve-docs
+.PHONY: build test clean install compile package help run lint format check serve-docs docs-build
 
 # Compute a safe Surefire forkCount based on system thread limits.
 # Each test fork starts a Trino DistributedQueryRunner that needs ~500 threads.
@@ -24,6 +24,7 @@ help:
 	@echo "  format    - Format pom.xml files"
 	@echo "  check     - Run lint checks without tests"
 	@echo "  serve-docs - Serve documentation locally"
+	@echo "  docs-build - Build documentation with mkdocs --strict"
 
 # Build the project
 build: compile package
@@ -71,3 +72,7 @@ check:
 # Serve documentation locally
 serve-docs:
 	cd docs && uv pip install --system -r requirements.txt && mkdocs serve
+
+# Build documentation and fail on warnings
+docs-build:
+	cd docs && uv run --with-requirements requirements.txt mkdocs build --strict

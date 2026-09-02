@@ -31,7 +31,9 @@ make verify    # Full verification
 make run       # Run development server
 make lint      # Run code style checks (checkstyle, modernizer, sortpom)
 make format    # Format pom.xml files
-make check     # Run all checks without tests
+make check      # Run all checks without tests
+make serve-docs # Serve documentation locally
+make docs-build # Build documentation with mkdocs --strict
 ```
 
 ### Installation
