@@ -195,6 +195,11 @@ public record LanceColumnHandle(
     {
         ArrowType type = field.getType();
 
+        // Blob v2 columns are stored as struct<data, uri> but scanned as a descriptor struct
+        if (BlobUtils.isBlobV2Metadata(field.getMetadata())) {
+            return BlobUtils.BLOB_V2_DESCRIPTOR_TYPE;
+        }
+
         // Handle FixedSizeList specially - need to get element type from children or logical type
         if (type instanceof ArrowType.FixedSizeList) {
             Type elementType = REAL; // Default for embeddings
@@ -317,6 +322,9 @@ public record LanceColumnHandle(
     public static Type toTrinoType(Field field)
     {
         ArrowType type = field.getType();
+        if (BlobUtils.isBlobV2Field(field)) {
+            return BlobUtils.BLOB_V2_DESCRIPTOR_TYPE;
+        }
         if (BlobUtils.isBlobArrowField(field)) {
             // Blob columns: LargeBinary with blob metadata or struct with position/size
             if (type instanceof ArrowType.LargeBinary) {

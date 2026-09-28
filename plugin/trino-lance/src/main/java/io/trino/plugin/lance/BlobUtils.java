@@ -13,15 +13,25 @@
  */
 package io.trino.plugin.lance;
 
+import io.trino.spi.type.RowType;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+
+import static io.trino.spi.type.BigintType.BIGINT;
+import static io.trino.spi.type.SmallintType.SMALLINT;
+import static io.trino.spi.type.VarcharType.VARCHAR;
 
 public final class BlobUtils
 {
     public static final String LANCE_ENCODING_BLOB_KEY = "lance-encoding:blob";
     public static final String LANCE_ENCODING_BLOB_VALUE = "true";
+
+    public static final String ARROW_EXTENSION_NAME_KEY = "ARROW:extension:name";
+    public static final String LANCE_BLOB_V2_EXTENSION_NAME = "lance.blob.v2";
 
     public static final String BLOB_POSITION_SUFFIX = "__blob_pos";
     public static final String BLOB_SIZE_SUFFIX = "__blob_size";
@@ -34,6 +44,15 @@ public final class BlobUtils
         POSITION,
         SIZE
     }
+
+    // Descriptor struct Lance returns when scanning a blob v2 column: kind, position, size, blob_id, blob_uri.
+    // Unsigned Arrow types are widened the same way as regular columns (uint8 -> SMALLINT, uint32/uint64 -> BIGINT).
+    public static final RowType BLOB_V2_DESCRIPTOR_TYPE = RowType.from(List.of(
+            new RowType.Field(Optional.of("kind"), SMALLINT),
+            new RowType.Field(Optional.of("position"), BIGINT),
+            new RowType.Field(Optional.of("size"), BIGINT),
+            new RowType.Field(Optional.of("blob_id"), BIGINT),
+            new RowType.Field(Optional.of("blob_uri"), VARCHAR)));
 
     private BlobUtils() {}
 
@@ -54,6 +73,16 @@ public final class BlobUtils
 
         String value = metadata.get(LANCE_ENCODING_BLOB_KEY);
         return LANCE_ENCODING_BLOB_VALUE.equalsIgnoreCase(value);
+    }
+
+    public static boolean isBlobV2Field(Field field)
+    {
+        return field != null && isBlobV2Metadata(field.getMetadata());
+    }
+
+    public static boolean isBlobV2Metadata(Map<String, String> metadata)
+    {
+        return metadata != null && LANCE_BLOB_V2_EXTENSION_NAME.equals(metadata.get(ARROW_EXTENSION_NAME_KEY));
     }
 
     public static boolean isBlobStructField(Field field)
