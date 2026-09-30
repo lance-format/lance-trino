@@ -521,7 +521,9 @@ public class LanceMetadata
             String variableName = lanceColumn.path();
             projectedColumns.putIfAbsent(variableName, lanceColumn);
             projectedExpressions.add(new Variable(variableName, lanceColumn.trinoType()));
-            pushedDereference |= lanceColumn.isNestedField();
+            // Only a FieldDereference is new work. Variables over nested columns were already pushed,
+            // and returning a result for them again makes PushProjectionIntoTableScan loop forever.
+            pushedDereference |= projection instanceof FieldDereference;
         }
 
         if (!pushedDereference) {
@@ -727,7 +729,15 @@ public class LanceMetadata
                 .filter(column -> !column.isBlobVirtualColumn())
                 .toList();
 
-        Map<String, Integer> fieldIdMap = buildPositionalOrdinals(physicalColumns);
+        Map<String, Integer> fieldIdMap = new HashMap<>(buildPositionalOrdinals(physicalColumns));
+        // Blob v2 columns are struct<data, uri> in the table schema but descriptors in the scan,
+        // so a pushed predicate would not match the column Trino sees. Leave them to Trino.
+        Schema arrowSchema = runtime.getSchema(
+                userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
+        arrowSchema.getFields().stream()
+                .filter(BlobUtils::isBlobV2Field)
+                .forEach(field -> fieldIdMap.remove(LanceFieldPath.canonicalPath(List.of(field.getName()))));
+
         SubstraitExpressionBuilder.TupleDomainExtractionResult tupleDomainResult =
                 SubstraitExpressionBuilder.extractTupleDomain(newConstraint, fieldIdMap);
 

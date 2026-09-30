@@ -327,6 +327,11 @@ public final class LancePageToArrowConverter
      */
     public static void writeBlockToVectorAtOffset(Block block, FieldVector vector, Type type, int rowCount, int offset)
     {
+        // Blob v2 columns are read as descriptors, which cannot be written back as blob v2 input
+        if (BlobUtils.isBlobV2Field(vector.getField())) {
+            throw new TrinoException(NOT_SUPPORTED, format("Writing to Lance blob v2 column '%s' is not supported", vector.getName()));
+        }
+
         if (type.equals(BOOLEAN)) {
             writeBooleanBlock(block, (BitVector) vector, rowCount, offset);
         }
