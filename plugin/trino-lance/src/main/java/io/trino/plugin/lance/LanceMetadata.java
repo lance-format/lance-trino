@@ -493,6 +493,13 @@ public class LanceMetadata
             // Table may disappear between list and describe.
             return Optional.empty();
         }
+        catch (RuntimeException e) {
+            if (isDatasetNotFound(e)) {
+                // Dataset may be removed by a concurrent drop between describe and open.
+                return Optional.empty();
+            }
+            throw e;
+        }
     }
 
     @Override
@@ -1292,6 +1299,7 @@ public class LanceMetadata
                         .removedFragmentIds(removedFragmentIds)
                         .updatedFragments(updatedFragments)
                         .newFragments(newFragments)
+                        .updateMode(Optional.of(Update.UpdateMode.RewriteRows))
                         .build();
 
                 SourcedTransaction.Builder transactionBuilder = dataset
@@ -1607,6 +1615,22 @@ public class LanceMetadata
             }
             // NullPointerException in Fragment/Dataset operations is also a sign of concurrent modification
             if (current instanceof NullPointerException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    /**
+     * Check if the exception is Lance reporting that a dataset does not exist at its location.
+     */
+    private static boolean isDatasetNotFound(RuntimeException e)
+    {
+        Throwable current = e;
+        while (current != null) {
+            String message = current.getMessage();
+            if (current instanceof IllegalArgumentException && message != null && message.contains("was not found")) {
                 return true;
             }
             current = current.getCause();
