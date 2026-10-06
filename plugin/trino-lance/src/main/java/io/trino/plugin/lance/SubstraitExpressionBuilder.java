@@ -919,6 +919,12 @@ public final class SubstraitExpressionBuilder
         if (args.size() < 2) {
             return Optional.empty();
         }
+        // A LIKE with an ESCAPE clause arrives as a 3-argument call (value, pattern, escape).
+        // Substrait like:str_str has no escape parameter, so pushing the raw pattern would
+        // misinterpret escaped wildcards. Keep escaped LIKE in Trino.
+        if (args.size() > 2) {
+            return Optional.empty();
+        }
 
         ConnectorExpression columnExpr = args.get(0);
         ConnectorExpression patternExpr = args.get(1);
@@ -1262,8 +1268,9 @@ public final class SubstraitExpressionBuilder
         // Handle LIKE
         if (call.getFunctionName().equals(LIKE_FUNCTION_NAME)) {
             List<ConnectorExpression> args = call.getArguments();
-            // LIKE has 2 arguments: column, pattern (optionally 3 with escape char)
-            if (args.size() >= 2) {
+            // LIKE has 2 arguments: column, pattern. A 3-argument call carries an ESCAPE char,
+            // which Substrait like:str_str cannot express, so it must stay in Trino.
+            if (args.size() == 2) {
                 ConnectorExpression columnExpr = args.get(0);
                 ConnectorExpression patternExpr = args.get(1);
 
@@ -1303,11 +1310,16 @@ public final class SubstraitExpressionBuilder
 
     /**
      * Check if a LIKE pattern is pushable to Lance.
+     * <p>
+     * Lance evaluates the pattern via Substrait {@code like:str_str}, which uses SQL
+     * wildcard semantics ({@code %} any sequence, {@code _} single character) and is
+     * case-sensitive, matching Trino. Any non-null pattern is pushable; the ESCAPE case is
+     * rejected at the call site (a LIKE with an escape char arrives as a 3-argument call and
+     * {@code like:str_str} has no escape parameter), so it never reaches this check.
      */
     public static boolean isPushableLikePattern(String pattern)
     {
-        // Keep LIKE in Trino until Lance LIKE Substrait semantics are verified end to end.
-        return false;
+        return pattern != null;
     }
 
     /**
