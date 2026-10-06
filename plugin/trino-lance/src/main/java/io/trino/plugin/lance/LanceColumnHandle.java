@@ -21,7 +21,6 @@ import io.trino.spi.type.RowType;
 import io.trino.spi.type.Type;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.pojo.ArrowType;
-import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.lance.schema.LanceField;
 
@@ -171,14 +170,6 @@ public record LanceColumnHandle(
         return !dereferencePath.isEmpty();
     }
 
-    public String projectionPath()
-    {
-        if (isBlobVirtualColumn()) {
-            return baseBlobColumnName;
-        }
-        return path;
-    }
-
     public String scanProjectionName()
     {
         if (isBlobVirtualColumn()) {
@@ -306,46 +297,12 @@ public record LanceColumnHandle(
             // List type - handled by parent field's children
             return new ArrayType(REAL); // Default element type, actual type comes from children
         }
-        else if (type instanceof ArrowType.FixedSizeList fsl) {
+        else if (type instanceof ArrowType.FixedSizeList) {
             // FixedSizeList is commonly used for vector embeddings
             // We map it to Trino ARRAY type - the element type comes from children
             return new ArrayType(REAL); // Default to REAL for embeddings
         }
         throw new UnsupportedOperationException("Unsupported arrow type: " + type);
-    }
-
-    public static Type toTrinoType(Field field)
-    {
-        ArrowType type = field.getType();
-        if (BlobUtils.isBlobArrowField(field)) {
-            // Blob columns: LargeBinary with blob metadata or struct with position/size
-            if (type instanceof ArrowType.LargeBinary) {
-                return VARBINARY;
-            }
-            else if (type instanceof ArrowType.Struct) {
-                // Lance returns blob data as struct with position and size
-                // For reading we expose VARBINARY to match schema but data is not materialized
-                return VARBINARY;
-            }
-        }
-        // For structs that are blob fields, return VARBINARY
-        if (type instanceof ArrowType.Struct && BlobUtils.isBlobArrowField(field)) {
-            return VARBINARY;
-        }
-        // General struct support - map to Trino RowType
-        if (type instanceof ArrowType.Struct) {
-            List<RowType.Field> rowFields = new ArrayList<>();
-            for (Field child : field.getChildren()) {
-                rowFields.add(new RowType.Field(Optional.of(child.getName()), toTrinoType(child)));
-            }
-            return RowType.from(rowFields);
-        }
-        return toTrinoType(type);
-    }
-
-    public static boolean isBlobField(Field field)
-    {
-        return BlobUtils.isBlobArrowField(field);
     }
 
     @JsonIgnore

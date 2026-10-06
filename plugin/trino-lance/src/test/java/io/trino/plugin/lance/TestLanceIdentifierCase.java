@@ -181,7 +181,6 @@ public class TestLanceIdentifierCase
 
             LanceMetadata metadata = new LanceMetadata(
                     runtime,
-                    config,
                     JsonCodec.jsonCodec(LanceCommitTaskData.class),
                     JsonCodec.jsonCodec(LanceMergeCommitData.class));
             LanceTableHandle handle = metadata.getTableHandle(
@@ -205,7 +204,6 @@ public class TestLanceIdentifierCase
         try {
             LanceMetadata metadata = new LanceMetadata(
                     runtime,
-                    new LanceConfig().setSingleLevelNs(true),
                     JsonCodec.jsonCodec(LanceCommitTaskData.class),
                     JsonCodec.jsonCodec(LanceMergeCommitData.class));
             assertThat(ImmutableList.copyOf(metadata.streamRelationColumns(SESSION, Optional.of("default"), names -> names)))
@@ -223,7 +221,6 @@ public class TestLanceIdentifierCase
         try {
             LanceMetadata metadata = new LanceMetadata(
                     runtime,
-                    new LanceConfig().setSingleLevelNs(true),
                     JsonCodec.jsonCodec(LanceCommitTaskData.class),
                     JsonCodec.jsonCodec(LanceMergeCommitData.class));
             return metadata.getTableHandle(SESSION, new SchemaTableName("default", name), Optional.empty(), Optional.empty());

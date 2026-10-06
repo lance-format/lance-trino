@@ -59,7 +59,7 @@ public class TestLanceSplitManager
         runtime = new TrackingLanceRuntime(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-        this.metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
+        this.metadata = new LanceMetadata(runtime, commitTaskDataCodec, mergeCommitDataCodec);
         this.splitManager = new LanceSplitManager(runtime);
     }
 

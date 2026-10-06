@@ -194,11 +194,6 @@ public class LanceRuntime
         return namespace;
     }
 
-    public String getRoot()
-    {
-        return root;
-    }
-
     public boolean isSingleLevelNs()
     {
         return singleLevelNs;
@@ -281,16 +276,6 @@ public class LanceRuntime
             log.error(e, "Failed to create session for user: %s", key);
             throw new RuntimeException("Failed to create Lance session", e);
         }
-    }
-
-    public long getActiveSessionCount()
-    {
-        return sessionCache.size();
-    }
-
-    public long getCachedDatasetCount()
-    {
-        return datasetCache.size();
     }
 
     private static String normalizeUserIdentity(String userIdentity)
@@ -394,13 +379,6 @@ public class LanceRuntime
     {
         Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
         return dataset.getFragments();
-    }
-
-    public Fragment getFragment(String userIdentity, String tablePath, Long version,
-            int fragmentId, Map<String, String> storageOptions)
-    {
-        Dataset dataset = getDataset(userIdentity, tablePath, version, storageOptions);
-        return dataset.getFragment(fragmentId);
     }
 
     // ================== Schema Access ==================
@@ -544,12 +522,6 @@ public class LanceRuntime
     }
 
     // ================== Scanner Operations ==================
-
-    public LanceScanner openDatasetScanner(String userIdentity, String tablePath, Long version,
-            List<Integer> fragmentIds, ScanOptions scanOptions, Map<String, String> storageOptions)
-    {
-        return openDatasetScanner(userIdentity, tablePath, version, Optional.of(fragmentIds), scanOptions, storageOptions);
-    }
 
     public LanceScanner openDatasetScanner(String userIdentity, String tablePath, Long version,
             Optional<List<Integer>> fragmentIds, ScanOptions scanOptions, Map<String, String> storageOptions)

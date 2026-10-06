@@ -22,14 +22,8 @@ package io.trino.plugin.lance;
 public final class RowAddress
 {
     public static final String LANCE_ROW_ADDRESS = "$row_address";
-    public static final String LANCE_FRAGMENT_ID = "$fragment_id";
 
     private RowAddress() {}
-
-    public static long encode(int fragmentId, int rowIndex)
-    {
-        return ((long) fragmentId << 32) | (rowIndex & 0xFFFFFFFFL);
-    }
 
     public static int fragmentId(long rowAddress)
     {

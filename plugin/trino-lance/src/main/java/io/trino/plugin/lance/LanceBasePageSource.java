@@ -31,8 +31,6 @@ import static io.trino.spi.StandardErrorCode.TRANSACTION_CONFLICT;
 public abstract class LanceBasePageSource
         implements ConnectorPageSource
 {
-    protected final LanceTableHandle tableHandle;
-
     protected final AtomicLong readBytes = new AtomicLong();
     protected final AtomicBoolean isFinished = new AtomicBoolean();
 
@@ -40,14 +38,8 @@ public abstract class LanceBasePageSource
     protected final BufferAllocator bufferAllocator;
     protected final PageBuilder pageBuilder;
 
-    public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity, BufferAllocator parentAllocator)
-    {
-        this(tableHandle, columns, List.of(), scannerFactory, storageOptions, userIdentity, parentAllocator);
-    }
-
     public LanceBasePageSource(LanceTableHandle tableHandle, List<LanceColumnHandle> columns, List<String> filterProjectionColumns, ScannerFactory scannerFactory, Map<String, String> storageOptions, String userIdentity, BufferAllocator parentAllocator)
     {
-        this.tableHandle = tableHandle;
         // Create a child allocator for this page source. This provides isolation and proper resource tracking.
         // The child allocator will be closed when the page source is closed.
         this.bufferAllocator = parentAllocator.newChildAllocator(tableHandle.getTableName(), 0, Long.MAX_VALUE);

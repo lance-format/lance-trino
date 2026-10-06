@@ -30,10 +30,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static io.airlift.slice.Slices.wrappedBuffer;
-import static io.trino.spi.connector.ConnectorMergeSink.DELETE_OPERATION_NUMBER;
-import static io.trino.spi.connector.ConnectorMergeSink.INSERT_OPERATION_NUMBER;
-import static io.trino.spi.connector.ConnectorMergeSink.UPDATE_DELETE_OPERATION_NUMBER;
-import static io.trino.spi.connector.ConnectorMergeSink.UPDATE_INSERT_OPERATION_NUMBER;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.TinyintType.TINYINT;
 import static java.util.Objects.requireNonNull;
@@ -51,7 +47,6 @@ public class LanceMergeSink
 {
     private static final Logger log = Logger.get(LanceMergeSink.class);
 
-    private final LanceMergeTableHandle mergeHandle;
     private final LancePageSink insertPageSink;
     private final JsonCodec<LanceMergeCommitData> commitDataCodec;
 
@@ -67,7 +62,7 @@ public class LanceMergeSink
             JsonCodec<LanceMergeCommitData> commitDataCodec,
             LanceRuntime runtime)
     {
-        this.mergeHandle = requireNonNull(mergeHandle, "mergeHandle is null");
+        requireNonNull(mergeHandle, "mergeHandle is null");
         this.commitDataCodec = requireNonNull(commitDataCodec, "commitDataCodec is null");
 
         this.insertPageSink = new LancePageSink(

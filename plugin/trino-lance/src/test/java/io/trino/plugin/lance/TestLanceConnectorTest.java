@@ -50,37 +50,6 @@ import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.SmallintType.SMALLINT;
 import static io.trino.spi.type.TinyintType.TINYINT;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ADD_COLUMN_WITH_COMMENT;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_COMMENT_ON_COLUMN;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_COMMENT_ON_TABLE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_COMMENT_ON_VIEW_COLUMN;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_CREATE_MATERIALIZED_VIEW;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_CREATE_OR_REPLACE_TABLE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_CREATE_SCHEMA;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_CREATE_TABLE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_CREATE_TABLE_WITH_DATA;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_CREATE_VIEW;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_DELETE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_DROP_COLUMN;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_DROP_SCHEMA_CASCADE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_INSERT;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_MAP_TYPE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_MERGE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_NEGATIVE_DATE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_NOT_NULL_CONSTRAINT;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_RENAME_COLUMN;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_RENAME_SCHEMA;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_RENAME_TABLE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ROW_LEVEL_DELETE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_ROW_TYPE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_SET_COLUMN_TYPE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_TOPN_PUSHDOWN;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_TRUNCATE;
-import static io.trino.testing.TestingConnectorBehavior.SUPPORTS_UPDATE;
 import static io.trino.testing.TestingConnectorSession.SESSION;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.abort;
@@ -696,7 +665,7 @@ public class TestLanceConnectorTest
             LanceRuntime runtime = new LanceRuntime(config, catalogProperties);
             JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
             JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-            LanceMetadata metadata = new LanceMetadata(runtime, config, commitTaskDataCodec, mergeCommitDataCodec);
+            LanceMetadata metadata = new LanceMetadata(runtime, commitTaskDataCodec, mergeCommitDataCodec);
 
             // Get table handle - this should NOT return null anymore
             LanceTableHandle tableHandle = (LanceTableHandle) metadata.getTableHandle(

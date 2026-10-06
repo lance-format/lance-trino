@@ -90,7 +90,7 @@ public class TestLanceMetadata
         runtime = new LanceRuntime(lanceConfig, catalogProperties);
         JsonCodec<LanceCommitTaskData> commitTaskDataCodec = JsonCodec.jsonCodec(LanceCommitTaskData.class);
         JsonCodec<LanceMergeCommitData> mergeCommitDataCodec = JsonCodec.jsonCodec(LanceMergeCommitData.class);
-        metadata = new LanceMetadata(runtime, lanceConfig, commitTaskDataCodec, mergeCommitDataCodec);
+        metadata = new LanceMetadata(runtime, commitTaskDataCodec, mergeCommitDataCodec);
     }
 
     @Test
@@ -256,7 +256,6 @@ public class TestLanceMetadata
             createAnalyticsAndSalesTables(runtime.getNamespace());
             LanceMetadata metadata = new LanceMetadata(
                     runtime,
-                    config,
                     JsonCodec.jsonCodec(LanceCommitTaskData.class),
                     JsonCodec.jsonCodec(LanceMergeCommitData.class));
             assertThat(metadata.listTables(SESSION, Optional.empty()))
@@ -281,7 +280,6 @@ public class TestLanceMetadata
             createAnalyticsAndSalesTables(runtime.getNamespace());
             LanceMetadata metadata = new LanceMetadata(
                     runtime,
-                    config,
                     JsonCodec.jsonCodec(LanceCommitTaskData.class),
                     JsonCodec.jsonCodec(LanceMergeCommitData.class));
             assertThat(relationColumns(metadata, Optional.empty(), names -> names))
@@ -313,7 +311,6 @@ public class TestLanceMetadata
 
             LanceMetadata metadata = new LanceMetadata(
                     runtime,
-                    config,
                     JsonCodec.jsonCodec(LanceCommitTaskData.class),
                     JsonCodec.jsonCodec(LanceMergeCommitData.class));
             SchemaTableName goodTable = new SchemaTableName("default", "good_table");

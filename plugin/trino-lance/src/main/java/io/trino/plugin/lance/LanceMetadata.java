@@ -49,7 +49,6 @@ import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
 import io.trino.spi.expression.FieldDereference;
 import io.trino.spi.expression.Variable;
-import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.security.TrinoPrincipal;
 import io.trino.spi.statistics.ComputedStatistics;
@@ -120,8 +119,6 @@ import java.util.function.UnaryOperator;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.plugin.lance.RowAddress.LANCE_ROW_ADDRESS;
-import static io.trino.plugin.lance.SubstraitExpressionBuilder.isDomainPushable;
-import static io.trino.plugin.lance.SubstraitExpressionBuilder.isSupportedType;
 import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.StandardErrorCode.INVALID_ARGUMENTS;
@@ -142,19 +139,16 @@ public class LanceMetadata
     private static final ConcurrentMap<String, Dataset> transactionDatasets = new ConcurrentHashMap<>();
 
     private final LanceRuntime runtime;
-    private final LanceConfig lanceConfig;
     private final JsonCodec<LanceCommitTaskData> commitTaskDataCodec;
     private final JsonCodec<LanceMergeCommitData> mergeCommitDataCodec;
 
     @Inject
     public LanceMetadata(
             LanceRuntime runtime,
-            LanceConfig lanceConfig,
             JsonCodec<LanceCommitTaskData> commitTaskDataCodec,
             JsonCodec<LanceMergeCommitData> mergeCommitDataCodec)
     {
         this.runtime = requireNonNull(runtime, "runtime is null");
-        this.lanceConfig = requireNonNull(lanceConfig, "lanceConfig is null");
         this.commitTaskDataCodec = requireNonNull(commitTaskDataCodec, "commitTaskDataCodec is null");
         this.mergeCommitDataCodec = requireNonNull(mergeCommitDataCodec, "mergeCommitDataCodec is null");
     }
@@ -808,54 +802,6 @@ public class LanceMetadata
             ordinals.put(sortedColumns.get(i).path(), i);
         }
         return ordinals;
-    }
-
-    private TupleDomain<LanceColumnHandle> filterToSupportedTypes(TupleDomain<LanceColumnHandle> tupleDomain)
-    {
-        if (tupleDomain.isAll() || tupleDomain.isNone()) {
-            return tupleDomain;
-        }
-
-        Map<LanceColumnHandle, Domain> domains = tupleDomain.getDomains().orElse(Map.of());
-        Map<LanceColumnHandle, Domain> supportedDomains = new HashMap<>();
-
-        for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
-            LanceColumnHandle column = entry.getKey();
-            Domain domain = entry.getValue();
-            if (isSupportedType(column.trinoType()) && isDomainPushable(domain)) {
-                supportedDomains.put(column, domain);
-            }
-        }
-
-        if (supportedDomains.isEmpty()) {
-            return TupleDomain.all();
-        }
-
-        return TupleDomain.withColumnDomains(supportedDomains);
-    }
-
-    private TupleDomain<LanceColumnHandle> filterToUnsupportedTypes(TupleDomain<LanceColumnHandle> tupleDomain)
-    {
-        if (tupleDomain.isAll() || tupleDomain.isNone()) {
-            return TupleDomain.all();
-        }
-
-        Map<LanceColumnHandle, Domain> domains = tupleDomain.getDomains().orElse(Map.of());
-        Map<LanceColumnHandle, Domain> unsupportedDomains = new HashMap<>();
-
-        for (Map.Entry<LanceColumnHandle, Domain> entry : domains.entrySet()) {
-            LanceColumnHandle column = entry.getKey();
-            Domain domain = entry.getValue();
-            if (!isSupportedType(column.trinoType()) || !isDomainPushable(domain)) {
-                unsupportedDomains.put(column, domain);
-            }
-        }
-
-        if (unsupportedDomains.isEmpty()) {
-            return TupleDomain.all();
-        }
-
-        return TupleDomain.withColumnDomains(unsupportedDomains);
     }
 
     // ===== DROP TABLE =====
@@ -1574,18 +1520,6 @@ public class LanceMetadata
         catch (IOException | ClassNotFoundException e) {
             throw new RuntimeException("Failed to deserialize FragmentMetadata", e);
         }
-    }
-
-    @VisibleForTesting
-    public LanceConfig getLanceConfig()
-    {
-        return lanceConfig;
-    }
-
-    @VisibleForTesting
-    public LanceRuntime getRuntime()
-    {
-        return runtime;
     }
 
     /**

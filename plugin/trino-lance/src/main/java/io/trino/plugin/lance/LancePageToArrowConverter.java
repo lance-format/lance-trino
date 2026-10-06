@@ -14,7 +14,6 @@
 package io.trino.plugin.lance;
 
 import io.airlift.slice.Slice;
-import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.ColumnMetadata;
@@ -26,7 +25,6 @@ import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarbinaryType;
 import io.trino.spi.type.VarcharType;
-import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
@@ -44,7 +42,6 @@ import org.apache.arrow.vector.UInt2Vector;
 import org.apache.arrow.vector.UInt4Vector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
-import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.complex.FixedSizeListVector;
 import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.StructVector;
@@ -83,14 +80,6 @@ import static java.lang.String.format;
 public final class LancePageToArrowConverter
 {
     private LancePageToArrowConverter() {}
-
-    /**
-     * Convert Trino Type to Arrow ArrowType.
-     */
-    public static ArrowType toArrowType(Type trinoType)
-    {
-        return toArrowType(trinoType, false);
-    }
 
     /**
      * Convert Trino Type to Arrow ArrowType, with optional blob encoding.
@@ -134,7 +123,7 @@ public final class LancePageToArrowConverter
         else if (trinoType instanceof TimestampType) {
             return new ArrowType.Timestamp(TimeUnit.MICROSECOND, null);
         }
-        else if (trinoType instanceof ArrayType arrayType) {
+        else if (trinoType instanceof ArrayType) {
             // Arrow List type - the children field defines element type
             return ArrowType.List.INSTANCE;
         }
@@ -142,22 +131,6 @@ public final class LancePageToArrowConverter
             return ArrowType.Struct.INSTANCE;
         }
         throw new TrinoException(NOT_SUPPORTED, format("Unsupported Trino type for Arrow conversion: %s", trinoType));
-    }
-
-    /**
-     * Convert list of Trino ColumnMetadata to Arrow Schema.
-     */
-    public static Schema toArrowSchema(List<ColumnMetadata> columns)
-    {
-        return toArrowSchema(columns, Set.of(), Map.of());
-    }
-
-    /**
-     * Convert list of Trino ColumnMetadata to Arrow Schema with blob columns.
-     */
-    public static Schema toArrowSchema(List<ColumnMetadata> columns, Set<String> blobColumns)
-    {
-        return toArrowSchema(columns, blobColumns, Map.of());
     }
 
     /**
@@ -174,22 +147,6 @@ public final class LancePageToArrowConverter
             fields.add(toArrowField(column.getName(), column.getType(), column.isNullable(), isBlob, vectorDim));
         }
         return new Schema(fields);
-    }
-
-    /**
-     * Convert a Trino column to an Arrow Field.
-     */
-    public static Field toArrowField(String name, Type trinoType, boolean nullable)
-    {
-        return toArrowField(name, trinoType, nullable, false, null);
-    }
-
-    /**
-     * Convert a Trino column to an Arrow Field with optional blob encoding.
-     */
-    public static Field toArrowField(String name, Type trinoType, boolean nullable, boolean isBlob)
-    {
-        return toArrowField(name, trinoType, nullable, isBlob, null);
     }
 
     /**
@@ -280,45 +237,6 @@ public final class LancePageToArrowConverter
                 }
             }
         }
-    }
-
-    /**
-     * Create a VectorSchemaRoot from an Arrow Schema using the given allocator.
-     */
-    public static VectorSchemaRoot createVectorSchemaRoot(BufferAllocator allocator, Schema schema)
-    {
-        return VectorSchemaRoot.create(schema, allocator);
-    }
-
-    /**
-     * Write a Trino Page to Arrow VectorSchemaRoot.
-     * The schema of the VectorSchemaRoot must match the columns in the Page.
-     *
-     * @param page The Trino Page to convert
-     * @param root The VectorSchemaRoot to write to (must be pre-allocated)
-     * @param columnTypes The Trino types for each column
-     */
-    public static void writePageToVectors(Page page, VectorSchemaRoot root, List<Type> columnTypes)
-    {
-        int rowCount = page.getPositionCount();
-
-        for (int channel = 0; channel < page.getChannelCount(); channel++) {
-            Block block = page.getBlock(channel);
-            FieldVector vector = root.getVector(channel);
-            Type type = columnTypes.get(channel);
-            writeBlockToVector(block, vector, type, rowCount);
-        }
-
-        root.setRowCount(rowCount);
-    }
-
-    /**
-     * Write a Trino Block to an Arrow FieldVector.
-     * Note: Caller must have already allocated the vector. This method writes at offset 0.
-     */
-    public static void writeBlockToVector(Block block, FieldVector vector, Type type, int rowCount)
-    {
-        writeBlockToVectorAtOffset(block, vector, type, rowCount, 0);
     }
 
     /**

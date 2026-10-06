@@ -13,7 +13,6 @@
  */
 package io.trino.plugin.lance;
 
-import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 
 import java.util.Map;
@@ -25,8 +24,6 @@ public final class BlobUtils
 
     public static final String BLOB_POSITION_SUFFIX = "__blob_pos";
     public static final String BLOB_SIZE_SUFFIX = "__blob_size";
-
-    public static final String LANCE_ENCODING_PROPERTY_SUFFIX = ".lance.encoding";
 
     public enum BlobVirtualColumnType
     {
@@ -56,17 +53,6 @@ public final class BlobUtils
         return LANCE_ENCODING_BLOB_VALUE.equalsIgnoreCase(value);
     }
 
-    public static boolean isBlobStructField(Field field)
-    {
-        if (field == null) {
-            return false;
-        }
-        if (!(field.getType() instanceof ArrowType.Struct)) {
-            return false;
-        }
-        return isBlobArrowField(field);
-    }
-
     public static String getBlobPositionColumnName(String columnName)
     {
         return columnName + BLOB_POSITION_SUFFIX;
@@ -75,37 +61,5 @@ public final class BlobUtils
     public static String getBlobSizeColumnName(String columnName)
     {
         return columnName + BLOB_SIZE_SUFFIX;
-    }
-
-    public static boolean isBlobVirtualColumn(String columnName)
-    {
-        return columnName.endsWith(BLOB_POSITION_SUFFIX) || columnName.endsWith(BLOB_SIZE_SUFFIX);
-    }
-
-    public static BlobVirtualColumnType getBlobVirtualColumnType(String columnName)
-    {
-        if (columnName.endsWith(BLOB_POSITION_SUFFIX)) {
-            return BlobVirtualColumnType.POSITION;
-        }
-        else if (columnName.endsWith(BLOB_SIZE_SUFFIX)) {
-            return BlobVirtualColumnType.SIZE;
-        }
-        return BlobVirtualColumnType.NONE;
-    }
-
-    public static String getBaseBlobColumnName(String virtualColumnName)
-    {
-        if (virtualColumnName.endsWith(BLOB_POSITION_SUFFIX)) {
-            return virtualColumnName.substring(0, virtualColumnName.length() - BLOB_POSITION_SUFFIX.length());
-        }
-        else if (virtualColumnName.endsWith(BLOB_SIZE_SUFFIX)) {
-            return virtualColumnName.substring(0, virtualColumnName.length() - BLOB_SIZE_SUFFIX.length());
-        }
-        return virtualColumnName;
-    }
-
-    public static String getBlobEncodingPropertyKey(String columnName)
-    {
-        return columnName + LANCE_ENCODING_PROPERTY_SUFFIX;
     }
 }

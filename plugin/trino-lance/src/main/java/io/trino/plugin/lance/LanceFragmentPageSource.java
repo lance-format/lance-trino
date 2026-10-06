@@ -100,11 +100,6 @@ public class LanceFragmentPageSource
         private Dataset lanceDataset;
         private LanceScanner lanceScanner;
 
-        public FragmentScannerFactory(List<Integer> fragmentIds, boolean includeRowAddress, int readBatchSize, LanceRuntime runtime)
-        {
-            this(Optional.of(fragmentIds), includeRowAddress, readBatchSize, runtime);
-        }
-
         public FragmentScannerFactory(Optional<List<Integer>> fragmentIds, boolean includeRowAddress, int readBatchSize, LanceRuntime runtime)
         {
             this.fragmentIds = fragmentIds.map(List::copyOf);

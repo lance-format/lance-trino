@@ -285,14 +285,6 @@ public class LanceTableHandle
         return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, true, datasetVersion);
     }
 
-    /**
-     * Create a new handle with the given dataset version for snapshot isolation.
-     */
-    public LanceTableHandle withDatasetVersion(Long newDatasetVersion)
-    {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, countStar, newDatasetVersion);
-    }
-
     @Override
     public boolean equals(Object o)
     {

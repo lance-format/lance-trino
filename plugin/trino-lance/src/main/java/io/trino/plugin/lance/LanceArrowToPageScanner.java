@@ -94,23 +94,8 @@ public class LanceArrowToPageScanner
     private final List<LanceColumnHandle> columns;
     private final ScannerFactory scannerFactory;
 
-    private final LanceScanner lanceScanner;
     private final ArrowReader arrowReader;
     private final VectorSchemaRoot vectorSchemaRoot;
-
-    public LanceArrowToPageScanner(
-            BufferAllocator allocator,
-            String path,
-            List<LanceColumnHandle> columns,
-            ScannerFactory scannerFactory,
-            Map<String, String> storageOptions,
-            Optional<ByteBuffer> substraitFilter,
-            OptionalLong limit,
-            String userIdentity,
-            Long datasetVersion)
-    {
-        this(allocator, path, columns, List.of(), scannerFactory, storageOptions, substraitFilter, limit, userIdentity, datasetVersion);
-    }
 
     public LanceArrowToPageScanner(
             BufferAllocator allocator,
@@ -170,7 +155,6 @@ public class LanceArrowToPageScanner
             openedScanner = scannerFactory.open(path, allocator, projectionColumns, storageOptions, substraitFilter, limit, userIdentity, datasetVersion);
             openedReader = openedScanner.scanBatches();
             VectorSchemaRoot openedRoot = openedReader.getVectorSchemaRoot();
-            this.lanceScanner = openedScanner;
             this.arrowReader = openedReader;
             this.vectorSchemaRoot = openedRoot;
         }
@@ -550,12 +534,6 @@ public class LanceArrowToPageScanner
             throw new TrinoException(GENERIC_INTERNAL_ERROR,
                     format("Unhandled type for %s: %s", javaType.getSimpleName(), type), ex);
         }
-    }
-
-    private void writeVectorValues(BlockBuilder output, FieldVector vector, Consumer<Integer> consumer, int offset,
-            int length)
-    {
-        writeVectorValues(output, vector::isNull, consumer, offset, length);
     }
 
     private void writeVectorValues(BlockBuilder output, IntPredicate nullChecker, Consumer<Integer> consumer, int offset,
