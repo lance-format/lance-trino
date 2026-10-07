@@ -74,8 +74,6 @@ import org.lance.namespace.errors.NamespaceNotFoundException;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.DeclareTableRequest;
 import org.lance.namespace.model.DeclareTableResponse;
-import org.lance.namespace.model.DescribeNamespaceRequest;
-import org.lance.namespace.model.DescribeNamespaceResponse;
 import org.lance.namespace.model.DescribeTableRequest;
 import org.lance.namespace.model.DescribeTableResponse;
 import org.lance.namespace.model.DropNamespaceRequest;
@@ -118,6 +116,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.UnaryOperator;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.plugin.lance.RowAddress.LANCE_ROW_ADDRESS;
 import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
@@ -178,6 +177,8 @@ public class LanceMetadata
     @Override
     public void createSchema(ConnectorSession session, String schemaName, Map<String, Object> properties, TrinoPrincipal owner)
     {
+        checkArgument(properties.isEmpty(), "Can't have properties for schema creation");
+
         if (runtime.isSingleLevelNs()) {
             throw new TrinoException(NOT_SUPPORTED, "This connector does not support creating schemas");
         }
@@ -187,16 +188,6 @@ public class LanceMetadata
 
         CreateNamespaceRequest request = new CreateNamespaceRequest();
         request.setId(namespaceId);
-
-        if (properties != null && !properties.isEmpty()) {
-            Map<String, String> propsMap = new HashMap<>();
-            for (Map.Entry<String, Object> entry : properties.entrySet()) {
-                if (entry.getValue() != null) {
-                    propsMap.put(entry.getKey(), entry.getValue().toString());
-                }
-            }
-            request.setProperties(propsMap);
-        }
 
         getNamespace().createNamespace(request);
     }
@@ -218,27 +209,6 @@ public class LanceMetadata
         request.setId(namespaceId);
         request.setBehavior("Restrict");
         getNamespace().dropNamespace(request);
-    }
-
-    @Override
-    public Map<String, Object> getSchemaProperties(ConnectorSession session, String schemaName)
-    {
-        if (runtime.isSingleLevelNs() && LanceRuntime.DEFAULT_SCHEMA.equals(schemaName)) {
-            return Collections.emptyMap();
-        }
-
-        DescribeNamespaceRequest request = new DescribeNamespaceRequest();
-        request.setId(runtime.trinoSchemaToLanceNamespace(schemaName));
-        DescribeNamespaceResponse response = getNamespace().describeNamespace(request);
-
-        Map<String, String> props = response.getProperties();
-        if (props == null || props.isEmpty()) {
-            return Collections.emptyMap();
-        }
-
-        Map<String, Object> result = new HashMap<>();
-        result.putAll(props);
-        return result;
     }
 
     // ===== Table Operations =====
