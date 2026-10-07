@@ -73,7 +73,6 @@
 
         <dep.airlift.version>336</dep.airlift.version>
         <dep.antlr.version>4.13.2</dep.antlr.version>
-        <dep.kafka-clients.version>3.9.0</dep.kafka-clients.version>
         <dep.protobuf.version>3.25.5</dep.protobuf.version>
 
         <extraJavaVectorArgs>--add-modules=jdk.incubator.vector</extraJavaVectorArgs>
@@ -187,12 +186,6 @@
 
             <dependency>
                 <groupId>io.trino</groupId>
-                <artifactId>trino-testing-kafka</artifactId>
-                <version>${trino.version}</version>
-            </dependency>
-
-            <dependency>
-                <groupId>io.trino</groupId>
                 <artifactId>trino-tpch</artifactId>
                 <version>${trino.version}</version>
             </dependency>
@@ -219,12 +212,6 @@
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-lang3</artifactId>
                 <version>3.17.0</version>
-            </dependency>
-
-            <dependency>
-                <groupId>org.apache.kafka</groupId>
-                <artifactId>kafka-clients</artifactId>
-                <version>${dep.kafka-clients.version}</version>
             </dependency>
 
             <dependency>
