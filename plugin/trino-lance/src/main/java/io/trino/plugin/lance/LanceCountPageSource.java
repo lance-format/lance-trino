@@ -17,6 +17,7 @@ import io.airlift.log.Logger;
 import io.trino.spi.Page;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.connector.ConnectorPageSource;
+import io.trino.spi.connector.SourcePage;
 import org.lance.ManifestSummary;
 
 import java.util.Map;
@@ -72,7 +73,7 @@ public class LanceCountPageSource
     }
 
     @Override
-    public Page getNextPage()
+    public SourcePage getNextSourcePage()
     {
         if (finished.get()) {
             return null;
@@ -84,7 +85,7 @@ public class LanceCountPageSource
         BlockBuilder blockBuilder = BIGINT.createBlockBuilder(null, 1);
         BIGINT.writeLong(blockBuilder, count);
 
-        return new Page(blockBuilder.build());
+        return SourcePage.create(new Page(blockBuilder.build()));
     }
 
     private long computeCount()

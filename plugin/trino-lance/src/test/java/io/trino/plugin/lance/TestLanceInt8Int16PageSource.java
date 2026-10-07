@@ -33,16 +33,16 @@ import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.lance.CommitBuilder;
 import org.lance.Dataset;
 import org.lance.Fragment;
 import org.lance.FragmentMetadata;
-import org.lance.FragmentOperation;
-import org.lance.WriteParams;
+import org.lance.Transaction;
+import org.lance.operation.Append;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.SmallintType.SMALLINT;
@@ -70,7 +70,7 @@ public class TestLanceInt8Int16PageSource
         String datasetPath = tempDir.resolve("int8_int16_test.lance").toString();
 
         try (BufferAllocator allocator = new RootAllocator()) {
-            Dataset.create(allocator, datasetPath, SCHEMA, new WriteParams.Builder().build()).close();
+            Dataset.write().allocator(allocator).uri(datasetPath).schema(SCHEMA).execute().close();
 
             try (VectorSchemaRoot root = VectorSchemaRoot.create(SCHEMA, allocator)) {
                 root.allocateNew();
@@ -104,10 +104,9 @@ public class TestLanceInt8Int16PageSource
 
                 root.setRowCount(2);
 
-                List<FragmentMetadata> fragments = Fragment.create(
-                        datasetPath, allocator, root, new WriteParams.Builder().build());
-                try (Dataset appended = Dataset.commit(
-                        allocator, datasetPath, new FragmentOperation.Append(fragments), Optional.of(1L))) {
+                List<FragmentMetadata> fragments = Fragment.write().datasetUri(datasetPath).allocator(allocator).data(root).execute();
+                try (Transaction transaction = new Transaction.Builder().readVersion(1).operation(Append.builder().fragments(fragments).build()).build();
+                        Dataset appended = new CommitBuilder(datasetPath, allocator).execute(transaction)) {
                     assertThat(appended.countRows()).isEqualTo(2);
                 }
             }
@@ -132,7 +131,7 @@ public class TestLanceInt8Int16PageSource
             List<LanceColumnHandle> columns = runtime.getColumnHandleList(null, datasetPath, null, Map.of());
             try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(
                     tableHandle, columns, split.getFragments(), Map.of(), 8192, null, runtime)) {
-                Page page = pageSource.getNextPage();
+                Page page = pageSource.getNextSourcePage().getPage();
                 assertThat(page).isNotNull();
                 assertThat(page.getPositionCount()).isEqualTo(2);
 

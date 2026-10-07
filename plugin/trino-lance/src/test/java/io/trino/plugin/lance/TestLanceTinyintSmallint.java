@@ -32,7 +32,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.lance.Dataset;
 import org.lance.ReadOptions;
-import org.lance.WriteParams;
 import org.lance.ipc.LanceScanner;
 
 import java.nio.file.Files;
@@ -176,8 +175,7 @@ public class TestLanceTinyintSmallint
     private static void createUnsignedInt8Int16Dataset(Path datasetPath)
     {
         try (BufferAllocator allocator = new RootAllocator()) {
-            Dataset.create(allocator, datasetPath.toString(), UNSIGNED_INT8_INT16_SCHEMA, new WriteParams.Builder().build())
-                    .close();
+            Dataset.write().allocator(allocator).uri(datasetPath.toString()).schema(UNSIGNED_INT8_INT16_SCHEMA).execute().close();
         }
     }
 
@@ -185,7 +183,7 @@ public class TestLanceTinyintSmallint
             throws Exception
     {
         try (BufferAllocator allocator = new RootAllocator();
-                Dataset dataset = Dataset.open(allocator, datasetPath.toString(), new ReadOptions.Builder().build());
+                Dataset dataset = Dataset.open().allocator(allocator).uri(datasetPath.toString()).readOptions(new ReadOptions.Builder().build()).build();
                 LanceScanner scanner = dataset.newScan();
                 ArrowReader reader = scanner.scanBatches()) {
             Schema schema = dataset.getSchema();

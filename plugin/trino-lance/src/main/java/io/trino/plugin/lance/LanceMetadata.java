@@ -949,7 +949,7 @@ public class LanceMetadata
             ReadOptions readOptions = new ReadOptions.Builder()
                     .setStorageOptions(storageOptions)
                     .build();
-            Dataset dataset = Dataset.open(tablePath, readOptions);
+            Dataset dataset = Dataset.open().uri(tablePath).readOptions(readOptions).build();
             transactionDatasets.put(transactionId, dataset);
             // For replace tables (RTAS/CORTAS), use existing table's format if not specified
             if (fileFormatVersion == null) {

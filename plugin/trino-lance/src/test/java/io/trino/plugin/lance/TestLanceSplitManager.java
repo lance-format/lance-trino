@@ -198,7 +198,7 @@ public class TestLanceSplitManager
 
         assertThat(split.isAllFragments()).isTrue();
         assertThat(split.getFragments()).isEmpty();
-        assertThat(split.getSplitInfo()).containsEntry("fragments", "ALL");
+        assertThat(split.toString()).contains("fragments=ALL");
 
         JsonCodec<LanceSplit> codec = JsonCodec.jsonCodec(LanceSplit.class);
         String json = codec.toJson(split);

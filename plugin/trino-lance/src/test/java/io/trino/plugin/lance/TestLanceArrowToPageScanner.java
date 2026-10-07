@@ -122,7 +122,7 @@ public class TestLanceArrowToPageScanner
 
         try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(
                 lanceTableHandle, columns, lanceSplit.getFragments(), Collections.emptyMap(), 8192, null, runtime)) {
-            page = pageSource.getNextPage();
+            page = pageSource.getNextSourcePage().getPage();
         }
 
         assertThat(page).isNotNull();

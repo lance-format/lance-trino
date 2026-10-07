@@ -75,7 +75,7 @@ public class TestLanceCountPageSource
                 runtime)) {
             assertThat(pageSource.isFinished()).isFalse();
 
-            Page page = pageSource.getNextPage();
+            Page page = pageSource.getNextSourcePage().getPage();
             assertThat(page).isNotNull();
             assertThat(page.getChannelCount()).isEqualTo(1);
             assertThat(page.getPositionCount()).isEqualTo(1);
@@ -85,7 +85,7 @@ public class TestLanceCountPageSource
             assertThat(count).isEqualTo(4L);
 
             // Second call should return null
-            assertThat(pageSource.getNextPage()).isNull();
+            assertThat(pageSource.getNextSourcePage()).isNull();
             assertThat(pageSource.isFinished()).isTrue();
         }
     }

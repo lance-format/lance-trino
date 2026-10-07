@@ -28,7 +28,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.lance.Dataset;
 import org.lance.ReadOptions;
-import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.DeclareTableRequest;
@@ -121,7 +120,7 @@ public class TestLanceIdentifierCase
 
         assertThat(tableHandle(remoteName).getTableId()).isEqualTo(List.of(remoteName));
         try (BufferAllocator allocator = new RootAllocator();
-                Dataset dataset = Dataset.open(allocator, datasetPath(remoteName).toString(), new ReadOptions.Builder().build())) {
+                Dataset dataset = Dataset.open().allocator(allocator).uri(datasetPath(remoteName).toString()).readOptions(new ReadOptions.Builder().build()).build()) {
             assertThat(dataset.countRows()).isEqualTo(1);
         }
         assertThat(computeScalar("SELECT id FROM " + quoted(remoteName.toLowerCase(ENGLISH)))).isEqualTo(1L);
@@ -138,7 +137,7 @@ public class TestLanceIdentifierCase
 
         assertThat(tableHandle(remoteName).getTableId()).isEqualTo(List.of(remoteName));
         try (BufferAllocator allocator = new RootAllocator();
-                Dataset dataset = Dataset.open(allocator, datasetPath(remoteName).toString(), new ReadOptions.Builder().build())) {
+                Dataset dataset = Dataset.open().allocator(allocator).uri(datasetPath(remoteName).toString()).readOptions(new ReadOptions.Builder().build()).build()) {
             assertThat(dataset.countRows()).isEqualTo(1);
         }
         assertThat(computeScalar("SELECT id FROM " + quoted(remoteName.toLowerCase(ENGLISH)))).isEqualTo(42L);
@@ -176,7 +175,7 @@ public class TestLanceIdentifierCase
                     new DeclareTableRequest().id(List.of("p1", "p2", "analytics", remoteName)))
                     .getLocation();
             try (BufferAllocator allocator = new RootAllocator()) {
-                Dataset.create(allocator, location, ID_SCHEMA, new WriteParams.Builder().build()).close();
+                Dataset.write().allocator(allocator).uri(location).schema(ID_SCHEMA).execute().close();
             }
 
             LanceMetadata metadata = new LanceMetadata(
@@ -240,7 +239,7 @@ public class TestLanceIdentifierCase
     private void createDataset(String remoteTableName)
     {
         try (BufferAllocator allocator = new RootAllocator()) {
-            Dataset.create(allocator, datasetPath(remoteTableName).toString(), ID_SCHEMA, new WriteParams.Builder().build()).close();
+            Dataset.write().allocator(allocator).uri(datasetPath(remoteTableName).toString()).schema(ID_SCHEMA).execute().close();
         }
     }
 
@@ -252,7 +251,7 @@ public class TestLanceIdentifierCase
                     .declareTable(new DeclareTableRequest().id(List.of(remoteTableName)))
                     .getLocation();
             try (BufferAllocator allocator = new RootAllocator()) {
-                Dataset.create(allocator, location, ID_SCHEMA, new WriteParams.Builder().build()).close();
+                Dataset.write().allocator(allocator).uri(location).schema(ID_SCHEMA).execute().close();
             }
         }
         finally {

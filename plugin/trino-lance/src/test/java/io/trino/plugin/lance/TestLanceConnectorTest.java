@@ -33,11 +33,12 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.lance.CommitBuilder;
 import org.lance.Dataset;
 import org.lance.Fragment;
 import org.lance.FragmentMetadata;
-import org.lance.FragmentOperation;
-import org.lance.WriteParams;
+import org.lance.Transaction;
+import org.lance.operation.Append;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -568,8 +569,7 @@ public class TestLanceConnectorTest
         // Step 1: Create a Lance dataset with LargeUtf8 column using the Java SDK
         try (BufferAllocator allocator = new RootAllocator()) {
             // Create empty dataset with schema
-            Dataset dataset = Dataset.create(allocator, datasetPath, LARGE_UTF8_SCHEMA,
-                    new WriteParams.Builder().build());
+            Dataset dataset = Dataset.write().allocator(allocator).uri(datasetPath).schema(LARGE_UTF8_SCHEMA).execute();
             dataset.close();
 
             // Write some data
@@ -586,14 +586,10 @@ public class TestLanceConnectorTest
                 }
                 root.setRowCount(5);
 
-                List<FragmentMetadata> fragments = Fragment.create(
-                        datasetPath,
-                        allocator,
-                        root,
-                        new WriteParams.Builder().build());
+                List<FragmentMetadata> fragments = Fragment.write().datasetUri(datasetPath).allocator(allocator).data(root).execute();
 
-                FragmentOperation.Append appendOp = new FragmentOperation.Append(fragments);
-                try (Dataset appendedDataset = Dataset.commit(allocator, datasetPath, appendOp, Optional.of(1L))) {
+                try (Transaction transaction = new Transaction.Builder().readVersion(1).operation(Append.builder().fragments(fragments).build()).build();
+                        Dataset appendedDataset = new CommitBuilder(datasetPath, allocator).execute(transaction)) {
                     assertThat(appendedDataset.countRows()).isEqualTo(5);
                 }
             }
@@ -639,8 +635,7 @@ public class TestLanceConnectorTest
 
         try (BufferAllocator allocator = new RootAllocator()) {
             // Create and populate dataset
-            Dataset dataset = Dataset.create(allocator, datasetPath, LARGE_UTF8_SCHEMA,
-                    new WriteParams.Builder().build());
+            Dataset dataset = Dataset.write().allocator(allocator).uri(datasetPath).schema(LARGE_UTF8_SCHEMA).execute();
             dataset.close();
 
             try (VectorSchemaRoot root = VectorSchemaRoot.create(LARGE_UTF8_SCHEMA, allocator)) {
@@ -652,10 +647,10 @@ public class TestLanceConnectorTest
                 textVector.setSafe(0, "test".getBytes(StandardCharsets.UTF_8));
                 root.setRowCount(1);
 
-                List<FragmentMetadata> fragments = Fragment.create(datasetPath, allocator, root,
-                        new WriteParams.Builder().build());
-                FragmentOperation.Append appendOp = new FragmentOperation.Append(fragments);
-                Dataset.commit(allocator, datasetPath, appendOp, Optional.of(1L)).close();
+                List<FragmentMetadata> fragments = Fragment.write().datasetUri(datasetPath).allocator(allocator).data(root).execute();
+                try (Transaction transaction = new Transaction.Builder().readVersion(1).operation(Append.builder().fragments(fragments).build()).build()) {
+                    new CommitBuilder(datasetPath, allocator).execute(transaction).close();
+                }
             }
 
             // Create LanceMetadata and verify it can read the table
@@ -704,8 +699,7 @@ public class TestLanceConnectorTest
 
         try (BufferAllocator allocator = new RootAllocator()) {
             // Create empty dataset with schema
-            Dataset dataset = Dataset.create(allocator, datasetPath, UINT32_SCHEMA,
-                    new WriteParams.Builder().build());
+            Dataset dataset = Dataset.write().allocator(allocator).uri(datasetPath).schema(UINT32_SCHEMA).execute();
             dataset.close();
 
             // Write data including a value exceeding Integer.MAX_VALUE
@@ -723,14 +717,10 @@ public class TestLanceConnectorTest
 
                 root.setRowCount(2);
 
-                List<FragmentMetadata> fragments = Fragment.create(
-                        datasetPath,
-                        allocator,
-                        root,
-                        new WriteParams.Builder().build());
+                List<FragmentMetadata> fragments = Fragment.write().datasetUri(datasetPath).allocator(allocator).data(root).execute();
 
-                FragmentOperation.Append appendOp = new FragmentOperation.Append(fragments);
-                try (Dataset appendedDataset = Dataset.commit(allocator, datasetPath, appendOp, Optional.of(1L))) {
+                try (Transaction transaction = new Transaction.Builder().readVersion(1).operation(Append.builder().fragments(fragments).build()).build();
+                        Dataset appendedDataset = new CommitBuilder(datasetPath, allocator).execute(transaction)) {
                     assertThat(appendedDataset.countRows()).isEqualTo(2);
                 }
             }
@@ -759,7 +749,7 @@ public class TestLanceConnectorTest
             List<LanceColumnHandle> columns = runtime.getColumnHandleList(null, datasetPath, null, Map.of());
             try (LanceFragmentPageSource pageSource = new LanceFragmentPageSource(
                     tableHandle, columns, split.getFragments(), Map.of(), 8192, null, runtime)) {
-                io.trino.spi.Page page = pageSource.getNextPage();
+                io.trino.spi.Page page = pageSource.getNextSourcePage().getPage();
                 assertThat(page).isNotNull();
                 assertThat(page.getPositionCount()).isEqualTo(2);
 

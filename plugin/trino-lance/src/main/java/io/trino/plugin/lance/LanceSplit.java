@@ -19,11 +19,9 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import io.trino.spi.connector.ConnectorSplit;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
@@ -107,18 +105,8 @@ public class LanceSplit
     public String toString()
     {
         return toStringHelper(this)
-                .add("fragments", fragments)
-                .add("allFragments", allFragments)
+                .add("fragments", allFragments ? "ALL" : JOINER.join(fragments))
                 .toString();
-    }
-
-    @Override
-    public Map<String, String> getSplitInfo()
-    {
-        if (allFragments) {
-            return ImmutableMap.of("fragments", "ALL");
-        }
-        return ImmutableMap.of("fragments", JOINER.join(fragments));
     }
 
     @Override

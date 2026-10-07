@@ -31,7 +31,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.lance.Dataset;
 import org.lance.ReadOptions;
-import org.lance.WriteParams;
 import org.lance.ipc.LanceScanner;
 
 import java.nio.file.Files;
@@ -75,11 +74,7 @@ public class TestLanceUnsignedInt32
         String tableName = "unsigned_int32";
         Path datasetPath = lanceRoot.resolve(tableName + TABLE_PATH_SUFFIX);
         try (BufferAllocator allocator = new RootAllocator()) {
-            Dataset.create(
-                    allocator,
-                    datasetPath.toString(),
-                    UNSIGNED_INT32_SCHEMA,
-                    new WriteParams.Builder().build()).close();
+            Dataset.write().allocator(allocator).uri(datasetPath.toString()).schema(UNSIGNED_INT32_SCHEMA).execute().close();
         }
 
         assertThat(computeActual("SELECT unsigned_int32, unsigned_int32_array FROM " + tableName).getTypes())
@@ -107,7 +102,7 @@ public class TestLanceUnsignedInt32
             throws Exception
     {
         try (BufferAllocator allocator = new RootAllocator();
-                Dataset dataset = Dataset.open(allocator, datasetPath.toString(), new ReadOptions.Builder().build());
+                Dataset dataset = Dataset.open().allocator(allocator).uri(datasetPath.toString()).readOptions(new ReadOptions.Builder().build()).build();
                 LanceScanner scanner = dataset.newScan();
                 ArrowReader reader = scanner.scanBatches()) {
             Schema schema = dataset.getSchema();

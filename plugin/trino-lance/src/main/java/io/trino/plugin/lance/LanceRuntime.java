@@ -327,7 +327,7 @@ public class LanceRuntime
         // Use our shared allocator instead of letting Dataset create its own.
         // This prevents the allocator from being closed when datasets are closed,
         // which would break concurrent operations that are still using scanners.
-        return Dataset.open(allocator, tablePath, optionsBuilder.build());
+        return Dataset.open().allocator(allocator).uri(tablePath).readOptions(optionsBuilder.build()).build();
     }
 
     public long getLatestVersion(String userIdentity, String tablePath, Map<String, String> storageOptions)

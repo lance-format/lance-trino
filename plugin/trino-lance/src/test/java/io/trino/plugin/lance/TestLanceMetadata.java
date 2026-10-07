@@ -39,7 +39,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.lance.Dataset;
-import org.lance.WriteParams;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.model.CreateNamespaceRequest;
 import org.lance.namespace.model.DeclareTableRequest;
@@ -394,7 +393,7 @@ public class TestLanceMetadata
         String location = namespace.declareTable(new DeclareTableRequest().id(tableId)).getLocation();
         Schema schema = new Schema(List.of(Field.nullable("id", new ArrowType.Int(64, true))), null);
         try (BufferAllocator allocator = new RootAllocator()) {
-            Dataset.create(allocator, location, schema, new WriteParams.Builder().build()).close();
+            Dataset.write().allocator(allocator).uri(location).schema(schema).execute().close();
         }
     }
 
@@ -402,7 +401,7 @@ public class TestLanceMetadata
     {
         Schema schema = new Schema(List.of(Field.nullable("id", new ArrowType.Int(64, true))), null);
         try (BufferAllocator allocator = new RootAllocator()) {
-            Dataset.create(allocator, root.resolve(remoteTableName + TABLE_PATH_SUFFIX).toString(), schema, new WriteParams.Builder().build()).close();
+            Dataset.write().allocator(allocator).uri(root.resolve(remoteTableName + TABLE_PATH_SUFFIX).toString()).schema(schema).execute().close();
         }
     }
 

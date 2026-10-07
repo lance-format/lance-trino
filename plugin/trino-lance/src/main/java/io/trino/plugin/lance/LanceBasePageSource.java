@@ -17,6 +17,7 @@ import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ConnectorPageSource;
+import io.trino.spi.connector.SourcePage;
 import org.apache.arrow.memory.BufferAllocator;
 
 import java.util.List;
@@ -110,7 +111,7 @@ public abstract class LanceBasePageSource
     }
 
     @Override
-    public Page getNextPage()
+    public SourcePage getNextSourcePage()
     {
         checkState(pageBuilder.isEmpty(), "PageBuilder is not empty at the beginning of a new page");
         if (!lanceArrowToPageScanner.read()) {
@@ -122,7 +123,7 @@ public abstract class LanceBasePageSource
         lanceArrowToPageScanner.convert(pageBuilder);
         Page page = pageBuilder.build();
         pageBuilder.reset();
-        return page;
+        return SourcePage.create(page);
     }
 
     @Override
