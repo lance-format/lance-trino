@@ -100,7 +100,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
@@ -758,12 +757,15 @@ public class LanceMetadata
         byte[] newFilterBytes = substraitFilter.get().array();
         byte[] existingFilter = lanceTableHandle.getSubstraitFilter();
 
-        // If there's an existing filter, we can't easily combine Substrait expressions,
-        // so we just use the new one (this matches the previous behavior with TupleDomain.intersect)
-        // In practice, Trino calls applyFilter once with the full constraint
-        if (existingFilter != null && existingFilter.length > 0 &&
-                Arrays.equals(existingFilter, newFilterBytes)) {
-            log.debug("applyFilter: filter unchanged, returning empty");
+        // A Substrait filter is already enforced on this handle from a prior applyFilter call.
+        // Serialized Substrait filters cannot be intersected here, and the earlier call already
+        // reported its predicate as fully enforced, so Trino will not re-offer it. Overwriting the
+        // stored filter would silently drop that enforced predicate and return wrong results -- e.g.
+        // a correlated-IN subquery whose region scan is first enforced on a VARCHAR predicate and
+        // later re-visited with only a dynamic-filter constraint. Decline any further pushdown and
+        // let Trino apply the remaining constraint itself.
+        if (existingFilter != null && existingFilter.length > 0) {
+            log.debug("applyFilter: a filter is already enforced on this handle; declining additional pushdown");
             return Optional.empty();
         }
 

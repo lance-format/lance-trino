@@ -86,6 +86,24 @@ public class TestLanceConnectorTest
     }
 
     @Test
+    public void testFilterPushdownPreservedInCorrelatedSubquery()
+    {
+        // Regression: applyFilter must not drop an already-enforced VARCHAR filter when it is
+        // re-visited with a different (e.g. dynamic-filter) constraint. A correlated-IN subquery
+        // triggers that multi-call sequence. Each nation's region matches only if its region name
+        // starts with 'A' (AFRICA/AMERICA/ASIA = regions 0,1,2 = 15 nations).
+        assertQuery(
+                "SELECT count(*) FROM nation n WHERE n.regionkey IN " +
+                        "(SELECT r.regionkey FROM region r WHERE r.regionkey = n.regionkey AND r.name LIKE 'A%')",
+                "VALUES 15");
+        // Same shape with a plain comparison (exercises the TupleDomain pushdown path).
+        assertQuery(
+                "SELECT count(*) FROM nation n WHERE n.regionkey IN " +
+                        "(SELECT r.regionkey FROM region r WHERE r.regionkey = n.regionkey AND r.name < 'B')",
+                "VALUES 15");
+    }
+
+    @Test
     public void testLikePushdown()
     {
         // Controlled data covering wildcard semantics, case-sensitivity, UTF-8, empty pattern, NULL, and ESCAPE.
