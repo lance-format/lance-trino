@@ -50,7 +50,7 @@ public abstract class LanceBasePageSource
             this.lanceArrowToPageScanner =
                     new LanceArrowToPageScanner(
                             bufferAllocator,
-                            tableHandle.getTablePath(),
+                            tableHandle.getEffectiveReadUri(),
                             columns,
                             filterProjectionColumns,
                             scannerFactory,

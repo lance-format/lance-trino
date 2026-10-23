@@ -439,6 +439,9 @@ public abstract class BaseLanceConnectorTest
                 "Lance connector does not support start version for time travel|" +
                 "Lance version number must be positive: .*|" +
                 "Lance version does not exist: .*|" +
+                "Lance ref does not exist: .*|" +
+                "Lance ref '.*' is both a branch and a tag|" +
+                "Lance ref name must not be empty|" +
                 "Unsupported type for Lance version: .*\\..*|" +
                 "Unsupported type for Lance temporal version: .*|" +
                 "No Lance version found at or before timestamp: .*");

@@ -47,7 +47,7 @@ public class LanceCountPageSource
             String userIdentity,
             LanceRuntime runtime)
     {
-        this.tablePath = tableHandle.getTablePath();
+        this.tablePath = tableHandle.getEffectiveReadUri();
         this.datasetVersion = tableHandle.getDatasetVersion();
         this.storageOptions = storageOptions;
         this.userIdentity = userIdentity;

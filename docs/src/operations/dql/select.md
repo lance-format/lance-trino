@@ -236,6 +236,26 @@ Supported version types:
 - `INTEGER`
 - `BIGINT`
 
+### Query by branch or tag
+
+Use a string with `FOR VERSION AS OF` to read a branch or tag by name:
+
+```sql
+SELECT * FROM lance.default.orders FOR VERSION AS OF 'audit';
+
+SELECT * FROM lance.default.orders FOR VERSION AS OF 'v1';
+
+SELECT * FROM lance.default.orders FOR VERSION AS OF 'main';
+```
+
+Names are case-sensitive. Branch names select the latest version on that branch and tags select the version they reference. Integer values select a version on main. Version numbers are local to each branch, so version 2 on `audit` can differ from version 2 on main.
+
+If a branch and tag share a name, the query fails with an ambiguity error. This also applies to a tag named `main`, which conflicts with the main branch.
+
+To list branches and tags, query `"orders$refs"`.
+
+`FOR VERSION AS OF` is supported for reads, but cannot be applied to the target of an `INSERT`, `UPDATE`, or `DELETE`.
+
 ### Query by Timestamp
 
 Use `FOR TIMESTAMP AS OF` to query data as of a specific timestamp:
@@ -317,6 +337,22 @@ SELECT max(version)
 FROM lance.default."orders$versions"
 WHERE timestamp <= TIMESTAMP '2024-06-01 12:00:00 UTC';
 ```
+
+### `$refs` table
+
+The `$refs` table lists branches and tags.
+
+```sql
+SELECT name, type, version, branch
+FROM lance.default."orders$refs";
+```
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `name` | VARCHAR | Branch or tag name, including `main` |
+| `type` | VARCHAR | `BRANCH` or `TAG` |
+| `version` | BIGINT | Latest version for a branch, or the version referenced by a tag |
+| `branch` | VARCHAR | Parent branch for branches, owning branch for tags. `NULL` for main and tags on main |
 
 ## Blob Virtual Columns
 

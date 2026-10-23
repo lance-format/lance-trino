@@ -19,6 +19,7 @@ import com.google.common.cache.RemovalListener;
 import com.google.common.collect.ImmutableMap;
 import com.google.inject.Inject;
 import io.airlift.log.Logger;
+import io.trino.spi.TrinoException;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
 import jakarta.annotation.PreDestroy;
@@ -28,11 +29,14 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.gaul.modernizer_maven_annotations.SuppressModernizer;
+import org.lance.Branch;
 import org.lance.Dataset;
 import org.lance.Fragment;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
+import org.lance.Ref;
 import org.lance.Session;
+import org.lance.Tag;
 import org.lance.Version;
 import org.lance.ipc.LanceScanner;
 import org.lance.ipc.ScanOptions;
@@ -46,6 +50,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -59,6 +64,7 @@ import java.util.stream.Collectors;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.plugin.lance.LanceTableProperties.BLOB_COLUMNS;
 import static io.trino.plugin.lance.LanceTableProperties.VECTOR_COLUMNS;
+import static io.trino.spi.StandardErrorCode.INVALID_ARGUMENTS;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static java.util.Objects.requireNonNull;
 
@@ -375,6 +381,112 @@ public class LanceRuntime
         }
     }
 
+    public ResolvedLanceRef resolveNamedRef(String userIdentity, String tablePath,
+            Map<String, String> storageOptions, String refName)
+    {
+        if (refName.isEmpty()) {
+            throw new TrinoException(INVALID_ARGUMENTS, "Lance ref name must not be empty");
+        }
+
+        try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
+            Branch branch = findBranch(dataset, refName);
+            Tag tag = findTag(dataset, refName);
+            // The branch list omits main. A tag named main still conflicts with it.
+            if (tag != null && (branch != null || "main".equals(refName))) {
+                throw new TrinoException(INVALID_ARGUMENTS, "Lance ref '" + refName + "' is both a branch and a tag");
+            }
+            if (branch != null) {
+                CheckedOut head = branchHead(dataset, refName);
+                return new ResolvedLanceRef(refName, head.version(), refName, head.uri());
+            }
+            if (tag != null) {
+                String branchName = owningBranch(tag);
+                if (branchName == null) {
+                    return new ResolvedLanceRef(refName, tag.getVersion(), null, null);
+                }
+                CheckedOut pinned = checkout(dataset, Ref.ofBranch(branchName, tag.getVersion()));
+                return new ResolvedLanceRef(refName, pinned.version(), branchName, pinned.uri());
+            }
+            if ("main".equals(refName)) {
+                return new ResolvedLanceRef("main", dataset.version(), null, null);
+            }
+            throw new TrinoException(INVALID_ARGUMENTS, "Lance ref does not exist: " + refName);
+        }
+    }
+
+    public List<LanceRef> listRefs(String userIdentity, String tablePath, Map<String, String> storageOptions)
+    {
+        try (Dataset dataset = openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
+            List<Branch> branches = new ArrayList<>(dataset.branches().list());
+            branches.sort(Comparator.comparing(Branch::getName));
+
+            List<LanceRef> refs = new ArrayList<>();
+            refs.add(new LanceRef("main", LanceRef.BRANCH, dataset.version(), null));
+            for (Branch branch : branches) {
+                refs.add(new LanceRef(
+                        branch.getName(),
+                        LanceRef.BRANCH,
+                        branchHead(dataset, branch.getName()).version(),
+                        branch.getParentBranch().orElse(null)));
+            }
+
+            List<Tag> tags = new ArrayList<>(dataset.tags().list());
+            tags.sort(Comparator.comparing(Tag::getName));
+            for (Tag tag : tags) {
+                refs.add(new LanceRef(tag.getName(), LanceRef.TAG, tag.getVersion(), owningBranch(tag)));
+            }
+            return List.copyOf(refs);
+        }
+    }
+
+    private static Branch findBranch(Dataset dataset, String name)
+    {
+        for (Branch branch : dataset.branches().list()) {
+            if (name.equals(branch.getName())) {
+                return branch;
+            }
+        }
+        return null;
+    }
+
+    private static Tag findTag(Dataset dataset, String name)
+    {
+        for (Tag tag : dataset.tags().list()) {
+            if (name.equals(tag.getName())) {
+                return tag;
+            }
+        }
+        return null;
+    }
+
+    private static String owningBranch(Tag tag)
+    {
+        // A tag on main has no branch, or the branch is named main.
+        return tag.getBranch()
+                .filter(name -> !name.isEmpty() && !"main".equals(name))
+                .orElse(null);
+    }
+
+    private static CheckedOut branchHead(Dataset dataset, String branchName)
+    {
+        // parentVersion is the fork point. The checked-out version is the head.
+        return checkout(dataset, Ref.ofBranch(branchName));
+    }
+
+    private static CheckedOut checkout(Dataset dataset, Ref ref)
+    {
+        Dataset checkedOut = dataset.checkout(ref);
+        try {
+            return new CheckedOut(checkedOut.version(), checkedOut.uri());
+        }
+        finally {
+            // checkout may return the same dataset. Closing that would close the caller.
+            if (checkedOut != dataset) {
+                checkedOut.close();
+            }
+        }
+    }
+
     // ================== Fragment Access ==================
 
     public List<Fragment> getFragments(String userIdentity, String tablePath, Long version,
@@ -655,5 +767,16 @@ public class LanceRuntime
         {
             return Objects.hash(userIdentity, tablePath, version);
         }
+    }
+
+    // readUri is null on main. version belongs to that dataset.
+    public record ResolvedLanceRef(String refName, long version, String branchName, String readUri) {}
+
+    private record CheckedOut(long version, String uri) {}
+
+    public record LanceRef(String name, String type, long version, String branch)
+    {
+        public static final String BRANCH = "BRANCH";
+        public static final String TAG = "TAG";
     }
 }

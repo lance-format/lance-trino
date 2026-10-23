@@ -21,6 +21,7 @@ import java.util.Map;
 
 import static io.airlift.json.JsonCodec.jsonCodec;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class TestLanceTableHandle
 {
@@ -38,5 +39,36 @@ public class TestLanceTableHandle
         String json = codec.toJson(tableHandle);
         LanceTableHandle copy = codec.fromJson(json);
         assertThat(copy).isEqualTo(tableHandle);
+    }
+
+    @Test
+    public void testJsonRoundTripKeepsNamedRef()
+    {
+        String tablePath = "s3+ddb://bucket/orders?ddbTableName=commits";
+        String readUri = "s3+ddb://bucket/orders/tree/audit?ddbTableName=commits";
+        LanceTableHandle named = new LanceTableHandle(
+                "schemaName",
+                "tableName",
+                tablePath,
+                List.of("schemaName", "tableName"),
+                Map.of(),
+                2L,
+                "audit",
+                "audit",
+                readUri);
+        JsonCodec<LanceTableHandle> codec = jsonCodec(LanceTableHandle.class);
+        assertThat(codec.fromJson(codec.toJson(named))).isEqualTo(named);
+        assertThat(named.getEffectiveReadUri()).isEqualTo(readUri);
+        assertThatThrownBy(() -> new LanceTableHandle(
+                "schemaName",
+                "tableName",
+                tablePath,
+                List.of("schemaName", "tableName"),
+                Map.of(),
+                2L,
+                "audit",
+                "audit",
+                null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

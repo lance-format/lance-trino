@@ -16,4 +16,5 @@ package io.trino.plugin.lance;
 enum TableType
 {
     VERSIONS,
+    REFS,
 }

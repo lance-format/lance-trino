@@ -68,7 +68,7 @@ public class LanceSplitManager
         // Get all fragments
         // Use the version captured in the table handle for snapshot isolation
         List<Fragment> allFragments = runtime.getFragments(
-                userIdentity, lanceTableHandle.getTablePath(), lanceTableHandle.getDatasetVersion(), storageOptions);
+                userIdentity, lanceTableHandle.getEffectiveReadUri(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
         // With a LIMIT and no filter, coalesce just enough fragments into one split
         // instead of one-split-per-fragment (which reads numFragments * LIMIT rows
