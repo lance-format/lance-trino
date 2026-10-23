@@ -1,3 +1,4 @@
+// Copyright © 2026 Apple Inc.
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -277,13 +278,14 @@ public class TestSubstraitExpressionBuilder
     @Test
     public void testIsPushableLikePattern()
     {
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%")).isFalse();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo")).isFalse();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo%")).isFalse();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%bar")).isFalse();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("_foo%")).isFalse();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("exact")).isFalse();
-        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("")).isFalse();
+        // Any non-null pattern is pushable; the ESCAPE case is rejected at the call site, not here.
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("%foo%")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("foo%bar")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("_foo%")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("exact")).isTrue();
+        assertThat(SubstraitExpressionBuilder.isPushableLikePattern("")).isTrue();
         assertThat(SubstraitExpressionBuilder.isPushableLikePattern(null)).isFalse();
     }
 
@@ -303,15 +305,16 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.LikePredicateExtractionResult result =
                 SubstraitExpressionBuilder.extractLikePredicates(likeExpr, assignments);
 
-        assertThat(result.likePredicates()).isEmpty();
-        assertThat(result.remainingExpression()).isEqualTo(likeExpr);
+        assertThat(result.likePredicates()).hasSize(1);
+        assertThat(result.likePredicates().getFirst().columnName()).isEqualTo("name");
+        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("foo%");
+        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
     }
 
     @Test
     public void testExtractLikePredicatesSuffixPattern()
     {
         // Create a LIKE expression with suffix pattern: name LIKE '%foo'
-        // All patterns are pushable now (Lance filters at storage layer)
         ConnectorExpression likeExpr = new Call(
                 io.trino.spi.type.BooleanType.BOOLEAN,
                 LIKE_FUNCTION_NAME,
@@ -324,8 +327,31 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.LikePredicateExtractionResult result =
                 SubstraitExpressionBuilder.extractLikePredicates(likeExpr, assignments);
 
+        assertThat(result.likePredicates()).hasSize(1);
+        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("%foo");
+        assertThat(result.remainingExpression()).isEqualTo(Constant.TRUE);
+    }
+
+    @Test
+    public void testExtractLikePredicatesEscapedNotPushed()
+    {
+        // name LIKE 'a!%b%' ESCAPE '!' arrives as a 3-argument call; it must NOT be pushed,
+        // because Substrait like:str_str cannot express the escape and would misread '!%' as a wildcard.
+        ConnectorExpression escapedLike = new Call(
+                io.trino.spi.type.BooleanType.BOOLEAN,
+                LIKE_FUNCTION_NAME,
+                List.of(
+                        new Variable("name", VARCHAR),
+                        new Constant(Slices.utf8Slice("a!%b%"), VARCHAR),
+                        new Constant(Slices.utf8Slice("!"), VARCHAR)));
+
+        Map<String, ColumnHandle> assignments = Map.of("name", VARCHAR_COLUMN);
+
+        SubstraitExpressionBuilder.LikePredicateExtractionResult result =
+                SubstraitExpressionBuilder.extractLikePredicates(escapedLike, assignments);
+
         assertThat(result.likePredicates()).isEmpty();
-        assertThat(result.remainingExpression()).isEqualTo(likeExpr);
+        assertThat(result.remainingExpression()).isEqualTo(escapedLike);
     }
 
     @Test
@@ -356,8 +382,10 @@ public class TestSubstraitExpressionBuilder
         SubstraitExpressionBuilder.LikePredicateExtractionResult result =
                 SubstraitExpressionBuilder.extractLikePredicates(andExpr, assignments);
 
-        assertThat(result.likePredicates()).isEmpty();
-        assertThat(result.remainingExpression()).isEqualTo(andExpr);
+        // The LIKE is extracted; the non-LIKE conjunct remains.
+        assertThat(result.likePredicates()).hasSize(1);
+        assertThat(result.likePredicates().getFirst().pattern()).isEqualTo("foo%");
+        assertThat(result.remainingExpression()).isEqualTo(otherExpr);
     }
 
     @Test
@@ -389,14 +417,15 @@ public class TestSubstraitExpressionBuilder
     @Test
     public void testCombineExpressionsOnlyLike()
     {
-        // Only LIKE predicate, no TupleDomain
+        // Only a (pushable, non-escaped) LIKE predicate, no TupleDomain.
         List<SubstraitExpressionBuilder.LikePredicate> likePredicates = List.of(
                 new SubstraitExpressionBuilder.LikePredicate("name", VARCHAR_COLUMN, "prefix%"));
 
         Optional<ByteBuffer> result = SubstraitExpressionBuilder.combineExpressionsToSubstrait(
                 Optional.empty(), likePredicates, ALL_COLUMNS, COLUMN_ORDINALS);
 
-        assertThat(result).isEmpty();
+        assertThat(result).isPresent();
+        assertThat(result.get().remaining()).isGreaterThan(0);
     }
 
     // ===== RowType (nested field) tests =====
