@@ -354,6 +354,25 @@ FROM lance.default."orders$refs";
 | `version` | BIGINT | Latest version for a branch, or the version referenced by a tag |
 | `branch` | VARCHAR | Parent branch for branches, owning branch for tags. `NULL` for main and tags on main |
 
+### `$indexes` table
+
+The `$indexes` table lists indexes of a table.
+
+```sql
+SELECT * FROM lance.default."orders$indexes";
+```
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `index_name` | VARCHAR | Index name |
+| `columns` | ARRAY(VARCHAR) | Indexed columns |
+| `index_type` | VARCHAR | Index type |
+| `num_indexed_fragments` | BIGINT | Number of indexed fragments |
+| `num_indexed_rows` | BIGINT | Number of indexed rows |
+| `num_unindexed_fragments` | BIGINT | Number of fragments not yet indexed |
+| `num_unindexed_rows` | BIGINT | Number of rows not yet indexed |
+| `num_segments` | BIGINT | Number of index segments |
+
 ## Blob Virtual Columns
 
 Tables with blob-encoded columns automatically expose virtual columns for accessing blob metadata. These columns are hidden from `DESCRIBE TABLE` but can be selected in queries.

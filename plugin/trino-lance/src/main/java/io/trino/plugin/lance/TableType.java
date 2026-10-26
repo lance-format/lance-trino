@@ -17,4 +17,5 @@ enum TableType
 {
     VERSIONS,
     REFS,
+    INDEXES,
 }
