@@ -367,10 +367,7 @@ SELECT * FROM lance.default."orders$indexes";
 | `index_name` | VARCHAR | Index name |
 | `columns` | ARRAY(VARCHAR) | Indexed columns |
 | `index_type` | VARCHAR | Index type |
-| `num_indexed_fragments` | BIGINT | Number of indexed fragments |
 | `num_indexed_rows` | BIGINT | Number of indexed rows |
-| `num_unindexed_fragments` | BIGINT | Number of fragments not yet indexed |
-| `num_unindexed_rows` | BIGINT | Number of rows not yet indexed |
 | `num_segments` | BIGINT | Number of index segments |
 
 ## Blob Virtual Columns

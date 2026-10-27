@@ -90,8 +90,8 @@ final class TestLanceSystemTable
                         .build());
             }
 
-            assertThat(query("SELECT index_name, columns, index_type, num_indexed_rows, num_unindexed_rows FROM \"test_indexes$indexes\""))
-                    .matches("VALUES (VARCHAR 'id_idx', ARRAY[VARCHAR 'id'], VARCHAR 'BTree', BIGINT '3', BIGINT '0')");
+            assertThat(query("TABLE \"test_indexes$indexes\""))
+                    .matches("VALUES (VARCHAR 'id_idx', ARRAY[VARCHAR 'id'], VARCHAR 'BTree', BIGINT '3', BIGINT '1')");
         }
         finally {
             assertUpdate("DROP TABLE test_indexes");
