@@ -1,3 +1,4 @@
+// Copyright © 2026 Apple Inc.
 /*
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +20,11 @@ import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.type.VarcharType;
+import io.trino.sql.planner.plan.FilterNode;
 import io.trino.testing.BaseConnectorTest;
 import io.trino.testing.QueryRunner;
 import io.trino.testing.TestingConnectorBehavior;
+import io.trino.testing.sql.TestTable;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
@@ -81,6 +84,65 @@ public class TestLanceConnectorTest
         return LanceQueryRunner.builderForWriteTests()
                 .setInitialTables(REQUIRED_TPCH_TABLES)
                 .build();
+    }
+
+    @Test
+    public void testFilterPushdownPreservedInCorrelatedSubquery()
+    {
+        // Regression: applyFilter must not drop an already-enforced VARCHAR filter when it is
+        // re-visited with a different (e.g. dynamic-filter) constraint. A correlated-IN subquery
+        // triggers that multi-call sequence. Each nation's region matches only if its region name
+        // starts with 'A' (AFRICA/AMERICA/ASIA = regions 0,1,2 = 15 nations).
+        assertQuery(
+                "SELECT count(*) FROM nation n WHERE n.regionkey IN " +
+                        "(SELECT r.regionkey FROM region r WHERE r.regionkey = n.regionkey AND r.name LIKE 'A%')",
+                "VALUES 15");
+        // Same shape with a plain comparison (exercises the TupleDomain pushdown path).
+        assertQuery(
+                "SELECT count(*) FROM nation n WHERE n.regionkey IN " +
+                        "(SELECT r.regionkey FROM region r WHERE r.regionkey = n.regionkey AND r.name < 'B')",
+                "VALUES 15");
+    }
+
+    @Test
+    public void testLikePushdown()
+    {
+        // Controlled data covering wildcard semantics, case-sensitivity, UTF-8, empty pattern, NULL, and ESCAPE.
+        try (TestTable table = newTrinoTable(
+                "like_pushdown",
+                "(v varchar)",
+                List.of("'apple'", "'apricot'", "'Apple'", "'banana'", "'a_b'", "'axb'", "'a_bc'", "'café'", "''", "NULL"))) {
+            String name = table.getName();
+
+            // Prefix / suffix / contains wildcards: pushed into Lance.
+            assertThat(query("SELECT v FROM " + name + " WHERE v LIKE 'ap%'"))
+                    .skippingTypesCheck().matches("VALUES 'apple', 'apricot'").isFullyPushedDown();
+            assertThat(query("SELECT v FROM " + name + " WHERE v LIKE '%t'"))
+                    .skippingTypesCheck().matches("VALUES 'apricot'").isFullyPushedDown();
+            assertThat(query("SELECT v FROM " + name + " WHERE v LIKE '%an%'"))
+                    .skippingTypesCheck().matches("VALUES 'banana'").isFullyPushedDown();
+
+            // Case-sensitive (SQL LIKE semantics): only the uppercase row matches.
+            assertThat(query("SELECT v FROM " + name + " WHERE v LIKE 'A%'"))
+                    .skippingTypesCheck().matches("VALUES 'Apple'").isFullyPushedDown();
+
+            // Single-char wildcard '_' matches exactly one character (both 'a_b' and 'axb').
+            assertThat(query("SELECT v FROM " + name + " WHERE v LIKE 'a_b'"))
+                    .skippingTypesCheck().matches("VALUES 'a_b', 'axb'").isFullyPushedDown();
+
+            // '_' matches a single multi-byte UTF-8 character.
+            assertThat(query("SELECT v FROM " + name + " WHERE v LIKE 'caf_'"))
+                    .skippingTypesCheck().matches("VALUES 'café'").isFullyPushedDown();
+
+            // Empty pattern matches only the empty string; NULL never matches any pattern.
+            assertThat(query("SELECT v FROM " + name + " WHERE v LIKE ''"))
+                    .skippingTypesCheck().matches("VALUES ''").isFullyPushedDown();
+
+            // ESCAPE with a surviving wildcard: '!_' is a literal underscore, trailing '%' a wildcard.
+            // Must stay in Trino (Substrait like has no escape) and still be correct.
+            assertThat(query("SELECT v FROM " + name + " WHERE v LIKE 'a!_b%' ESCAPE '!'"))
+                    .skippingTypesCheck().matches("VALUES 'a_b', 'a_bc'").isNotFullyPushedDown(FilterNode.class);
+        }
     }
 
     @Override
