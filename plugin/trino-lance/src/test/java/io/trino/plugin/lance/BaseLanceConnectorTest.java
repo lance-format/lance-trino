@@ -57,7 +57,7 @@ public abstract class BaseLanceConnectorTest
             // Table modification operations - not supported
             case SUPPORTS_RENAME_TABLE,
                     SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
-                    SUPPORTS_ADD_COLUMN,
+                    SUPPORTS_ADD_COLUMN_WITH_POSITION,
                     SUPPORTS_ADD_COLUMN_WITH_COMMENT,
                     SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT,
                     SUPPORTS_DROP_COLUMN,
@@ -357,6 +357,21 @@ public abstract class BaseLanceConnectorTest
     {
         // Lance doesn't support timestamp type yet
         abort("Lance does not support timestamp type yet");
+    }
+
+    @Test
+    @Override
+    public void testAddColumnConcurrently()
+    {
+        abort("Lance does not support concurrent updates reliably");
+    }
+
+    @Test
+    @Override
+    public void testAlterTableAddLongColumnName()
+    {
+        // Lance uses filesystem paths which have length limits
+        abort("Lance uses filesystem paths which have length limits");
     }
 
     @Test

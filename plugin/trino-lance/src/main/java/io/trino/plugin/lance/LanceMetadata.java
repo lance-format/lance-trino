@@ -27,6 +27,7 @@ import io.trino.spi.connector.AggregationApplicationResult;
 import io.trino.spi.connector.Assignment;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
+import io.trino.spi.connector.ColumnPosition;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
 import io.trino.spi.connector.ConnectorMergeTableHandle;
 import io.trino.spi.connector.ConnectorMetadata;
@@ -64,6 +65,7 @@ import io.trino.spi.type.TimestampType;
 import io.trino.spi.type.TimestampWithTimeZoneType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
+import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lance.CommitBuilder;
 import org.lance.Dataset;
@@ -121,6 +123,7 @@ import java.util.function.UnaryOperator;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static io.trino.plugin.lance.LancePageToArrowConverter.toArrowField;
 import static io.trino.plugin.lance.LanceTableNames.isValidLanceTable;
 import static io.trino.plugin.lance.LanceTableNames.tableNameFrom;
 import static io.trino.plugin.lance.LanceTableNames.tableTypeFrom;
@@ -1337,6 +1340,31 @@ public class LanceMetadata
         finally {
             dataset.close();
         }
+    }
+
+    @Override
+    public void addColumn(ConnectorSession session, ConnectorTableHandle tableHandle, ColumnMetadata column, ColumnPosition position)
+    {
+        if (column.getComment() != null) {
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support adding columns with comments");
+        }
+        if (position instanceof ColumnPosition.First) {
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support adding columns with FIRST clause");
+        }
+        if (position instanceof ColumnPosition.After) {
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support adding columns with AFTER clause");
+        }
+
+        LanceTableHandle table = (LanceTableHandle) tableHandle;
+        String tablePath = table.getTablePath();
+        String userIdentity = session.getUser();
+        Map<String, String> storageOptions = getStorageOptionsForTable(table.getTableId());
+
+        Field field = toArrowField(column.getName(), column.getType(), column.isNullable(), false, null, false);
+        try (Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
+            dataset.addColumns(List.of(field));
+        }
+        runtime.invalidate(userIdentity, tablePath);
     }
 
     // ===== Helper Methods =====
