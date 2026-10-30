@@ -431,6 +431,11 @@ public class LanceMetadata
                             tableName,
                             table.description().getLocation(),
                             storageOptionsFrom(table.description()));
+                    case PROPERTIES -> new PropertiesTable(
+                            runtime,
+                            tableName,
+                            table.description().getLocation(),
+                            storageOptionsFrom(table.description()));
                 });
     }
 

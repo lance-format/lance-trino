@@ -370,6 +370,19 @@ SELECT * FROM lance.default."orders$indexes";
 | `num_indexed_rows` | BIGINT | Number of indexed rows |
 | `num_segments` | BIGINT | Number of index segments |
 
+### `$properties` table
+
+The `$properties` table lists table properties: the dataset config and `location`.
+
+```sql
+SELECT * FROM lance.default."orders$properties";
+```
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `key` | VARCHAR | Property key |
+| `value` | VARCHAR | Property value |
+
 ## Blob Virtual Columns
 
 Tables with blob-encoded columns automatically expose virtual columns for accessing blob metadata. These columns are hidden from `DESCRIBE TABLE` but can be selected in queries.

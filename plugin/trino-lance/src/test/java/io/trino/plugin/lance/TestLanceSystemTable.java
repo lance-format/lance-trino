@@ -97,4 +97,15 @@ final class TestLanceSystemTable
             assertUpdate("DROP TABLE test_indexes");
         }
     }
+
+    @Test
+    void testPropertiesTable()
+    {
+        List<MaterializedRow> rows = computeActual("TABLE \"region$properties\"").getMaterializedRows();
+        assertThat(rows).hasSize(1);
+        MaterializedRow row = rows.getFirst();
+        assertThat(row.getFieldCount()).isEqualTo(2);
+        assertThat(row.getField(0)).isEqualTo("location");
+        assertThat((String) row.getField(1)).endsWith("/region.lance");
+    }
 }

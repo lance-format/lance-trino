@@ -18,4 +18,5 @@ enum TableType
     VERSIONS,
     REFS,
     INDEXES,
+    PROPERTIES,
 }
