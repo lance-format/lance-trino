@@ -112,7 +112,7 @@ public class TestLanceConnectorTest
             // Table modification operations - not supported
             case SUPPORTS_RENAME_TABLE,
                     SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
-                    SUPPORTS_ADD_COLUMN,
+                    SUPPORTS_ADD_COLUMN_WITH_POSITION,
                     SUPPORTS_ADD_COLUMN_WITH_COMMENT,
                     SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT,
                     SUPPORTS_DROP_COLUMN,
@@ -549,6 +549,21 @@ public class TestLanceConnectorTest
     protected void verifyColumnNameLengthFailurePermissible(Throwable e)
     {
         assertThat(e).hasMessageContaining("Column name is too long");
+    }
+
+    @Test
+    @Override
+    public void testAddColumnConcurrently()
+    {
+        abort("Lance does not support concurrent updates reliably");
+    }
+
+    @Test
+    @Override
+    public void testAlterTableAddLongColumnName()
+    {
+        // Lance uses filesystem paths which have length limits
+        abort("Lance uses filesystem paths which have length limits");
     }
 
     // ===== LargeUtf8 Support Tests =====
