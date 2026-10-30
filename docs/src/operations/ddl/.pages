@@ -6,4 +6,5 @@ nav:
   - show-tables.md
   - describe-table.md
   - create-table.md
+  - alter-table.md
   - drop-table.md

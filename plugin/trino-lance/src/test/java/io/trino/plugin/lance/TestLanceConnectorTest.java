@@ -127,11 +127,9 @@ public class TestLanceConnectorTest
                     SUPPORTS_COMMENT_ON_MATERIALIZED_VIEW_COLUMN -> false;
 
             // Comment operations - not supported
-            case SUPPORTS_COMMENT_ON_TABLE,
+            case SUPPORTS_CREATE_TABLE_WITH_COLUMN_COMMENT,
+                    SUPPORTS_COMMENT_ON_TABLE,
                     SUPPORTS_COMMENT_ON_COLUMN -> false;
-
-            // Constraint operations - not supported
-            case SUPPORTS_NOT_NULL_CONSTRAINT -> false;
 
             // Pushdown operations - not currently supported
             case SUPPORTS_TOPN_PUSHDOWN -> false;

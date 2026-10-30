@@ -88,6 +88,7 @@ import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.operation.Append;
 import org.lance.operation.Overwrite;
 import org.lance.operation.Update;
+import org.lance.schema.ColumnAlteration;
 import org.lance.schema.LanceSchema;
 
 import java.io.ByteArrayInputStream;
@@ -1171,6 +1172,9 @@ public class LanceMetadata
             }
 
             List<String> allFragmentsJson = collectFragmentsFromSlices(fragments);
+            if (allFragmentsJson.isEmpty()) {
+                return Optional.empty();
+            }
             Map<String, String> storageOptions = handle.storageOptions();
             commitAppend(dataset, allFragmentsJson, storageOptions);
 
@@ -1342,6 +1346,21 @@ public class LanceMetadata
         finally {
             dataset.close();
         }
+    }
+
+    @Override
+    public void dropNotNullConstraint(ConnectorSession session, ConnectorTableHandle tableHandle, ColumnHandle columnHandle)
+    {
+        LanceTableHandle table = (LanceTableHandle) tableHandle;
+        LanceColumnHandle column = (LanceColumnHandle) columnHandle;
+        String tablePath = table.getTablePath();
+        String userIdentity = session.getUser();
+        Map<String, String> storageOptions = getStorageOptionsForTable(table.getTableId());
+
+        try (Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
+            dataset.alterColumns(List.of(new ColumnAlteration.Builder(column.name()).nullable(true).build()));
+        }
+        runtime.invalidate(userIdentity, tablePath);
     }
 
     // ===== Helper Methods =====

@@ -6,7 +6,7 @@ Create a new table or replace an existing table in the Lance catalog.
 
 ```sql
 CREATE TABLE [IF NOT EXISTS] <table_name> (
-    <column_name> <data_type> [, ...]
+    <column_name> <data_type> [NOT NULL] [, ...]
 ) [WITH (<property_name> = <value> [, ...])]
 ```
 
@@ -24,7 +24,7 @@ AS <query>
 
 ```sql
 REPLACE TABLE <table_name> (
-    <column_name> <data_type> [, ...]
+    <column_name> <data_type> [NOT NULL] [, ...]
 ) [WITH (<property_name> = <value> [, ...])]
 ```
 
@@ -44,6 +44,7 @@ AS <query>
 | `table_name` | Fully qualified table name: `catalog.schema.table`. |
 | `column_name` | Name of the column. |
 | `data_type` | Data type of the column. See [Data Types](../data-types.md). |
+| `NOT NULL` | Optional. Rejects `NULL` values written to the column. |
 | `query` | A SELECT query whose results populate the table. |
 
 ## Table Properties
@@ -66,6 +67,17 @@ CREATE TABLE lance.default.users (
     created_at DATE
 );
 ```
+
+### Create table with NOT NULL columns
+
+```sql
+CREATE TABLE lance.default.accounts (
+    id BIGINT NOT NULL,
+    email VARCHAR
+);
+```
+
+Use [ALTER TABLE](alter-table.md) to drop the constraint later.
 
 ### Create table with INSERT
 
@@ -275,7 +287,6 @@ CREATE TABLE lance.default.ml_data (
 ## Limitations
 
 - Table and column comments are not supported
-- NOT NULL constraints are not supported
 - Default column values are not supported
 - CHAR type is not supported (use VARCHAR)
 - TIME is not supported
