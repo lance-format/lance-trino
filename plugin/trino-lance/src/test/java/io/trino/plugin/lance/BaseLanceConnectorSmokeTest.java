@@ -44,7 +44,8 @@ public abstract class BaseLanceConnectorSmokeTest
                     SUPPORTS_DELETE,
                     SUPPORTS_ROW_LEVEL_DELETE,
                     SUPPORTS_UPDATE,
-                    SUPPORTS_MERGE -> true;
+                    SUPPORTS_MERGE,
+                    SUPPORTS_TRUNCATE -> true;
 
             // Schema operations - depends on namespace configuration
             case SUPPORTS_CREATE_SCHEMA -> getNamespaceTestConfig().supportsCreateSchema();
@@ -54,7 +55,6 @@ public abstract class BaseLanceConnectorSmokeTest
                     SUPPORTS_RENAME_SCHEMA,
                     SUPPORTS_RENAME_TABLE,
                     SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
-                    SUPPORTS_TRUNCATE,
                     SUPPORTS_CREATE_VIEW,
                     SUPPORTS_COMMENT_ON_VIEW_COLUMN,
                     SUPPORTS_CREATE_MATERIALIZED_VIEW,

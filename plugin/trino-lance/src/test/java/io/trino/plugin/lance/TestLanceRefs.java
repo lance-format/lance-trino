@@ -273,6 +273,8 @@ public class TestLanceRefs
                     .hasMessage("Writing to Lance ref 'audit' is not supported");
             assertThatThrownBy(() -> metadata.beginMerge(SESSION, handle, Map.of(), NO_RETRIES))
                     .hasMessage("Writing to Lance ref 'audit' is not supported");
+            assertThatThrownBy(() -> metadata.truncateTable(SESSION, handle))
+                    .hasMessage("Writing to Lance ref 'audit' is not supported");
         }
         finally {
             runtime.close();

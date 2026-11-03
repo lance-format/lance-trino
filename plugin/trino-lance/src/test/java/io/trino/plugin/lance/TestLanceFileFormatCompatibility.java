@@ -15,10 +15,13 @@ package io.trino.plugin.lance;
 
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.QueryRunner;
+import io.trino.testing.sql.TestTable;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.lance.Dataset;
 import org.lance.schema.LanceField;
 
@@ -69,6 +72,16 @@ public class TestLanceFileFormatCompatibility
         }
         finally {
             assertUpdate("DROP TABLE IF EXISTS " + tableName);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"legacy", "0.1", "2.0", "2.1", "2.2", "stable", "next"})
+    public void testTruncate(String fileFormatVersion)
+    {
+        try (TestTable table = newTrinoTable("test_truncate", "WITH (file_format_version = '" + fileFormatVersion + "') AS SELECT 1 AS id")) {
+            assertUpdate("TRUNCATE TABLE " + table.getName());
+            assertQueryReturnsEmptyResult("SELECT * FROM " + table.getName());
         }
     }
 
