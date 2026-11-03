@@ -40,5 +40,6 @@ and existing rows read `NULL` for the new column.
 
 - Only `ADD COLUMN` and `DROP NOT NULL` are supported. Dropping, renaming columns and changing column types are not supported.
 - Adding a `NOT NULL` constraint to an existing column is not supported by Trino.
+- `ADD COLUMN` is not supported on tables using the `legacy` (`0.1`) file format. Tables created with `2.0` or later are supported.
 - Columns are always added last. `FIRST` and `AFTER` are not supported.
 - Column comments and `NOT NULL` constraints are not supported in `ADD COLUMN`.

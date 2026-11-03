@@ -19,9 +19,14 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 
+import static io.trino.plugin.lance.LanceNamespaceTestConfig.S3_DEFAULT;
+import static io.trino.plugin.lance.LanceNamespaceTestConfig.S3_SINGLE_LEVEL;
+import static io.trino.plugin.lance.LanceNamespaceTestConfig.S3_WITH_PARENT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.abort;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /**
  * Abstract base class for Lance connector tests.
@@ -351,16 +356,16 @@ public abstract class BaseLanceConnectorTest
     @Test
     @Override
     public void testAddColumnConcurrently()
+            throws Exception
     {
-        abort("Lance does not support concurrent updates reliably");
+        assumeFalse(Set.of(S3_SINGLE_LEVEL, S3_WITH_PARENT, S3_DEFAULT).contains(getNamespaceTestConfig()), "S3 namespace has consistency issues");
+        super.testAddColumnConcurrently();
     }
 
-    @Test
     @Override
-    public void testAlterTableAddLongColumnName()
+    protected void verifyConcurrentAddColumnFailurePermissible(Exception e)
     {
-        // Lance uses filesystem paths which have length limits
-        abort("Lance uses filesystem paths which have length limits");
+        assertThat(e).hasMessageStartingWith("Failed to add column: Retryable commit conflict");
     }
 
     @Test

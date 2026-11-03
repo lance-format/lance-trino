@@ -540,6 +540,12 @@ public class TestLanceConnectorTest
     }
 
     @Override
+    protected void verifyConcurrentAddColumnFailurePermissible(Exception e)
+    {
+        assertThat(e).hasMessageStartingWith("Failed to add column: Retryable commit conflict");
+    }
+
+    @Override
     protected OptionalInt maxColumnNameLength()
     {
         return OptionalInt.of(LanceMetadata.MAX_COLUMN_NAME_LENGTH);
@@ -549,21 +555,6 @@ public class TestLanceConnectorTest
     protected void verifyColumnNameLengthFailurePermissible(Throwable e)
     {
         assertThat(e).hasMessageContaining("Column name is too long");
-    }
-
-    @Test
-    @Override
-    public void testAddColumnConcurrently()
-    {
-        abort("Lance does not support concurrent updates reliably");
-    }
-
-    @Test
-    @Override
-    public void testAlterTableAddLongColumnName()
-    {
-        // Lance uses filesystem paths which have length limits
-        abort("Lance uses filesystem paths which have length limits");
     }
 
     // ===== LargeUtf8 Support Tests =====

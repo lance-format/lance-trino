@@ -142,6 +142,7 @@ import static io.trino.spi.type.TinyintType.TINYINT;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
+import static java.util.Objects.requireNonNullElse;
 import static java.util.concurrent.TimeUnit.MICROSECONDS;
 
 public class LanceMetadata
@@ -1400,6 +1401,9 @@ public class LanceMetadata
     @Override
     public void addColumn(ConnectorSession session, ConnectorTableHandle tableHandle, ColumnMetadata column, ColumnPosition position)
     {
+        if (column.getName().getBytes(UTF_8).length > MAX_COLUMN_NAME_LENGTH) {
+            throw new TrinoException(NOT_SUPPORTED, "Column name is too long, maximum is %s bytes".formatted(MAX_COLUMN_NAME_LENGTH));
+        }
         if (column.getComment() != null) {
             throw new TrinoException(NOT_SUPPORTED, "This connector does not support adding columns with comments");
         }
@@ -1408,6 +1412,9 @@ public class LanceMetadata
         }
         if (position instanceof ColumnPosition.After) {
             throw new TrinoException(NOT_SUPPORTED, "This connector does not support adding columns with AFTER clause");
+        }
+        if (!column.isNullable()) {
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support adding not null columns");
         }
 
         LanceTableHandle table = (LanceTableHandle) tableHandle;
@@ -1418,6 +1425,9 @@ public class LanceMetadata
         Field field = toArrowField(column.getName(), column.getType(), column.isNullable(), false, null, false);
         try (Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
             dataset.addColumns(List.of(field));
+        }
+        catch (RuntimeException e) {
+            throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to add column: " + requireNonNullElse(e.getMessage(), e), e);
         }
         runtime.invalidate(userIdentity, tablePath);
     }
