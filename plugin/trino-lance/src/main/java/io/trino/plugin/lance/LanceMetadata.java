@@ -136,6 +136,7 @@ import static io.trino.spi.type.DateTimeEncoding.unpackMillisUtc;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.SmallintType.SMALLINT;
 import static io.trino.spi.type.TinyintType.TINYINT;
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MICROSECONDS;
@@ -144,6 +145,8 @@ public class LanceMetadata
         implements ConnectorMetadata
 {
     private static final Logger log = Logger.get(LanceMetadata.class);
+    // Longer names make the native schema export unreadable
+    static final int MAX_COLUMN_NAME_LENGTH = 32766;
     private static final ConcurrentMap<String, Dataset> transactionDatasets = new ConcurrentHashMap<>();
 
     private final LanceRuntime runtime;
@@ -895,6 +898,8 @@ public class LanceMetadata
             throw new TrinoException(NOT_SUPPORTED, "Schema " + tableName.getSchemaName() + " not found");
         }
 
+        validateColumnNameLengths(tableMetadata.getColumns());
+
         // Get blob and vector columns from table properties
         Set<String> blobColumns = LanceTableProperties.getBlobColumns(tableMetadata.getProperties());
         Map<String, Integer> vectorColumns = LanceTableProperties.getVectorColumns(tableMetadata.getProperties());
@@ -958,6 +963,8 @@ public class LanceMetadata
         if (!schemaExists(tableName.getSchemaName())) {
             throw new TrinoException(NOT_SUPPORTED, "Schema " + tableName.getSchemaName() + " not found");
         }
+
+        validateColumnNameLengths(tableMetadata.getColumns());
 
         // Get blob and vector columns from table properties
         Set<String> blobColumns = LanceTableProperties.getBlobColumns(tableMetadata.getProperties());
@@ -1096,6 +1103,15 @@ public class LanceMetadata
         String userIdentity = session.getUser();
         runtime.invalidate(userIdentity, handle.tablePath());
         return Optional.empty();
+    }
+
+    private static void validateColumnNameLengths(List<ColumnMetadata> columns)
+    {
+        for (ColumnMetadata column : columns) {
+            if (column.getName().getBytes(UTF_8).length > MAX_COLUMN_NAME_LENGTH) {
+                throw new TrinoException(NOT_SUPPORTED, "Column name is too long, maximum is %s bytes".formatted(MAX_COLUMN_NAME_LENGTH));
+            }
+        }
     }
 
     // ===== INSERT =====

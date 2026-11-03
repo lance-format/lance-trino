@@ -46,6 +46,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.IntegerType.INTEGER;
@@ -526,14 +527,6 @@ public class TestLanceConnectorTest
 
     @Test
     @Override
-    public void testCreateTableWithLongColumnName()
-    {
-        // Lance uses filesystem paths which have length limits
-        abort("Lance uses filesystem paths which have length limits");
-    }
-
-    @Test
-    @Override
     public void testCreateTableAsSelect()
     {
         // ROW type write is not implemented yet
@@ -546,6 +539,18 @@ public class TestLanceConnectorTest
     {
         // Lance doesn't support timestamp type yet
         abort("Lance does not support timestamp type yet");
+    }
+
+    @Override
+    protected OptionalInt maxColumnNameLength()
+    {
+        return OptionalInt.of(LanceMetadata.MAX_COLUMN_NAME_LENGTH);
+    }
+
+    @Override
+    protected void verifyColumnNameLengthFailurePermissible(Throwable e)
+    {
+        assertThat(e).hasMessageContaining("Column name is too long");
     }
 
     // ===== LargeUtf8 Support Tests =====

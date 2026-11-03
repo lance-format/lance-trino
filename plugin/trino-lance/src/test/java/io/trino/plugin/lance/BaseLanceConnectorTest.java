@@ -18,6 +18,7 @@ import io.trino.testing.TestingConnectorBehavior;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
+import java.util.OptionalInt;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.abort;
@@ -335,14 +336,6 @@ public abstract class BaseLanceConnectorTest
 
     @Test
     @Override
-    public void testCreateTableWithLongColumnName()
-    {
-        // Lance uses filesystem paths which have length limits
-        abort("Lance uses filesystem paths which have length limits");
-    }
-
-    @Test
-    @Override
     public void testCreateTableAsSelect()
     {
         // ROW type write is not implemented yet
@@ -374,6 +367,18 @@ public abstract class BaseLanceConnectorTest
         // but result in data corruption. This is a limitation of the merge-on-read approach without
         // proper distributed locking.
         abort("Lance does not support concurrent updates reliably");
+    }
+
+    @Override
+    protected OptionalInt maxColumnNameLength()
+    {
+        return OptionalInt.of(LanceMetadata.MAX_COLUMN_NAME_LENGTH);
+    }
+
+    @Override
+    protected void verifyColumnNameLengthFailurePermissible(Throwable e)
+    {
+        assertThat(e).hasMessageContaining("Column name is too long");
     }
 
     // ===== Namespace-specific tests =====
