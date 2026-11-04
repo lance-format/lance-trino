@@ -16,7 +16,11 @@ package io.trino.plugin.lance;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
+import com.google.inject.multibindings.Multibinder;
+import io.trino.plugin.lance.procedure.LanceVacuumTableProcedure;
+import io.trino.spi.connector.TableProcedureMetadata;
 
+import static com.google.inject.multibindings.Multibinder.newSetBinder;
 import static io.airlift.configuration.ConfigBinder.configBinder;
 import static io.airlift.json.JsonCodecBinder.jsonCodecBinder;
 
@@ -46,5 +50,9 @@ public class LanceModule
 
         // Connector
         binder.bind(LanceConnector.class).in(Scopes.SINGLETON);
+
+        // Procedures
+        Multibinder<TableProcedureMetadata> tableProcedures = newSetBinder(binder, TableProcedureMetadata.class);
+        tableProcedures.addBinding().toProvider(LanceVacuumTableProcedure.class).in(Scopes.SINGLETON);
     }
 }
