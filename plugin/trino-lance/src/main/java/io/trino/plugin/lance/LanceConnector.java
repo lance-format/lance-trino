@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.lance;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.inject.Inject;
 import io.airlift.bootstrap.LifeCycleManager;
 import io.trino.spi.connector.Connector;
@@ -23,6 +24,7 @@ import io.trino.spi.connector.ConnectorPageSourceProvider;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorSplitManager;
 import io.trino.spi.connector.ConnectorTransactionHandle;
+import io.trino.spi.connector.TableProcedureMetadata;
 import io.trino.spi.session.PropertyMetadata;
 import io.trino.spi.transaction.IsolationLevel;
 
@@ -41,6 +43,7 @@ public class LanceConnector
     private final LanceSplitManager splitManager;
     private final LancePageSourceProvider pageSourceProvider;
     private final LancePageSinkProvider pageSinkProvider;
+    private final Set<TableProcedureMetadata> tableProcedures;
 
     @Inject
     public LanceConnector(
@@ -48,13 +51,15 @@ public class LanceConnector
             LanceMetadata metadata,
             LanceSplitManager splitManager,
             LancePageSourceProvider pageSourceProvider,
-            LancePageSinkProvider pageSinkProvider)
+            LancePageSinkProvider pageSinkProvider,
+            Set<TableProcedureMetadata> tableProcedures)
     {
         this.lifeCycleManager = requireNonNull(lifeCycleManager, "lifeCycleManager is null");
         this.metadata = requireNonNull(metadata, "metadata is null");
         this.splitManager = requireNonNull(splitManager, "splitManager is null");
         this.pageSourceProvider = requireNonNull(pageSourceProvider, "pageSourceProvider is null");
         this.pageSinkProvider = requireNonNull(pageSinkProvider, "pageSinkProvider is null");
+        this.tableProcedures = ImmutableSet.copyOf(requireNonNull(tableProcedures, "tableProcedures is null"));
     }
 
     @Override
@@ -92,6 +97,12 @@ public class LanceConnector
     public List<PropertyMetadata<?>> getTableProperties()
     {
         return LanceTableProperties.getTableProperties();
+    }
+
+    @Override
+    public Set<TableProcedureMetadata> getTableProcedures()
+    {
+        return tableProcedures;
     }
 
     @Override
