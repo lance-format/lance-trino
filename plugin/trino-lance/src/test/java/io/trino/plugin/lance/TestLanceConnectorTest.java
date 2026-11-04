@@ -95,7 +95,8 @@ public class TestLanceConnectorTest
                     SUPPORTS_DELETE,
                     SUPPORTS_ROW_LEVEL_DELETE,
                     SUPPORTS_UPDATE,
-                    SUPPORTS_MERGE -> true;
+                    SUPPORTS_MERGE,
+                    SUPPORTS_TRUNCATE -> true;
 
             // Complex types - ROW and MAP not fully supported for writes
             case SUPPORTS_ROW_TYPE,
@@ -116,9 +117,6 @@ public class TestLanceConnectorTest
                     SUPPORTS_DROP_COLUMN,
                     SUPPORTS_RENAME_COLUMN,
                     SUPPORTS_SET_COLUMN_TYPE -> false;
-
-            // Truncate is not supported
-            case SUPPORTS_TRUNCATE -> false;
 
             // View operations - not supported
             case SUPPORTS_CREATE_VIEW,

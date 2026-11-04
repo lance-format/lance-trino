@@ -34,7 +34,7 @@ public final class LanceTableProperties
     public static final String VECTOR_COLUMNS = "vector_columns";
     public static final String FILE_FORMAT_VERSION = "file_format_version";
 
-    private static final Set<String> VALID_STORAGE_VERSIONS = ImmutableSet.of(
+    static final Set<String> VALID_STORAGE_VERSIONS = ImmutableSet.of(
             "legacy", "0.1", "2.0", "2.1", "2.2", "stable", "next");
 
     private LanceTableProperties() {}

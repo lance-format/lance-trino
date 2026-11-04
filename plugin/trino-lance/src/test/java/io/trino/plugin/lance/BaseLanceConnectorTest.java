@@ -68,10 +68,8 @@ public abstract class BaseLanceConnectorTest
             case SUPPORTS_DELETE,
                     SUPPORTS_ROW_LEVEL_DELETE,
                     SUPPORTS_UPDATE,
-                    SUPPORTS_MERGE -> true;
-
-            // Truncate not yet supported
-            case SUPPORTS_TRUNCATE -> false;
+                    SUPPORTS_MERGE,
+                    SUPPORTS_TRUNCATE -> true;
 
             // View operations - not supported
             case SUPPORTS_CREATE_VIEW,

@@ -1363,6 +1363,21 @@ public class LanceMetadata
         runtime.invalidate(userIdentity, tablePath);
     }
 
+    @Override
+    public void truncateTable(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        LanceTableHandle table = (LanceTableHandle) tableHandle;
+        rejectNamedRefWrite(table);
+        String tablePath = table.getTablePath();
+        String userIdentity = session.getUser();
+        Map<String, String> storageOptions = getStorageOptionsForTable(table.getTableId());
+
+        try (Dataset dataset = runtime.openDatasetDirect(userIdentity, tablePath, null, storageOptions)) {
+            dataset.truncateTable();
+        }
+        runtime.invalidate(userIdentity, tablePath);
+    }
+
     // ===== Helper Methods =====
 
     private LanceNamespace getNamespace()
