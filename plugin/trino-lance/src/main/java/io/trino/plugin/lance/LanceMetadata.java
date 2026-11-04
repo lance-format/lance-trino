@@ -21,6 +21,11 @@ import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
 import io.trino.plugin.base.classloader.ClassLoaderSafeSystemTable;
+import io.trino.plugin.lance.procedure.LanceProcedureHandle;
+import io.trino.plugin.lance.procedure.LanceTableExecuteHandle;
+import io.trino.plugin.lance.procedure.LanceTableProcedureId;
+import io.trino.plugin.lance.procedure.LanceVacuumHandle;
+import io.trino.plugin.lance.procedure.LanceVacuumTableProcedure;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.AggregateFunction;
 import io.trino.spi.connector.AggregationApplicationResult;
@@ -28,12 +33,14 @@ import io.trino.spi.connector.Assignment;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.connector.ColumnPosition;
+import io.trino.spi.connector.ConnectorAccessControl;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
 import io.trino.spi.connector.ConnectorMergeTableHandle;
 import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorOutputMetadata;
 import io.trino.spi.connector.ConnectorOutputTableHandle;
 import io.trino.spi.connector.ConnectorSession;
+import io.trino.spi.connector.ConnectorTableExecuteHandle;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTableLayout;
 import io.trino.spi.connector.ConnectorTableMetadata;
@@ -73,6 +80,7 @@ import org.lance.FragmentMetadata;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
 import org.lance.Transaction;
+import org.lance.cleanup.CleanupPolicy;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.errors.NamespaceNotFoundException;
 import org.lance.namespace.model.CreateNamespaceRequest;
@@ -133,6 +141,7 @@ import static io.trino.spi.StandardErrorCode.ALREADY_EXISTS;
 import static io.trino.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
 import static io.trino.spi.StandardErrorCode.INVALID_ARGUMENTS;
 import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
+import static io.trino.spi.StandardErrorCode.PROCEDURE_CALL_FAILED;
 import static io.trino.spi.StandardErrorCode.TRANSACTION_CONFLICT;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.DateTimeEncoding.unpackMillisUtc;
@@ -1420,6 +1429,69 @@ public class LanceMetadata
             throw new TrinoException(GENERIC_INTERNAL_ERROR, "Failed to add column: " + requireNonNullElse(e.getMessage(), e), e);
         }
         runtime.invalidate(userIdentity, tablePath);
+    }
+
+    // ===== Table Procedures =====
+
+    @Override
+    public Optional<ConnectorTableExecuteHandle> getTableHandleForExecute(
+            ConnectorSession session,
+            ConnectorAccessControl accessControl,
+            ConnectorTableHandle tableHandle,
+            String procedureName,
+            Map<String, Object> executeProperties,
+            RetryMode retryMode)
+    {
+        LanceTableHandle table = (LanceTableHandle) tableHandle;
+
+        LanceTableProcedureId procedureId;
+        try {
+            procedureId = LanceTableProcedureId.valueOf(procedureName);
+        }
+        catch (IllegalArgumentException e) {
+            throw new TrinoException(NOT_SUPPORTED, "Unknown table procedure: " + procedureName);
+        }
+
+        LanceProcedureHandle procedureHandle = switch (procedureId) {
+            case VACUUM -> getTableHandleForVacuum(executeProperties);
+        };
+        return Optional.of(new LanceTableExecuteHandle(
+                table.getName(),
+                table.getTablePath(),
+                table.getTableId(),
+                getEffectiveStorageOptions(table),
+                procedureId,
+                procedureHandle));
+    }
+
+    private static LanceVacuumHandle getTableHandleForVacuum(Map<String, Object> properties)
+    {
+        return new LanceVacuumHandle(Optional.ofNullable((Long) properties.get(LanceVacuumTableProcedure.BEFORE_VERSION)));
+    }
+
+    @Override
+    public void executeTableExecute(ConnectorSession session, ConnectorTableExecuteHandle tableExecuteHandle)
+    {
+        LanceTableExecuteHandle handle = (LanceTableExecuteHandle) tableExecuteHandle;
+        String userIdentity = session.getUser();
+
+        switch (handle.procedureId()) {
+            case VACUUM -> executeVacuum(session, handle.tablePath(), handle.storageOptions(), (LanceVacuumHandle) handle.procedureHandle());
+        }
+        runtime.invalidate(userIdentity, handle.tablePath());
+    }
+
+    private void executeVacuum(ConnectorSession session, String tablePath, Map<String, String> storageOptions, LanceVacuumHandle vacuumHandle)
+    {
+        try (Dataset dataset = runtime.openDatasetDirect(session.getUser(), tablePath, null, storageOptions)) {
+            CleanupPolicy.Builder policy = CleanupPolicy.builder();
+            vacuumHandle.beforeVersion().ifPresent(policy::withBeforeVersion);
+            dataset.cleanupWithPolicy(policy.build());
+            // TODO https://github.com/trinodb/trino/pull/26661 Report RemovalStats's fields after updating Trino version to 478+
+        }
+        catch (RuntimeException e) {
+            throw new TrinoException(PROCEDURE_CALL_FAILED, "Failed to execute VACUUM on table: " + requireNonNullElse(e.getMessage(), e), e);
+        }
     }
 
     // ===== Helper Methods =====
