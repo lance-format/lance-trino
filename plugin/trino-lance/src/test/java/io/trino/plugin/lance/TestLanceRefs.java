@@ -82,7 +82,7 @@ public class TestLanceRefs
         assertThat(datasetPath).isDirectory();
         divergeBranch(datasetPath);
 
-        assertThat(computeScalar("SELECT id FROM refs_demo FOR VERSION AS OF 2")).isEqualTo(1L);
+        assertThat(computeScalar("SELECT id FROM refs_demo FOR VERSION AS OF 2")).isEqualTo(2L);
         assertThat(computeScalar("SELECT COUNT(*) FROM refs_demo FOR VERSION AS OF 2")).isEqualTo(1L);
         assertThat(computeActual("SELECT id FROM refs_demo FOR VERSION AS OF 'audit' ORDER BY id").getOnlyColumnAsSet())
                 .containsExactly(99L, 100L);
