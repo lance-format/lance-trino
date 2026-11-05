@@ -112,7 +112,7 @@ public class TestLanceConnectorTest
             // Table modification operations - not supported
             case SUPPORTS_RENAME_TABLE,
                     SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
-                    SUPPORTS_ADD_COLUMN,
+                    SUPPORTS_ADD_COLUMN_WITH_POSITION,
                     SUPPORTS_ADD_COLUMN_WITH_COMMENT,
                     SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT,
                     SUPPORTS_DROP_COLUMN,
@@ -537,6 +537,12 @@ public class TestLanceConnectorTest
     {
         // Lance doesn't support timestamp type yet
         abort("Lance does not support timestamp type yet");
+    }
+
+    @Override
+    protected void verifyConcurrentAddColumnFailurePermissible(Exception e)
+    {
+        assertThat(e).hasMessageStartingWith("Failed to add column: Retryable commit conflict");
     }
 
     @Override
