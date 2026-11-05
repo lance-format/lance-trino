@@ -15,7 +15,9 @@ package io.trino.plugin.lance;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.trino.plugin.lance.ptf.LanceFullTextQuery;
 import io.trino.spi.connector.ConnectorTableHandle;
 
 import java.nio.ByteBuffer;
@@ -50,6 +52,7 @@ public class LanceTableHandle
     private final String branchName;
     // Branch dataset URI from checkout. Null on main.
     private final String readUri;
+    private final LanceFullTextQuery fullTextQuery;
 
     public LanceTableHandle(
             String schemaName,
@@ -83,7 +86,7 @@ public class LanceTableHandle
             String branchName,
             String readUri)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, null, List.of(), OptionalLong.empty(), false, datasetVersion, refName, branchName, readUri);
+        this(schemaName, tableName, tablePath, tableId, storageOptions, null, List.of(), OptionalLong.empty(), false, datasetVersion, refName, branchName, readUri, null);
     }
 
     @JsonCreator
@@ -100,7 +103,8 @@ public class LanceTableHandle
             @JsonProperty("datasetVersion") Long datasetVersion,
             @JsonProperty("refName") String refName,
             @JsonProperty("branchName") String branchName,
-            @JsonProperty("readUri") String readUri)
+            @JsonProperty("readUri") String readUri,
+            @JsonProperty("fullTextQuery") LanceFullTextQuery fullTextQuery)
     {
         this(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter,
                 filterColumns != null ? filterColumns : List.of(),
@@ -109,7 +113,8 @@ public class LanceTableHandle
                 datasetVersion,
                 refName,
                 branchName,
-                readUri);
+                readUri,
+                fullTextQuery);
     }
 
     public LanceTableHandle(
@@ -125,7 +130,8 @@ public class LanceTableHandle
             Long datasetVersion,
             String refName,
             String branchName,
-            String readUri)
+            String readUri,
+            LanceFullTextQuery fullTextQuery)
     {
         this.schemaName = requireNonNull(schemaName, "schemaName is null");
         this.tableName = requireNonNull(tableName, "tableName is null");
@@ -143,6 +149,7 @@ public class LanceTableHandle
             throw new IllegalArgumentException("branchName and readUri are set together");
         }
         this.readUri = readUri;
+        this.fullTextQuery = fullTextQuery;
     }
 
     @JsonProperty
@@ -304,6 +311,18 @@ public class LanceTableHandle
         return readUri;
     }
 
+    @JsonProperty
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public LanceFullTextQuery getFullTextQuery()
+    {
+        return fullTextQuery;
+    }
+
+    public LanceTableHandle withFullTextQuery(LanceFullTextQuery newFullTextQuery)
+    {
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, countStar, datasetVersion, refName, branchName, readUri, newFullTextQuery);
+    }
+
     @JsonIgnore
     public String getEffectiveReadUri()
     {
@@ -318,7 +337,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withStorageOptions(Map<String, String> newStorageOptions)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, filterColumns, limit, countStar, datasetVersion, refName, branchName, readUri);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, filterColumns, limit, countStar, datasetVersion, refName, branchName, readUri, fullTextQuery);
     }
 
     /**
@@ -326,7 +345,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withSubstraitFilter(byte[] newSubstraitFilter, List<String> newFilterColumns)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, newFilterColumns, limit, countStar, datasetVersion, refName, branchName, readUri);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, newFilterColumns, limit, countStar, datasetVersion, refName, branchName, readUri, fullTextQuery);
     }
 
     /**
@@ -334,7 +353,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withLimit(long newLimit)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, OptionalLong.of(newLimit), countStar, datasetVersion, refName, branchName, readUri);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, OptionalLong.of(newLimit), countStar, datasetVersion, refName, branchName, readUri, fullTextQuery);
     }
 
     /**
@@ -342,7 +361,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withCountStar()
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, true, datasetVersion, refName, branchName, readUri);
+        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, true, datasetVersion, refName, branchName, readUri, fullTextQuery);
     }
 
     @Override
@@ -365,13 +384,14 @@ public class LanceTableHandle
                 Objects.equals(datasetVersion, that.datasetVersion) &&
                 Objects.equals(refName, that.refName) &&
                 Objects.equals(branchName, that.branchName) &&
-                Objects.equals(readUri, that.readUri);
+                Objects.equals(readUri, that.readUri) &&
+                Objects.equals(fullTextQuery, that.fullTextQuery);
     }
 
     @Override
     public int hashCode()
     {
-        int result = Objects.hash(tableName, tablePath, tableId, filterColumns, limit, countStar, datasetVersion, refName, branchName, readUri);
+        int result = Objects.hash(tableName, tablePath, tableId, filterColumns, limit, countStar, datasetVersion, refName, branchName, readUri, fullTextQuery);
         result = 31 * result + Arrays.hashCode(substraitFilter);
         return result;
     }
@@ -401,6 +421,10 @@ public class LanceTableHandle
         }
         if (readUri != null) {
             helper.add("readUri", readUri);
+        }
+
+        if (fullTextQuery != null) {
+            helper.add("fullTextQuery", fullTextQuery);
         }
 
         return helper

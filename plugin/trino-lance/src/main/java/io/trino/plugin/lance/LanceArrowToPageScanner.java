@@ -14,6 +14,7 @@
 package io.trino.plugin.lance;
 
 import io.airlift.slice.Slice;
+import io.trino.plugin.lance.ptf.LanceFullTextSearchFunction;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.ArrayBlockBuilder;
@@ -55,6 +56,7 @@ import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.ipc.ArrowReader;
 import org.apache.arrow.vector.util.TransferPair;
+import org.lance.ipc.FullTextQuery;
 import org.lance.ipc.LanceScanner;
 
 import java.io.IOException;
@@ -106,7 +108,8 @@ public class LanceArrowToPageScanner
             Optional<ByteBuffer> substraitFilter,
             OptionalLong limit,
             String userIdentity,
-            Long datasetVersion)
+            Long datasetVersion,
+            Optional<FullTextQuery> fullTextQuery)
     {
         this.allocator = requireNonNull(allocator, "allocator is null");
         requireNonNull(columns, "columns is null");
@@ -131,7 +134,7 @@ public class LanceArrowToPageScanner
                     addedColumns.add(baseName);
                 }
             }
-            else {
+            else if (!LanceFullTextSearchFunction.SCORE_COLUMN.equals(col.name())) {
                 String projectionPath = col.scanProjectionName();
                 if (!addedColumns.contains(projectionPath)) {
                     projectionColumns.add(projectionPath);
@@ -151,7 +154,7 @@ public class LanceArrowToPageScanner
         LanceScanner openedScanner = null;
         ArrowReader openedReader = null;
         try {
-            openedScanner = scannerFactory.open(path, allocator, projectionColumns, storageOptions, substraitFilter, limit, userIdentity, datasetVersion);
+            openedScanner = scannerFactory.open(path, allocator, projectionColumns, storageOptions, substraitFilter, limit, userIdentity, datasetVersion, fullTextQuery);
             openedReader = openedScanner.scanBatches();
             VectorSchemaRoot openedRoot = openedReader.getVectorSchemaRoot();
             this.arrowReader = openedReader;
