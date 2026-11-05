@@ -14,6 +14,7 @@
 package io.trino.plugin.lance;
 
 import org.apache.arrow.memory.BufferAllocator;
+import org.lance.ipc.FullTextQuery;
 import org.lance.ipc.LanceScanner;
 
 import java.nio.ByteBuffer;
@@ -32,7 +33,8 @@ public interface ScannerFactory
             Optional<ByteBuffer> substraitFilter,
             OptionalLong limit,
             String userIdentity,
-            Long datasetVersion);
+            Long datasetVersion,
+            Optional<FullTextQuery> fullTextQuery);
 
     void close();
 }

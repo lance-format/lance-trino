@@ -16,6 +16,7 @@ package io.trino.plugin.lance;
 import io.airlift.log.Logger;
 import org.apache.arrow.memory.BufferAllocator;
 import org.lance.Dataset;
+import org.lance.ipc.FullTextQuery;
 import org.lance.ipc.LanceScanner;
 import org.lance.ipc.ScanOptions;
 
@@ -112,7 +113,7 @@ public class LanceFragmentPageSource
         @Override
         public LanceScanner open(String tablePath, BufferAllocator allocator, List<String> columns,
                 Map<String, String> storageOptions, Optional<ByteBuffer> substraitFilter, OptionalLong limit,
-                String userIdentity, Long datasetVersion)
+                String userIdentity, Long datasetVersion, Optional<FullTextQuery> fullTextQuery)
         {
             ScanOptions.Builder optionsBuilder = new ScanOptions.Builder();
             if (!columns.isEmpty()) {
@@ -122,6 +123,7 @@ public class LanceFragmentPageSource
             optionsBuilder.useScalarIndex(true);
             substraitFilter.ifPresent(optionsBuilder::substraitFilter);
             limit.ifPresent(optionsBuilder::limit);
+            fullTextQuery.ifPresent(optionsBuilder::fullTextQuery);
 
             // Use Lance's built-in row address for accurate row identification in MERGE operations
             if (includeRowAddress) {
