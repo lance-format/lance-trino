@@ -19,9 +19,14 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 
+import static io.trino.plugin.lance.LanceNamespaceTestConfig.S3_DEFAULT;
+import static io.trino.plugin.lance.LanceNamespaceTestConfig.S3_SINGLE_LEVEL;
+import static io.trino.plugin.lance.LanceNamespaceTestConfig.S3_WITH_PARENT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.abort;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /**
  * Abstract base class for Lance connector tests.
@@ -58,7 +63,7 @@ public abstract class BaseLanceConnectorTest
             // Table modification operations - not supported
             case SUPPORTS_RENAME_TABLE,
                     SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS,
-                    SUPPORTS_ADD_COLUMN,
+                    SUPPORTS_ADD_COLUMN_WITH_POSITION,
                     SUPPORTS_ADD_COLUMN_WITH_COMMENT,
                     SUPPORTS_ADD_COLUMN_NOT_NULL_CONSTRAINT,
                     SUPPORTS_DROP_COLUMN,
@@ -346,6 +351,21 @@ public abstract class BaseLanceConnectorTest
     {
         // Lance doesn't support timestamp type yet
         abort("Lance does not support timestamp type yet");
+    }
+
+    @Test
+    @Override
+    public void testAddColumnConcurrently()
+            throws Exception
+    {
+        assumeFalse(Set.of(S3_SINGLE_LEVEL, S3_WITH_PARENT, S3_DEFAULT).contains(getNamespaceTestConfig()), "S3 namespace has consistency issues");
+        super.testAddColumnConcurrently();
+    }
+
+    @Override
+    protected void verifyConcurrentAddColumnFailurePermissible(Exception e)
+    {
+        assertThat(e).hasMessageStartingWith("Failed to add column: Retryable commit conflict");
     }
 
     @Test
