@@ -186,7 +186,7 @@ jobs:
           inputs.mode == 'release'
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: ${{ github.event.release.tag_name || inputs.ref }}
           files: |
             plugin/trino-lance/target/${{ steps.prepare_artifacts.outputs.artifact_name }}.zip
             plugin/trino-lance/target/${{ steps.prepare_artifacts.outputs.artifact_name }}.tar.gz
