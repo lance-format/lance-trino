@@ -240,8 +240,7 @@ public class TestLanceRefs
             assertThat(resolved.readUri()).endsWith("/tree/feature/audit?ddbTableName=commits");
 
             LanceTableHandle handle = new LanceTableHandle(
-                    "default",
-                    "orders",
+                    new SchemaTableName("default", "orders"),
                     tableUri,
                     List.of("orders"),
                     Map.of(),
