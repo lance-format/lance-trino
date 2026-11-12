@@ -71,10 +71,10 @@ public class TestLanceMetadata
 {
     // Use URL.toString() to match the format used by LanceNamespaceHolder (file:/... vs file:///...)
     private static final String TEST_DB_PATH = Resources.getResource(TestLanceMetadata.class, "/example_db").toString() + "/";
-    private static final LanceTableHandle TEST_TABLE_1_HANDLE = new LanceTableHandle("default", "test_table1",
-            TEST_DB_PATH + "test_table1.lance", List.of("test_table1"), Map.of());
-    private static final LanceTableHandle TEST_TABLE_2_HANDLE = new LanceTableHandle("default", "test_table2",
-            TEST_DB_PATH + "test_table2.lance", List.of("test_table2"), Map.of());
+    private static final LanceTableHandle TEST_TABLE_1_HANDLE = new LanceTableHandle(new SchemaTableName("default", "test_table1"),
+            TEST_DB_PATH + "test_table1.lance", List.of("test_table1"));
+    private static final LanceTableHandle TEST_TABLE_2_HANDLE = new LanceTableHandle(new SchemaTableName("default", "test_table2"),
+            TEST_DB_PATH + "test_table2.lance", List.of("test_table2"));
 
     // Actual column order in test data: x, y, b, c (field IDs 0, 1, 2, 3)
     private static final ArrowType INT64_TYPE = new ArrowType.Int(64, true);
@@ -109,13 +109,13 @@ public class TestLanceMetadata
     {
         // Compare relevant fields rather than exact equality since datasetVersion is now dynamically captured
         LanceTableHandle table1Handle = metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table1"), Optional.empty(), Optional.empty());
-        assertThat(table1Handle.getTableName()).isEqualTo(TEST_TABLE_1_HANDLE.getTableName());
+        assertThat(table1Handle.getName()).isEqualTo(TEST_TABLE_1_HANDLE.getName());
         assertThat(table1Handle.getTablePath()).isEqualTo(TEST_TABLE_1_HANDLE.getTablePath());
         assertThat(table1Handle.getTableId()).isEqualTo(TEST_TABLE_1_HANDLE.getTableId());
         assertThat(table1Handle.getDatasetVersion()).isNotNull();  // Version should be captured
 
         LanceTableHandle table2Handle = metadata.getTableHandle(SESSION, new SchemaTableName("default", "test_table2"), Optional.empty(), Optional.empty());
-        assertThat(table2Handle.getTableName()).isEqualTo(TEST_TABLE_2_HANDLE.getTableName());
+        assertThat(table2Handle.getName()).isEqualTo(TEST_TABLE_2_HANDLE.getName());
         assertThat(table2Handle.getTablePath()).isEqualTo(TEST_TABLE_2_HANDLE.getTablePath());
         assertThat(table2Handle.getTableId()).isEqualTo(TEST_TABLE_2_HANDLE.getTableId());
         assertThat(table2Handle.getDatasetVersion()).isNotNull();
@@ -135,10 +135,10 @@ public class TestLanceMetadata
                 "y", LanceColumnHandle.optional("y").setTrinoType(LanceColumnHandle.toTrinoType(INT64_TYPE)).setFieldId(1).build()));
 
         // unknown table
-        assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, new LanceTableHandle("unknown", "unknown", "unknown", List.of("unknown"), Map.of())))
+        assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, new LanceTableHandle(new SchemaTableName("unknown", "unknown"), "unknown", List.of("unknown"))))
                 .isInstanceOf(TableNotFoundException.class)
                 .hasMessage("Table 'unknown.unknown' not found");
-        assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, new LanceTableHandle("example", "unknown", "unknown", List.of("unknown"), Map.of())))
+        assertThatThrownBy(() -> metadata.getColumnHandles(SESSION, new LanceTableHandle(new SchemaTableName("example", "unknown"), "unknown", List.of("unknown"))))
                 .isInstanceOf(TableNotFoundException.class)
                 .hasMessage("Table 'example.unknown' not found");
     }
@@ -157,8 +157,8 @@ public class TestLanceMetadata
                 LanceColumnHandle.optional("c").setTrinoType(LanceColumnHandle.toTrinoType(INT64_TYPE)).build().getColumnMetadata()));
 
         // unknown tables should produce null
-        assertThat(metadata.getTableMetadata(SESSION, new LanceTableHandle("unknown", "unknown", "unknown", List.of("unknown"), Map.of()))).isNull();
-        assertThat(metadata.getTableMetadata(SESSION, new LanceTableHandle("default", "unknown", "unknown", List.of("unknown"), Map.of()))).isNull();
+        assertThat(metadata.getTableMetadata(SESSION, new LanceTableHandle(new SchemaTableName("unknown", "unknown"), "unknown", List.of("unknown")))).isNull();
+        assertThat(metadata.getTableMetadata(SESSION, new LanceTableHandle(new SchemaTableName("default", "unknown"), "unknown", List.of("unknown")))).isNull();
     }
 
     @Test

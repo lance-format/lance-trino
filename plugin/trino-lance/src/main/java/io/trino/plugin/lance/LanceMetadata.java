@@ -257,7 +257,7 @@ public class LanceMetadata
             datasetVersion = runtime.getLatestVersion(userIdentity, tablePath, storageOptions);
         }
 
-        return new LanceTableHandle(name.getSchemaName(), name.getTableName(), tablePath, tableId, storageOptions, datasetVersion, refName, branchName, readUri);
+        return new LanceTableHandle(name, tablePath, tableId, storageOptions, datasetVersion, refName, branchName, readUri);
     }
 
     private LanceRuntime.ResolvedLanceRef resolveVersion(ConnectorSession session, String tablePath,
@@ -393,13 +393,11 @@ public class LanceMetadata
             LanceSchema lanceSchema = runtime.getLanceSchema(userIdentity, lanceTableHandle.getEffectiveReadUri(), lanceTableHandle.getDatasetVersion(), storageOptions);
             Schema arrowSchema = runtime.getSchema(userIdentity, lanceTableHandle.getEffectiveReadUri(), lanceTableHandle.getDatasetVersion(), storageOptions);
             List<ColumnMetadata> columnsMetadata = LanceRuntime.getColumnMetadata(lanceSchema, arrowSchema);
-            SchemaTableName schemaTableName =
-                    new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName());
             Map<String, Object> properties = LanceRuntime.getTableProperties(arrowSchema);
-            return new ConnectorTableMetadata(schemaTableName, columnsMetadata, properties);
+            return new ConnectorTableMetadata(lanceTableHandle.getName(), columnsMetadata, properties);
         }
         catch (Exception e) {
-            log.debug(e, "Failed to get table metadata for %s", lanceTableHandle.getTableName());
+            log.debug(e, "Failed to get table metadata for %s", lanceTableHandle.getName());
             return null;
         }
     }
@@ -461,7 +459,7 @@ public class LanceMetadata
                     lanceTableHandle.getDatasetVersion(), storageOptions);
         }
         catch (Exception e) {
-            throw new TableNotFoundException(new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName()));
+            throw new TableNotFoundException(lanceTableHandle.getName());
         }
     }
 
@@ -670,7 +668,7 @@ public class LanceMetadata
                     userIdentity, lanceTableHandle.getEffectiveReadUri(), lanceTableHandle.getDatasetVersion(), storageOptions);
 
             log.debug("getTableStatistics: table=%s, totalRows=%d, totalFilesSize=%d, totalFragments=%d",
-                    lanceTableHandle.getTableName(),
+                    lanceTableHandle.getName(),
                     summary.getTotalRows(),
                     summary.getTotalFilesSize(),
                     summary.getTotalFragments());
@@ -682,7 +680,7 @@ public class LanceMetadata
                     .build();
         }
         catch (Exception e) {
-            log.warn(e, "Failed to get table statistics for %s", lanceTableHandle.getTableName());
+            log.warn(e, "Failed to get table statistics for %s", lanceTableHandle.getName());
             return TableStatistics.empty();
         }
     }
@@ -741,7 +739,7 @@ public class LanceMetadata
         }
 
         log.debug("applyAggregation: pushing row-count aggregate for table %s (no filter)",
-                lanceTableHandle.getTableName());
+                lanceTableHandle.getName());
 
         LanceTableHandle newHandle = lanceTableHandle.withCountStar();
 
@@ -877,7 +875,7 @@ public class LanceMetadata
         List<String> tableId = lanceTableHandle.getTableId();
         String tablePath = lanceTableHandle.getTablePath();
 
-        log.debug("dropTable: table=%s, path=%s", lanceTableHandle.getTableName(), tablePath);
+        log.debug("dropTable: table=%s, path=%s", lanceTableHandle.getName(), tablePath);
 
         DropTableRequest dropRequest = new DropTableRequest()
                 .id(tableId);
@@ -1125,7 +1123,7 @@ public class LanceMetadata
     {
         LanceTableHandle table = (LanceTableHandle) tableHandle;
         rejectNamedRefWrite(table);
-        SchemaTableName tableName = new SchemaTableName(table.getSchemaName(), table.getTableName());
+        SchemaTableName tableName = table.getName();
 
         String tablePath = table.getTablePath();
         List<String> tableId = table.getTableId();
@@ -1233,7 +1231,7 @@ public class LanceMetadata
     {
         LanceTableHandle table = (LanceTableHandle) tableHandle;
         rejectNamedRefWrite(table);
-        SchemaTableName tableName = new SchemaTableName(table.getSchemaName(), table.getTableName());
+        SchemaTableName tableName = table.getName();
 
         String tablePath = table.getTablePath();
         List<String> tableId = table.getTableId();
@@ -1277,7 +1275,7 @@ public class LanceMetadata
         String transactionId = handle.transactionId();
 
         log.debug("finishMerge: table=%s, fragments=%d, transactionId=%s",
-                handle.tableHandle().getTableName(), fragments.size(), transactionId);
+                handle.tableHandle().getName(), fragments.size(), transactionId);
 
         Dataset dataset = transactionDatasets.remove(transactionId);
         if (dataset == null) {

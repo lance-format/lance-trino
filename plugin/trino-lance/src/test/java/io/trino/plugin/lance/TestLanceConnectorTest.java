@@ -743,8 +743,8 @@ public class TestLanceConnectorTest
             assertThat(unsignedHandle.trinoType()).isEqualTo(BIGINT);
 
             // Read data through the page source and verify values
-            LanceTableHandle tableHandle = new LanceTableHandle("default", "uint4_test",
-                    datasetPath, List.of("uint4_test"), Map.of());
+            LanceTableHandle tableHandle = new LanceTableHandle(new SchemaTableName("default", "uint4_test"),
+                    datasetPath, List.of("uint4_test"));
             LanceSplitManager splitManager = new LanceSplitManager(runtime);
             var splitSource = splitManager.getSplits(null, SESSION, tableHandle, null, null);
             var batch = splitSource.getNextBatch(10).get();

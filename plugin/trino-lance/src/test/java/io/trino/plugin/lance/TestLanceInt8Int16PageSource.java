@@ -17,6 +17,7 @@ import com.google.common.collect.ImmutableMap;
 import io.trino.spi.Page;
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.ColumnHandle;
+import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.type.ArrayType;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
@@ -124,7 +125,7 @@ public class TestLanceInt8Int16PageSource
             assertThat(((LanceColumnHandle) columnHandles.get("signed_int8_array")).trinoType()).isEqualTo(new ArrayType(TINYINT));
 
             LanceTableHandle tableHandle = new LanceTableHandle(
-                    "default", "int8_int16_test", datasetPath, List.of("int8_int16_test"), Map.of());
+                    new SchemaTableName("default", "int8_int16_test"), datasetPath, List.of("int8_int16_test"));
             var splitSource = new LanceSplitManager(runtime).getSplits(null, SESSION, tableHandle, null, null);
             LanceSplit split = (LanceSplit) splitSource.getNextBatch(10).get().getSplits().get(0);
 
