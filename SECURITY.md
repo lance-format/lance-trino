@@ -1,0 +1,11 @@
+# Security Policy
+
+## Supported Versions
+
+The current release is the supported version. Security fixes are released together
+with all other fixes in each new release.
+
+## Reporting a Vulnerability
+
+Please report security vulnerabilities to **private@lance.org**.
+Do not open a public GitHub issue.
