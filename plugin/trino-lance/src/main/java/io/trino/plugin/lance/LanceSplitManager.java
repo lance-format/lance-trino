@@ -57,6 +57,11 @@ public class LanceSplitManager
             return new FixedSplitSource(List.of(new LanceSplit(Collections.emptyList())));
         }
 
+        // FTS scores and ranks across the whole dataset
+        if (lanceTableHandle.getFullTextQuery() != null) {
+            return new FixedSplitSource(List.of(LanceSplit.allFragments()));
+        }
+
         if (lanceTableHandle.getLimit().isPresent() && lanceTableHandle.hasFilter()) {
             return new FixedSplitSource(List.of(LanceSplit.allFragments()));
         }

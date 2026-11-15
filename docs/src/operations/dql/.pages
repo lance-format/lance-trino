@@ -1,3 +1,4 @@
 title: DQL
 nav:
   - select.md
+  - full-text-search.md

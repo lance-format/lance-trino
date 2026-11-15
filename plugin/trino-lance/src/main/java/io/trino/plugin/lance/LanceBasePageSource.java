@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.lance;
 
+import io.trino.plugin.lance.ptf.LanceFullTextQuery;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
 import io.trino.spi.TrinoException;
@@ -22,6 +23,7 @@ import org.apache.arrow.memory.BufferAllocator;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -58,7 +60,8 @@ public abstract class LanceBasePageSource
                             tableHandle.getSubstraitFilterBuffer(),
                             tableHandle.getLimit(),
                             userIdentity,
-                            tableHandle.getDatasetVersion());
+                            tableHandle.getDatasetVersion(),
+                            Optional.ofNullable(tableHandle.getFullTextQuery()).map(LanceFullTextQuery::toLanceQuery));
         }
         catch (RuntimeException e) {
             // Handle concurrent modification errors (e.g., fragment not found due to concurrent update)

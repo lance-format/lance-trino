@@ -16,7 +16,11 @@ package io.trino.plugin.lance;
 import com.google.inject.Binder;
 import com.google.inject.Module;
 import com.google.inject.Scopes;
+import com.google.inject.multibindings.Multibinder;
+import io.trino.plugin.lance.ptf.LanceFullTextSearchFunctionProvider;
+import io.trino.spi.function.table.ConnectorTableFunction;
 
+import static com.google.inject.multibindings.Multibinder.newSetBinder;
 import static io.airlift.configuration.ConfigBinder.configBinder;
 import static io.airlift.json.JsonCodecBinder.jsonCodecBinder;
 
@@ -43,6 +47,10 @@ public class LanceModule
         jsonCodecBinder(binder).bindJsonCodec(LanceCommitTaskData.class);
         jsonCodecBinder(binder).bindJsonCodec(LanceMergeCommitData.class);
         jsonCodecBinder(binder).bindJsonCodec(FragmentDeletion.class);
+
+        // Table functions
+        Multibinder<ConnectorTableFunction> tableFunctions = newSetBinder(binder, ConnectorTableFunction.class);
+        tableFunctions.addBinding().toProvider(LanceFullTextSearchFunctionProvider.class).in(Scopes.SINGLETON);
 
         // Connector
         binder.bind(LanceConnector.class).in(Scopes.SINGLETON);

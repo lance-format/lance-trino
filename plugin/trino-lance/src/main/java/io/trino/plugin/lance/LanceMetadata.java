@@ -21,6 +21,8 @@ import io.airlift.json.JsonCodec;
 import io.airlift.log.Logger;
 import io.airlift.slice.Slice;
 import io.trino.plugin.base.classloader.ClassLoaderSafeSystemTable;
+import io.trino.plugin.lance.ptf.LanceFullTextSearchFunction;
+import io.trino.plugin.lance.ptf.LanceFullTextSearchFunction.LanceFullTextSearchFunctionHandle;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.AggregateFunction;
 import io.trino.spi.connector.AggregationApplicationResult;
@@ -47,10 +49,12 @@ import io.trino.spi.connector.RowChangeParadigm;
 import io.trino.spi.connector.SaveMode;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SystemTable;
+import io.trino.spi.connector.TableFunctionApplicationResult;
 import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
 import io.trino.spi.expression.FieldDereference;
 import io.trino.spi.expression.Variable;
+import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.security.TrinoPrincipal;
 import io.trino.spi.statistics.ComputedStatistics;
@@ -134,6 +138,7 @@ import static io.trino.spi.StandardErrorCode.TRANSACTION_CONFLICT;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.DateTimeEncoding.unpackMillisUtc;
 import static io.trino.spi.type.IntegerType.INTEGER;
+import static io.trino.spi.type.RealType.REAL;
 import static io.trino.spi.type.SmallintType.SMALLINT;
 import static io.trino.spi.type.TinyintType.TINYINT;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -457,8 +462,14 @@ public class LanceMetadata
         try {
             Map<String, String> storageOptions = getEffectiveStorageOptions(lanceTableHandle);
             String userIdentity = session.getUser();
-            return runtime.getColumnHandles(userIdentity, lanceTableHandle.getEffectiveReadUri(),
+            Map<String, ColumnHandle> columns = runtime.getColumnHandles(userIdentity, lanceTableHandle.getEffectiveReadUri(),
                     lanceTableHandle.getDatasetVersion(), storageOptions);
+            if (lanceTableHandle.getFullTextQuery() == null) {
+                return columns;
+            }
+            Map<String, ColumnHandle> withScore = new LinkedHashMap<>(columns);
+            withScore.put(LanceFullTextSearchFunction.SCORE_COLUMN, LanceColumnHandle.optional(LanceFullTextSearchFunction.SCORE_COLUMN).setTrinoType(REAL).build());
+            return withScore;
         }
         catch (Exception e) {
             throw new TableNotFoundException(new SchemaTableName(lanceTableHandle.getSchemaName(), lanceTableHandle.getTableName()));
@@ -688,6 +699,19 @@ public class LanceMetadata
     }
 
     @Override
+    public Optional<TableFunctionApplicationResult<ConnectorTableHandle>> applyTableFunction(ConnectorSession session, ConnectorTableFunctionHandle handle)
+    {
+        if (!(handle instanceof LanceFullTextSearchFunctionHandle matchHandle)) {
+            return Optional.empty();
+        }
+        LanceTableHandle tableHandle = matchHandle.table().withFullTextQuery(matchHandle.query());
+        List<ColumnHandle> columns = ImmutableList.<ColumnHandle>builder()
+                .addAll(getColumnHandles(session, tableHandle).values())
+                .build();
+        return Optional.of(new TableFunctionApplicationResult<>(tableHandle, columns));
+    }
+
+    @Override
     public Optional<LimitApplicationResult<ConnectorTableHandle>> applyLimit(ConnectorSession session,
             ConnectorTableHandle table, long limit)
     {
@@ -711,8 +735,8 @@ public class LanceMetadata
     {
         LanceTableHandle lanceTableHandle = (LanceTableHandle) table;
 
-        // Don't push if already has aggregate
-        if (lanceTableHandle.isCountStar()) {
+        // Don't push if already has aggregate or FTS
+        if (lanceTableHandle.isCountStar() || lanceTableHandle.getFullTextQuery() != null) {
             return Optional.empty();
         }
 
