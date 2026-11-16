@@ -18,12 +18,18 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.Resources;
 import io.airlift.json.JsonCodec;
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 import io.trino.spi.connector.AggregateFunction;
 import io.trino.spi.connector.AggregationApplicationResult;
 import io.trino.spi.connector.ColumnHandle;
+import io.trino.spi.connector.ColumnMetadata;
+import io.trino.spi.connector.ConnectorInsertTableHandle;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.RelationColumnsMetadata;
+import io.trino.spi.connector.RetryMode;
+import io.trino.spi.connector.SaveMode;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SortItem;
 import io.trino.spi.connector.TableNotFoundException;
@@ -39,6 +45,7 @@ import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.io.TempDir;
 import org.lance.Dataset;
 import org.lance.Fragment;
 import org.lance.FragmentMetadata;
@@ -49,14 +56,19 @@ import org.lance.namespace.model.DeclareTableRequest;
 import org.lance.operation.Append;
 import org.lance.operation.Update;
 
+import java.io.IOException;
+import java.net.URI;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.UnaryOperator;
+import java.util.stream.Stream;
 
 import static io.trino.plugin.lance.LanceRuntime.TABLE_PATH_SUFFIX;
 import static io.trino.spi.connector.SortOrder.ASC_NULLS_LAST;
@@ -371,6 +383,86 @@ public class TestLanceMetadata
         finally {
             runtime.close();
         }
+    }
+
+    @Test
+    public void testStorageOptionsAreNotPersistedInTransactions(@TempDir Path root)
+            throws Exception
+    {
+        String secret = "sentinel-storage-secret-7f2a";
+        LanceConfig config = new LanceConfig().setSingleLevelNs(true);
+        LanceRuntime storageRuntime = new LanceRuntime(config, ImmutableMap.of(
+                "lance.root", root.toUri().toString(),
+                "lance.storage.access_key_id", "sentinel-access-key",
+                "lance.storage.secret_access_key", secret));
+        try {
+            LanceMetadata storageMetadata = new LanceMetadata(
+                    storageRuntime,
+                    JsonCodec.jsonCodec(LanceCommitTaskData.class),
+                    JsonCodec.jsonCodec(LanceMergeCommitData.class));
+
+            SchemaTableName tableName = new SchemaTableName("default", "storage_options_leak");
+            storageMetadata.createTable(
+                    SESSION,
+                    new ConnectorTableMetadata(tableName, List.of(new ColumnMetadata("id", BIGINT))),
+                    SaveMode.FAIL);
+
+            LanceTableHandle tableHandle = (LanceTableHandle) storageMetadata.getTableHandle(SESSION, tableName, Optional.empty(), Optional.empty());
+            List<ColumnHandle> columns = List.copyOf(storageMetadata.getColumnHandles(SESSION, tableHandle).values());
+            ConnectorInsertTableHandle insertHandle = storageMetadata.beginInsert(SESSION, tableHandle, columns, RetryMode.NO_RETRIES);
+
+            Schema schema = new Schema(List.of(Field.nullable("id", new ArrowType.Int(64, true))), null);
+            String commitDataJson;
+            try (BufferAllocator allocator = new RootAllocator();
+                    VectorSchemaRoot data = VectorSchemaRoot.create(schema, allocator)) {
+                data.allocateNew();
+                BigIntVector id = (BigIntVector) data.getVector("id");
+                id.setSafe(0, 1);
+                data.setRowCount(1);
+                List<FragmentMetadata> fragments = Fragment.write()
+                        .datasetUri(tableHandle.getTablePath())
+                        .allocator(allocator)
+                        .data(data)
+                        .execute();
+                commitDataJson = JsonCodec.jsonCodec(LanceCommitTaskData.class).toJson(
+                        new LanceCommitTaskData(LanceMetadata.serializeFragments(fragments), 0, 1));
+            }
+
+            Slice commitData = Slices.utf8Slice(commitDataJson);
+            storageMetadata.finishInsert(SESSION, insertHandle, List.of(), List.of(commitData), List.of());
+
+            try (BufferAllocator allocator = new RootAllocator();
+                    Dataset dataset = Dataset.open().allocator(allocator).uri(tableHandle.getTablePath()).build()) {
+                assertThat(dataset.version()).isEqualTo(2);
+                Map<String, String> transactionProperties = dataset.readTransaction()
+                        .orElseThrow()
+                        .transactionProperties()
+                        .orElse(Map.of());
+                assertThat(transactionProperties.keySet())
+                        .noneMatch(key -> key.contains("secret") || key.contains("access_key") || key.contains("credential") || key.contains("token"));
+            }
+
+            Path tablePath = Path.of(URI.create(tableHandle.getTablePath()));
+            assertThat(tablePath).isDirectory();
+            assertThat(filesContaining(tablePath, secret)).isEmpty();
+        }
+        finally {
+            storageRuntime.close();
+        }
+    }
+
+    private static List<Path> filesContaining(Path root, String value)
+            throws IOException
+    {
+        List<Path> matches = new ArrayList<>();
+        try (Stream<Path> files = Files.walk(root)) {
+            for (Path file : files.filter(Files::isRegularFile).toList()) {
+                if (Files.readString(file, StandardCharsets.ISO_8859_1).contains(value)) {
+                    matches.add(file);
+                }
+            }
+        }
+        return matches;
     }
 
     @Test

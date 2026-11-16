@@ -70,7 +70,6 @@ import org.lance.Dataset;
 import org.lance.FragmentMetadata;
 import org.lance.ManifestSummary;
 import org.lance.ReadOptions;
-import org.lance.SourcedTransaction;
 import org.lance.Transaction;
 import org.lance.namespace.LanceNamespace;
 import org.lance.namespace.errors.NamespaceNotFoundException;
@@ -86,6 +85,7 @@ import org.lance.namespace.model.ListNamespacesResponse;
 import org.lance.namespace.model.ListTablesRequest;
 import org.lance.namespace.model.NamespaceExistsRequest;
 import org.lance.operation.Append;
+import org.lance.operation.Operation;
 import org.lance.operation.Overwrite;
 import org.lance.operation.Update;
 import org.lance.schema.ColumnAlteration;
@@ -1339,15 +1339,7 @@ public class LanceMetadata
                         .updateMode(Optional.of(Update.UpdateMode.RewriteRows))
                         .build();
 
-                SourcedTransaction.Builder transactionBuilder = dataset
-                        .newTransactionBuilder()
-                        .operation(update);
-                if (storageOptions != null && !storageOptions.isEmpty()) {
-                    transactionBuilder.transactionProperties(storageOptions);
-                }
-                try (SourcedTransaction transaction = transactionBuilder.build()) {
-                    transaction.commit().close();
-                }
+                commitOperation(dataset, update, storageOptions);
             }
 
             String userIdentity = session.getUser();
@@ -1559,20 +1551,32 @@ public class LanceMetadata
         }
     }
 
+    /**
+     * Commit a transaction against an open dataset.
+     * <p>
+     * Storage options are commit-time write parameters, not transaction properties. Transaction
+     * properties are persisted in {@code _transactions/*.txn} and in the new version's manifest,
+     * so credentials placed there are readable by anyone who can read the table files.
+     */
+    private void commitOperation(Dataset dataset, Operation operation, Map<String, String> storageOptions)
+    {
+        try (Transaction transaction = new Transaction.Builder()
+                .readVersion(dataset.version())
+                .operation(operation)
+                .build();
+                Dataset committed = new CommitBuilder(dataset)
+                        .writeParams(storageOptions)
+                        .execute(transaction)) {
+            log.debug("Committed transaction to dataset: %s (version %s)", dataset.uri(), committed.version());
+        }
+    }
+
     private void commitAppend(Dataset dataset, List<String> serializedFragments, Map<String, String> storageOptions)
     {
         log.debug("Committing %d fragments to dataset: %s (append)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        SourcedTransaction.Builder transactionBuilder = dataset
-                .newTransactionBuilder()
-                .operation(Append.builder().fragments(fragments).build());
-        if (storageOptions != null && !storageOptions.isEmpty()) {
-            transactionBuilder.transactionProperties(storageOptions);
-        }
-        try (SourcedTransaction transaction = transactionBuilder.build()) {
-            transaction.commit().close();
-        }
+        commitOperation(dataset, Append.builder().fragments(fragments).build(), storageOptions);
     }
 
     private void commitOverwrite(Dataset dataset, List<String> serializedFragments, Schema schema, Map<String, String> storageOptions)
@@ -1580,15 +1584,7 @@ public class LanceMetadata
         log.debug("Committing %d fragments to dataset: %s (overwrite)", serializedFragments.size(), dataset.uri());
         List<FragmentMetadata> fragments = deserializeFragments(serializedFragments);
 
-        SourcedTransaction.Builder transactionBuilder = dataset
-                .newTransactionBuilder()
-                .operation(Overwrite.builder().fragments(fragments).schema(schema).build());
-        if (storageOptions != null && !storageOptions.isEmpty()) {
-            transactionBuilder.transactionProperties(storageOptions);
-        }
-        try (SourcedTransaction transaction = transactionBuilder.build()) {
-            transaction.commit().close();
-        }
+        commitOperation(dataset, Overwrite.builder().fragments(fragments).schema(schema).build(), storageOptions);
     }
 
     private void createDatasetWithFragments(String datasetUri, List<String> serializedFragments, Schema schema, Map<String, String> storageOptions)
