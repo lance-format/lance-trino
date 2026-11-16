@@ -17,6 +17,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.trino.spi.connector.ConnectorTableHandle;
+import io.trino.spi.connector.SchemaTableName;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -36,8 +37,7 @@ public class LanceTableHandle
     // Buffer time before actual expiration to refresh credentials (5 minutes)
     private static final long EXPIRATION_BUFFER_MILLIS = 5 * 60 * 1000;
 
-    private final String schemaName;
-    private final String tableName;
+    private final SchemaTableName name;
     private final String tablePath;
     private final List<String> tableId;
     private final Map<String, String> storageOptions;
@@ -52,29 +52,15 @@ public class LanceTableHandle
     private final String readUri;
 
     public LanceTableHandle(
-            String schemaName,
-            String tableName,
+            SchemaTableName name,
             String tablePath,
-            List<String> tableId,
-            Map<String, String> storageOptions)
+            List<String> tableId)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, null);
+        this(name, tablePath, tableId, Map.of(), null, null, null, null);
     }
 
     public LanceTableHandle(
-            String schemaName,
-            String tableName,
-            String tablePath,
-            List<String> tableId,
-            Map<String, String> storageOptions,
-            Long datasetVersion)
-    {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, datasetVersion, null, null, null);
-    }
-
-    public LanceTableHandle(
-            String schemaName,
-            String tableName,
+            SchemaTableName name,
             String tablePath,
             List<String> tableId,
             Map<String, String> storageOptions,
@@ -83,13 +69,12 @@ public class LanceTableHandle
             String branchName,
             String readUri)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, null, List.of(), OptionalLong.empty(), false, datasetVersion, refName, branchName, readUri);
+        this(name, tablePath, tableId, storageOptions, null, List.of(), OptionalLong.empty(), false, datasetVersion, refName, branchName, readUri);
     }
 
     @JsonCreator
     public LanceTableHandle(
-            @JsonProperty("schemaName") String schemaName,
-            @JsonProperty("tableName") String tableName,
+            @JsonProperty("name") SchemaTableName name,
             @JsonProperty("tablePath") String tablePath,
             @JsonProperty("tableId") List<String> tableId,
             @JsonProperty("storageOptions") Map<String, String> storageOptions,
@@ -102,7 +87,7 @@ public class LanceTableHandle
             @JsonProperty("branchName") String branchName,
             @JsonProperty("readUri") String readUri)
     {
-        this(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter,
+        this(name, tablePath, tableId, storageOptions, substraitFilter,
                 filterColumns != null ? filterColumns : List.of(),
                 limit != null ? OptionalLong.of(limit) : OptionalLong.empty(),
                 countStar != null && countStar,
@@ -113,8 +98,7 @@ public class LanceTableHandle
     }
 
     public LanceTableHandle(
-            String schemaName,
-            String tableName,
+            SchemaTableName name,
             String tablePath,
             List<String> tableId,
             Map<String, String> storageOptions,
@@ -127,8 +111,7 @@ public class LanceTableHandle
             String branchName,
             String readUri)
     {
-        this.schemaName = requireNonNull(schemaName, "schemaName is null");
-        this.tableName = requireNonNull(tableName, "tableName is null");
+        this.name = requireNonNull(name, "name is null");
         this.tablePath = requireNonNull(tablePath, "tablePath is null");
         this.tableId = requireNonNull(tableId, "tableId is null");
         this.storageOptions = storageOptions != null ? new HashMap<>(storageOptions) : new HashMap<>();
@@ -146,15 +129,9 @@ public class LanceTableHandle
     }
 
     @JsonProperty
-    public String getSchemaName()
+    public SchemaTableName getName()
     {
-        return schemaName;
-    }
-
-    @JsonProperty
-    public String getTableName()
-    {
-        return tableName;
+        return name;
     }
 
     @JsonProperty
@@ -318,7 +295,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withStorageOptions(Map<String, String> newStorageOptions)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, newStorageOptions, substraitFilter, filterColumns, limit, countStar, datasetVersion, refName, branchName, readUri);
+        return new LanceTableHandle(name, tablePath, tableId, newStorageOptions, substraitFilter, filterColumns, limit, countStar, datasetVersion, refName, branchName, readUri);
     }
 
     /**
@@ -326,7 +303,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withSubstraitFilter(byte[] newSubstraitFilter, List<String> newFilterColumns)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, newSubstraitFilter, newFilterColumns, limit, countStar, datasetVersion, refName, branchName, readUri);
+        return new LanceTableHandle(name, tablePath, tableId, storageOptions, newSubstraitFilter, newFilterColumns, limit, countStar, datasetVersion, refName, branchName, readUri);
     }
 
     /**
@@ -334,7 +311,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withLimit(long newLimit)
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, OptionalLong.of(newLimit), countStar, datasetVersion, refName, branchName, readUri);
+        return new LanceTableHandle(name, tablePath, tableId, storageOptions, substraitFilter, filterColumns, OptionalLong.of(newLimit), countStar, datasetVersion, refName, branchName, readUri);
     }
 
     /**
@@ -342,7 +319,7 @@ public class LanceTableHandle
      */
     public LanceTableHandle withCountStar()
     {
-        return new LanceTableHandle(schemaName, tableName, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, true, datasetVersion, refName, branchName, readUri);
+        return new LanceTableHandle(name, tablePath, tableId, storageOptions, substraitFilter, filterColumns, limit, true, datasetVersion, refName, branchName, readUri);
     }
 
     @Override
@@ -356,7 +333,7 @@ public class LanceTableHandle
         }
         LanceTableHandle that = (LanceTableHandle) o;
         return countStar == that.countStar &&
-                Objects.equals(tableName, that.tableName) &&
+                Objects.equals(name, that.name) &&
                 Objects.equals(tablePath, that.tablePath) &&
                 Objects.equals(tableId, that.tableId) &&
                 Arrays.equals(substraitFilter, that.substraitFilter) &&
@@ -371,7 +348,7 @@ public class LanceTableHandle
     @Override
     public int hashCode()
     {
-        int result = Objects.hash(tableName, tablePath, tableId, filterColumns, limit, countStar, datasetVersion, refName, branchName, readUri);
+        int result = Objects.hash(name, tablePath, tableId, filterColumns, limit, countStar, datasetVersion, refName, branchName, readUri);
         result = 31 * result + Arrays.hashCode(substraitFilter);
         return result;
     }
@@ -380,7 +357,7 @@ public class LanceTableHandle
     public String toString()
     {
         var helper = toStringHelper(this)
-                .add("tableName", tableName)
+                .add("name", name)
                 .add("tablePath", tablePath)
                 .add("tableId", tableId)
                 .add("hasStorageOptions", !storageOptions.isEmpty());

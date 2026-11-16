@@ -14,6 +14,7 @@
 package io.trino.plugin.lance;
 
 import io.airlift.json.JsonCodec;
+import io.trino.spi.connector.SchemaTableName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -26,11 +27,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 public class TestLanceTableHandle
 {
     private final LanceTableHandle tableHandle = new LanceTableHandle(
-            "schemaName",
-            "tableName",
+            new SchemaTableName("schemaName", "tableName"),
             "path/to/table",
-            List.of("schemaName", "tableName"),
-            Map.of());
+            List.of("schemaName", "tableName"));
 
     @Test
     public void testJsonRoundTrip()
@@ -47,8 +46,7 @@ public class TestLanceTableHandle
         String tablePath = "s3+ddb://bucket/orders?ddbTableName=commits";
         String readUri = "s3+ddb://bucket/orders/tree/audit?ddbTableName=commits";
         LanceTableHandle named = new LanceTableHandle(
-                "schemaName",
-                "tableName",
+                new SchemaTableName("schemaName", "tableName"),
                 tablePath,
                 List.of("schemaName", "tableName"),
                 Map.of(),
@@ -60,8 +58,7 @@ public class TestLanceTableHandle
         assertThat(codec.fromJson(codec.toJson(named))).isEqualTo(named);
         assertThat(named.getEffectiveReadUri()).isEqualTo(readUri);
         assertThatThrownBy(() -> new LanceTableHandle(
-                "schemaName",
-                "tableName",
+                new SchemaTableName("schemaName", "tableName"),
                 tablePath,
                 List.of("schemaName", "tableName"),
                 Map.of(),

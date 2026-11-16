@@ -44,7 +44,7 @@ public abstract class LanceBasePageSource
     {
         // Create a child allocator for this page source. This provides isolation and proper resource tracking.
         // The child allocator will be closed when the page source is closed.
-        this.bufferAllocator = parentAllocator.newChildAllocator(tableHandle.getTableName(), 0, Long.MAX_VALUE);
+        this.bufferAllocator = parentAllocator.newChildAllocator(tableHandle.getName().getTableName(), 0, Long.MAX_VALUE);
 
         try {
             this.lanceArrowToPageScanner =
