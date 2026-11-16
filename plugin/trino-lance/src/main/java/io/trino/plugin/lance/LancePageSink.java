@@ -170,7 +170,7 @@ public class LancePageSink
 
             // Use storage options from the handle (already merged with namespace options)
             Map<String, String> storageOptions = configuredStorageOptions;
-            log.debug("Using storage options for table %s: %s", tableId, storageOptions);
+            log.debug("Using storage options for table %s (keys: %s)", tableId, storageOptions.keySet());
 
             // Write fragments using Lance API
             // Use storageOptionsProvider only if credentials have expiration (expires_at_millis)
