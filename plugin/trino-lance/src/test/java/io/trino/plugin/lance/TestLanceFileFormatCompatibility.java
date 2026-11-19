@@ -85,6 +85,29 @@ public class TestLanceFileFormatCompatibility
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"2.0", "2.1", "2.2", "stable", "next"})
+    public void testAddColumn(String fileFormatVersion)
+    {
+        try (TestTable table = newTrinoTable("test_add_column", "(id INT) WITH (file_format_version = '" + fileFormatVersion + "')")) {
+            assertUpdate("ALTER TABLE " + table.getName() + " ADD COLUMN data integer");
+            assertUpdate("INSERT INTO " + table.getName() + " VALUES (1, 10)", 1);
+            assertThat(query("SELECT * FROM " + table.getName()))
+                    .matches("VALUES (1, 10)");
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"legacy", "0.1"})
+    public void testAddColumnUnsupportedFileFormatVersion(String fileFormatVersion)
+    {
+        try (TestTable table = newTrinoTable("test_add_column_legacy", "(id INT) WITH (file_format_version = '" + fileFormatVersion + "')")) {
+            assertQueryFails(
+                    "ALTER TABLE " + table.getName() + " ADD COLUMN data integer",
+                    "Failed to add column: Not supported: Cannot add all-null columns to legacy dataset version.*");
+        }
+    }
+
     @Test
     public void testMergeInsertAndCtasRoundTrip()
     {
